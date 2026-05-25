@@ -1,0 +1,46 @@
+# Python
+venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# Django
+*.sqlite3
+*.log
+local_settings.py
+media/
+staticfiles/
+static_root/
+
+# Secrets — NEVER commit any .env file
+.env
+.env.*
+!.env.example
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# React Native / Expo
+mobile/node_modules/
+mobile/.expo/
+mobile/dist/
+mobile/build/
+mobile/android/
+mobile/ios/
+
+# Coverage
+.coverage
+htmlcov/
+coverage.xml

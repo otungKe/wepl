@@ -1,0 +1,59 @@
+"""
+P2-05: Add disbursement_sent and advance_sent notification types.
+
+These types are emitted by _on_b2c_success() in mpesa/views.py when a B2C
+payment for a disbursement request or emergency advance succeeds.  Without
+this migration, DRF serializer validation rejects the choice value, causing
+a silent notification gap for the recipient.
+"""
+from django.db import migrations, models
+
+
+class Migration(migrations.Migration):
+
+    dependencies = [
+        ('notifications', '0006_alter_notification_notification_type'),
+    ]
+
+    operations = [
+        migrations.AlterField(
+            model_name='notification',
+            name='notification_type',
+            field=models.CharField(
+                choices=[
+                    ('community_join',              'Community Join'),
+                    ('conversation_created',        'Conversation Created'),
+                    ('new_message',                 'New Message'),
+                    ('contribution_payment',        'Contribution Payment'),
+                    ('payment_recorded',            'Payment Recorded'),
+                    ('contribution_milestone',      'Contribution Milestone'),
+                    ('contribution_joined',         'Contribution Joined'),
+                    ('rosca_rotation_set',          'ROSCA Rotation Set'),
+                    ('rosca_payout',                'ROSCA Payout'),
+                    ('disbursement_requested',      'Disbursement Requested'),
+                    ('disbursement_rejected',       'Disbursement Rejected'),
+                    ('disbursement_executed',       'Disbursement Executed'),
+                    ('disbursement_sent',           'Disbursement Sent'),
+                    ('welfare_claim',               'Welfare Claim'),
+                    ('welfare_rejected',            'Welfare Rejected'),
+                    ('welfare_disbursed',           'Welfare Disbursed'),
+                    ('advance_requested',           'Advance Requested'),
+                    ('advance_approved',            'Advance Approved'),
+                    ('advance_rejected',            'Advance Rejected'),
+                    ('advance_sent',                'Advance Sent'),
+                    ('join_request',                'Join Request'),
+                    ('join_approved',               'Join Approved'),
+                    ('join_rejected',               'Join Rejected'),
+                    ('contribution_join_request',   'Contribution Join Request'),
+                    ('contribution_invite',         'Contribution Invite'),
+                    ('contribution_join_approved',  'Contribution Join Approved'),
+                    ('contribution_join_rejected',  'Contribution Join Rejected'),
+                    ('contribution_invite_accepted','Contribution Invite Accepted'),
+                    ('amendment_proposed',          'Amendment Proposed'),
+                    ('amendment_approved',          'Amendment Approved'),
+                    ('amendment_rejected',          'Amendment Rejected'),
+                ],
+                max_length=50,
+            ),
+        ),
+    ]
