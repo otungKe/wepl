@@ -1,118 +1,152 @@
 import logging
 import random
 
-import africastalking
 from django.conf import settings
 from django.core.cache import cache
 from django.core.exceptions import ValidationError
-
 from apps.core.exceptions import RateLimitError
-
 from .models import User
 
 logger = logging.getLogger(__name__)
 
-# Initialise Africa's Talking once at import time (safe — settings are frozen by then)
-africastalking.initialize(
-    settings.AT_USERNAME,
-    settings.AT_API_KEY,
-)
-_at_sms = africastalking.SMS
 
-
-# ─────────────────────────────────────────────────────────────────────────────
+# ─────────────────────────────────────────────────────────────
 # USER SERVICE
-# ─────────────────────────────────────────────────────────────────────────────
+# ─────────────────────────────────────────────────────────────
 
 class UserService:
 
     @staticmethod
-    def get_or_create_user(phone_number):
+    def get_or_create_user(phone_number: str) -> User:
+        """Retrieve existing user or create a new one."""
         user, _ = User.objects.get_or_create(phone_number=phone_number)
         return user
 
     @staticmethod
-    def update_profile(user, data):
-        user.bio = data.get("bio", user.bio)
-        user.profile_photo = data.get("profile_photo", user.profile_photo)
-        user.save()
+    def update_profile(user, validated_data: dict) -> User:
+        """Update editable profile fields (name, bio, profile_photo)."""
+        updated_fields = []
+        for field in ('name', 'bio', 'profile_photo'):
+            if field in validated_data:
+                setattr(user, field, validated_data[field])
+                updated_fields.append(field)
+        if updated_fields:
+            user.save(update_fields=updated_fields)
+            logger.info(f"Profile updated for user {user.id}: {updated_fields}")
         return user
 
 
-# ─────────────────────────────────────────────────────────────────────────────
+# ─────────────────────────────────────────────────────────────
 # OTP SERVICE
-# ─────────────────────────────────────────────────────────────────────────────
+# ─────────────────────────────────────────────────────────────
 
 class OTPService:
 
-    OTP_EXPIRY     = 600   # 10 minutes
-    MAX_PER_HOUR   = 3     # max OTP requests per phone per hour
-    RATE_WINDOW    = 3600  # 1 hour window for the counter
+    OTP_EXPIRY_SECONDS       = 300   # 5 minutes
+    MAX_PER_HOUR             = 3
+    RATE_WINDOW_SECONDS      = 3600  # 1 hour
+    MAX_VERIFICATION_ATTEMPTS = 5
+
+    # ── Cache key helpers ──────────────────────────────────────
 
     @staticmethod
-    def _rate_key(phone_number: str) -> str:
-        return f"otp_rate_{phone_number}"
+    def _rate_key(phone: str) -> str:
+        return f"otp_rate_{phone}"
 
     @staticmethod
-    def _otp_key(phone_number: str) -> str:
-        return f"otp_{phone_number}"
+    def _otp_key(phone: str) -> str:
+        return f"otp_{phone}"
+
+    @staticmethod
+    def _verify_key(phone: str) -> str:
+        return f"otp_verify_{phone}"
+
+    # ── Rate limit ─────────────────────────────────────────────
 
     @classmethod
-    def check_rate_limit(cls, phone_number: str) -> bool:
-        """Return True if the phone is allowed to request another OTP."""
-        key = cls._rate_key(phone_number)
-        count = cache.get(key, 0)
-        return count < cls.MAX_PER_HOUR
+    def _is_rate_limited(cls, phone: str) -> bool:
+        """Returns True when the phone has exceeded MAX_PER_HOUR requests."""
+        return cache.get(cls._rate_key(phone), 0) >= cls.MAX_PER_HOUR
+
+    # ── Send ───────────────────────────────────────────────────
 
     @classmethod
-    def send_otp(cls, phone_number: str) -> str:
-        if not cls.check_rate_limit(phone_number):
-            raise RateLimitError("Too many OTP requests. Please wait an hour before trying again.")
+    def send_otp(cls, phone: str) -> str:
+        from django.contrib.auth.hashers import make_password
+
+        if cls._is_rate_limited(phone):
+            logger.warning(f"OTP rate limit exceeded for {phone}")
+            raise RateLimitError("Too many OTP requests. Please try again later.")
 
         otp = str(random.randint(100000, 999999))
-        cache.set(cls._otp_key(phone_number), otp, timeout=cls.OTP_EXPIRY)
 
-        # Increment rate-limit counter
-        rate_key = cls._rate_key(phone_number)
+        # Store hashed OTP
+        cache.set(cls._otp_key(phone), make_password(otp), timeout=cls.OTP_EXPIRY_SECONDS)
+
+        # Increment rate counter
+        rate_key = cls._rate_key(phone)
         try:
             cache.incr(rate_key)
         except ValueError:
-            # Key doesn't exist yet
-            cache.set(rate_key, 1, timeout=cls.RATE_WINDOW)
+            cache.set(rate_key, 1, timeout=cls.RATE_WINDOW_SECONDS)
 
-        # Send OTP via Africa's Talking SMS
-        message = f"Your WEPL verification code is {otp}. Valid for 10 minutes. Do not share it."
+        message = f"Your WEPL OTP is {otp}. It expires in 5 minutes. Do not share it."
+
         try:
-            sender = getattr(settings, 'AT_SENDER_ID', None) or None
-            _at_sms.send(message, [phone_number], sender_id=sender)
-            logger.info("OTP SMS sent to %s", phone_number)
+            sender = getattr(settings, 'AT_SENDER_ID', None)
+            settings.AT_SMS.send(message, [phone], sender_id=sender)
+            logger.info(f"OTP SMS sent to {phone}")
         except Exception as exc:
-            logger.error("AT SMS delivery failed for %s: %s", phone_number, exc)
+            logger.error(f"Failed to send OTP SMS to {phone}: {exc}")
             if settings.DEBUG:
-                # In development, print to console so testing still works
-                # even if the SMS key is misconfigured.
-                print(f"\n[DEV OTP] {phone_number} → {otp}\n")
+                print(f"\n[DEV OTP] {phone} → {otp}\n")
             else:
-                raise RuntimeError("Could not send verification SMS. Please try again.") from exc
+                raise RuntimeError("Failed to send OTP. Please try again.") from exc
 
         return otp
 
+    # ── Verify ─────────────────────────────────────────────────
+
     @classmethod
-    def verify_otp(cls, phone_number: str, otp: str) -> bool:
-        stored = cache.get(cls._otp_key(phone_number))
-        if stored and stored == otp:
-            cache.delete(cls._otp_key(phone_number))
+    def verify_otp(cls, phone: str, otp: str) -> bool:
+        from django.contrib.auth.hashers import check_password
+
+        verify_key = cls._verify_key(phone)
+        attempts   = cache.get(verify_key, 0)
+
+        if attempts >= cls.MAX_VERIFICATION_ATTEMPTS:
+            logger.warning(f"OTP verification attempts exceeded for {phone}")
+            raise RateLimitError("Too many verification attempts. Please request a new OTP.")
+
+        cached_hash = cache.get(cls._otp_key(phone))
+        if not cached_hash:
+            logger.info(f"No active OTP found for {phone}")
+            return False
+
+        if check_password(otp, cached_hash):
+            cache.delete(cls._otp_key(phone))
+            cache.delete(verify_key)
+            logger.info(f"OTP verified for {phone}")
             return True
+
+        # Wrong OTP — increment failure counter
+        try:
+            cache.incr(verify_key)
+        except ValueError:
+            cache.set(verify_key, 1, timeout=cls.RATE_WINDOW_SECONDS)
+
+        logger.info(f"OTP mismatch for {phone} (attempt {attempts + 1})")
         return False
 
 
-# ─────────────────────────────────────────────────────────────────────────────
+# ─────────────────────────────────────────────────────────────
 # PIN SERVICE
-# ─────────────────────────────────────────────────────────────────────────────
+# ─────────────────────────────────────────────────────────────
 
 class PINService:
+    """Named PINService (uppercase N) to match views.py imports."""
 
-    MAX_ATTEMPTS   = 5    # failed attempts before lockout
+    MAX_ATTEMPTS    = 5
     LOCKOUT_SECONDS = 1800  # 30 minutes
 
     @staticmethod
@@ -125,11 +159,14 @@ class PINService:
 
     @classmethod
     def is_locked(cls, user) -> bool:
-        return bool(cache.get(cls._lock_key(user.id)))
+        """Check if user is locked out (accepts a User instance)."""
+        return cache.get(cls._lock_key(user.id)) is not None
 
     @classmethod
     def record_failure(cls, user):
         fail_key = cls._fail_key(user.id)
+        lock_key = cls._lock_key(user.id)
+
         try:
             attempts = cache.incr(fail_key)
         except ValueError:
@@ -137,8 +174,9 @@ class PINService:
             attempts = 1
 
         if attempts >= cls.MAX_ATTEMPTS:
-            cache.set(cls._lock_key(user.id), True, timeout=cls.LOCKOUT_SECONDS)
+            cache.set(lock_key, True, timeout=cls.LOCKOUT_SECONDS)
             cache.delete(fail_key)
+            logger.warning(f"User {user.id} locked out after {attempts} failed PIN attempts.")
 
     @classmethod
     def clear_failures(cls, user):
@@ -146,13 +184,13 @@ class PINService:
         cache.delete(cls._lock_key(user.id))
 
     @staticmethod
-    def set_pin(user, pin: str):
-        if len(pin) != 6 or not pin.isdigit():
-            raise ValidationError("PIN must be 6 digits")
-        # user.set_pin() hashes the PIN, sets is_pin_set=True, and saves — no second save needed.
-        user.set_pin(pin)
+    def set_pin(user, raw_pin: str) -> User:
+        if not raw_pin.isdigit() or len(raw_pin) != 6:
+            raise ValidationError("PIN must be a 6-digit number.")
+        user.set_pin(raw_pin)
+        logger.info(f"PIN set/reset for user {user.id}")
         return user
 
     @staticmethod
-    def verify_pin(user, pin: str) -> bool:
-        return user.check_pin(pin)
+    def verify_pin(user, raw_pin: str) -> bool:
+        return user.check_pin(raw_pin)

@@ -4,12 +4,13 @@ from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
+from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
 from rest_framework.throttling import AnonRateThrottle
 
 from rest_framework_simplejwt.tokens import RefreshToken
 
 from .models import KYCProfile
-from .serializers import KYCSubmitSerializer, KYCStatusSerializer
+from .serializers import UserSerializer, KYCSubmitSerializer, KYCStatusSerializer
 from .services import UserService, OTPService, PINService
 
 
@@ -271,43 +272,24 @@ class ProtectedView(APIView):
 # 6. USER PROFILE
 # -----------------------------
 class UserProfileView(APIView):
-
     permission_classes = [IsAuthenticated]
+    parser_classes     = [MultiPartParser, FormParser, JSONParser]
 
     def get(self, request):
-
-        return Response({
-            "id": request.user.id,
-            "phone_number": request.user.phone_number,
-            "name": request.user.name,
-            "bio": request.user.bio,
-            "is_pin_set": request.user.is_pin_set,
-        })
+        return Response(UserSerializer(request.user, context={'request': request}).data)
 
     def patch(self, request):
-
-        bio = request.data.get("bio")
-        name = request.data.get("name")
-
-        updated_fields = []
-
-        if bio is not None:
-            request.user.bio = bio
-            updated_fields.append("bio")
-
-        if name is not None:
-            request.user.name = name
-            updated_fields.append("name")
-
-        if updated_fields:
-            request.user.save(update_fields=updated_fields)
-
-        return Response({
-            "id": request.user.id,
-            "phone_number": request.user.phone_number,
-            "name": request.user.name,
-            "bio": request.user.bio,
-        })
+        """Update name, bio, and/or profile_photo."""
+        serializer = UserSerializer(
+            request.user,
+            data=request.data,
+            partial=True,
+            context={'request': request},
+        )
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        serializer.save()
+        return Response(serializer.data)
 
 
 # -----------------------------

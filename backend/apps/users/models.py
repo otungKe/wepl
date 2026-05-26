@@ -1,76 +1,92 @@
 from django.conf import settings
-from django.contrib.auth.models import AbstractUser
+from django.contrib.auth.models import AbstractUser, BaseUserManager
 from django.core.exceptions import ValidationError
 from django.db import models
 from django.contrib.auth.hashers import make_password, check_password
 
 
+# ─────────────────────────────────────────────────────────────
+# CUSTOM USER MANAGER
+# ─────────────────────────────────────────────────────────────
+
+class UserManager(BaseUserManager):
+    def create_user(self, phone_number, password=None, **extra_fields):
+        if not phone_number:
+            raise ValueError('Phone number must be provided')
+        user = self.model(phone_number=phone_number, **extra_fields)
+        if password:
+            user.set_password(password)
+        user.save(using=self._db)
+        return user
+
+    def create_superuser(self, phone_number, password=None, **extra_fields):
+        extra_fields.setdefault('is_staff', True)
+        extra_fields.setdefault('is_superuser', True)
+        return self.create_user(phone_number, password, **extra_fields)
+
+
+# ─────────────────────────────────────────────────────────────
+# USER MODEL
+# ─────────────────────────────────────────────────────────────
+
 class User(AbstractUser):
+    username = None  # removed — phone_number is the unique identifier
+    phone_number = models.CharField(max_length=15, unique=True)
+    name         = models.CharField(max_length=120, blank=True, default="")
+    pin          = models.CharField(max_length=128, blank=True, default="")
 
-    # remove username completely
-    username = None
-
-    phone_number = models.CharField(
-        max_length=20,
-        unique=True
-    )
-
-    name = models.CharField(max_length=120, blank=True, default='')
-
-    # store hashed PIN (VERY IMPORTANT)
-    pin = models.CharField(
-        max_length=128,
-        null=True,
-        blank=True
-    )
-
-    # onboarding state tracking
     is_phone_verified = models.BooleanField(default=False)
-    is_pin_set = models.BooleanField(default=False)
+    is_pin_set        = models.BooleanField(default=False)
 
-    profile_photo = models.ImageField(
-        upload_to="profiles/",
-        null=True,
-        blank=True
-    )
+    profile_photo = models.ImageField(upload_to='profile/', blank=True, null=True)
+    bio           = models.TextField(blank=True, default="")
 
-    bio = models.TextField(null=True, blank=True)
-
-    USERNAME_FIELD = "phone_number"
+    USERNAME_FIELD  = 'phone_number'
     REQUIRED_FIELDS = []
 
-    # -------------------------
-    # PIN SECURITY METHODS
-    # -------------------------
-    def set_pin(self, raw_pin):
-        if len(raw_pin) != 6 or not raw_pin.isdigit():
-            raise ValidationError("PIN must be 6 digits")
+    objects = UserManager()
 
-        self.pin = make_password(raw_pin)
+    def set_pin(self, raw_pin: str):
+        if not raw_pin.isdigit() or len(raw_pin) != 6:
+            raise ValidationError("PIN must be a 6-digit number.")
+        self.pin       = make_password(raw_pin)
         self.is_pin_set = True
-        self.save()
+        self.save(update_fields=['pin', 'is_pin_set'])
 
-    def check_pin(self, raw_pin):
+    def check_pin(self, raw_pin: str) -> bool:
         if not self.pin:
             return False
         return check_password(raw_pin, self.pin)
 
     def __str__(self):
-        return self.phone_number
+        return f"{self.name} ({self.phone_number})"
 
+
+# ─────────────────────────────────────────────────────────────
+# KYC PROFILE
+# ─────────────────────────────────────────────────────────────
 
 class KYCProfile(models.Model):
 
-    KENYA_COUNTIES = [(c, c) for c in [
-        'Baringo', 'Bomet', 'Bungoma', 'Busia', 'Elgeyo-Marakwet', 'Embu',
-        'Garissa', 'Homa Bay', 'Isiolo', 'Kajiado', 'Kakamega', 'Kericho',
-        'Kiambu', 'Kilifi', 'Kirinyaga', 'Kisii', 'Kisumu', 'Kitui', 'Kwale',
-        'Laikipia', 'Lamu', 'Machakos', 'Makueni', 'Mandera', 'Marsabit',
-        'Meru', 'Migori', 'Mombasa', "Murang'a", 'Nairobi', 'Nakuru', 'Nandi',
-        'Narok', 'Nyamira', 'Nyandarua', 'Nyeri', 'Samburu', 'Siaya',
-        'Taita-Taveta', 'Tana River', 'Tharaka-Nithi', 'Trans Nzoia',
-        'Turkana', 'Uasin Gishu', 'Vihiga', 'Wajir', 'West Pokot',
-    ]]
+    KENYA_COUNTIES = [
+        ('Baringo', 'Baringo'), ('Bomet', 'Bomet'), ('Bungoma', 'Bungoma'),
+        ('Busia', 'Busia'), ('Elgeyo-Marakwet', 'Elgeyo-Marakwet'), ('Embu', 'Embu'),
+        ('Garissa', 'Garissa'), ('Homa Bay', 'Homa Bay'), ('Isiolo', 'Isiolo'),
+        ('Kajiado', 'Kajiado'), ('Kakamega', 'Kakamega'), ('Kericho', 'Kericho'),
+        ('Kiambu', 'Kiambu'), ('Kilifi', 'Kilifi'), ('Kirinyaga', 'Kirinyaga'),
+        ('Kisii', 'Kisii'), ('Kisumu', 'Kisumu'), ('Kitui', 'Kitui'),
+        ('Kwale', 'Kwale'), ('Laikipia', 'Laikipia'), ('Lamu', 'Lamu'),
+        ('Machakos', 'Machakos'), ('Makueni', 'Makueni'), ('Mandera', 'Mandera'),
+        ('Marsabit', 'Marsabit'), ('Meru', 'Meru'), ('Migori', 'Migori'),
+        ('Mombasa', 'Mombasa'), ("Murang'a", "Murang'a"), ('Nairobi', 'Nairobi'),
+        ('Nakuru', 'Nakuru'), ('Nandi', 'Nandi'), ('Narok', 'Narok'),
+        ('Nyamira', 'Nyamira'), ('Nyandarua', 'Nyandarua'), ('Nyeri', 'Nyeri'),
+        ('Samburu', 'Samburu'), ('Siaya', 'Siaya'), ('Taita-Taveta', 'Taita-Taveta'),
+        ('Tana River', 'Tana River'), ('Tharaka-Nithi', 'Tharaka-Nithi'),
+        ('Trans Nzoia', 'Trans Nzoia'), ('Turkana', 'Turkana'),
+        ('Uasin Gishu', 'Uasin Gishu'), ('Vihiga', 'Vihiga'),
+        ('Wajir', 'Wajir'), ('West Pokot', 'West Pokot'),
+    ]
 
     SOURCE_CHOICES = [
         ('employment',  'Employment / Salary'),
@@ -96,39 +112,41 @@ class KYCProfile(models.Model):
     ]
 
     user = models.OneToOneField(
-        settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name='kyc'
+        settings.AUTH_USER_MODEL,
+        on_delete=models.PROTECT,
+        related_name='kyc',
     )
 
-    # ── Identity ──────────────────────────────────────────────────────────────
-    given_names     = models.CharField(max_length=150)
-    surname         = models.CharField(max_length=100)
-    id_number       = models.CharField(max_length=20, unique=True)
-    date_of_birth   = models.DateField()
-    email           = models.EmailField(blank=True, default='')
+    # Identity
+    given_names = models.CharField(max_length=150)
+    surname     = models.CharField(max_length=100, default='')
+    id_number   = models.CharField(max_length=20, unique=True)
+    date_of_birth = models.DateField()
+    email       = models.EmailField(blank=True, default='')
 
-    # ── ID document scans ─────────────────────────────────────────────────────
+    # ID documents
     id_front = models.ImageField(upload_to='kyc/ids/')
     id_back  = models.ImageField(upload_to='kyc/ids/', blank=True, null=True)
 
-    # ── Address ───────────────────────────────────────────────────────────────
-    county     = models.CharField(max_length=50, choices=KENYA_COUNTIES)
-    sub_county = models.CharField(max_length=100, blank=True, default='')
+    # Location & financials
+    county                  = models.CharField(max_length=50, choices=KENYA_COUNTIES)
+    sub_county              = models.CharField(max_length=100, blank=True, default='')
+    occupation              = models.CharField(max_length=255)
+    source_of_income        = models.CharField(max_length=20, choices=SOURCE_CHOICES)
+    expected_monthly_income = models.CharField(max_length=20, choices=INCOME_BAND_CHOICES)
 
-    # ── Financial profile ─────────────────────────────────────────────────────
-    occupation               = models.CharField(max_length=255)
-    source_of_income         = models.CharField(max_length=20, choices=SOURCE_CHOICES)
-    expected_monthly_income  = models.CharField(max_length=20, choices=INCOME_BAND_CHOICES)
-
-    # ── Optional ──────────────────────────────────────────────────────────────
+    # Optional
     referral_code = models.CharField(max_length=50, blank=True, default='')
 
-    # ── Review lifecycle ──────────────────────────────────────────────────────
+    # Review state
     status           = models.CharField(max_length=20, choices=STATUS_CHOICES, default='pending')
     rejection_reason = models.TextField(blank=True, default='')
     reviewed_at      = models.DateTimeField(null=True, blank=True)
     reviewed_by      = models.ForeignKey(
-        settings.AUTH_USER_MODEL, null=True, blank=True,
-        on_delete=models.SET_NULL, related_name='kyc_reviews',
+        settings.AUTH_USER_MODEL,
+        null=True, blank=True,
+        on_delete=models.SET_NULL,
+        related_name='kyc_reviews',
     )
 
     submitted_at = models.DateTimeField(auto_now_add=True)
@@ -141,3 +159,7 @@ class KYCProfile(models.Model):
 
     def __str__(self):
         return f"KYC({self.user.phone_number}) — {self.status}"
+
+    @property
+    def full_name(self):
+        return f"{self.given_names} {self.surname}".strip()
