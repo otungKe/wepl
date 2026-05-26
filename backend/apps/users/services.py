@@ -20,6 +20,7 @@ class UserService:
     def get_or_create_user(phone_number: str) -> User:
         """Retrieve existing user or create a new one."""
         user, _ = User.objects.get_or_create(phone_number=phone_number)
+        logger.info(f"User retrieved/created with phone {phone_number} (id: {user.id})")
         return user
 
     @staticmethod

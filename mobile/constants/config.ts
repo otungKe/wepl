@@ -2,7 +2,7 @@ import { Platform } from 'react-native';
 
 // In development: override with your local machine IP.
 // In production: set EXPO_PUBLIC_API_URL in your build environment.
-const DEV_HOST = Platform.OS === 'web' ? 'localhost' : '192.168.0.104';
+const DEV_HOST = Platform.OS === 'web' ? 'localhost' : '192.168.0.102';
 
 const IS_PRODUCTION = process.env.EXPO_PUBLIC_ENV === 'production';
 
