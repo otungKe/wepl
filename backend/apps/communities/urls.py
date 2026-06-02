@@ -14,16 +14,20 @@ from .views import (
     RemoveMemberView,
     CommunityByInviteView,
     JoinRequestCreateView,
+    JoinRequestCreateByIdView,
     JoinRequestActionView,
+    MyJoinRequestsView,
 )
 
 urlpatterns = [
     path('', MyCommunitiesView.as_view()),
+    path('my-requests/', MyJoinRequestsView.as_view()),
     path('discover/', DiscoverCommunitiesView.as_view()),
     path('create/', CommunityCreateView.as_view()),
     path('<int:community_id>/', CommunityDetailView.as_view()),
     path('<int:community_id>/update/', CommunityUpdateView.as_view()),
     path('<int:community_id>/join/', JoinCommunityView.as_view()),
+    path('<int:community_id>/request/', JoinRequestCreateByIdView.as_view()),
     path('<int:community_id>/leave/', LeaveCommunityView.as_view()),
     path('<int:community_id>/members/', CommunityMembersView.as_view()),
     path('<int:community_id>/members/<int:membership_id>/role/', AssignRoleView.as_view()),

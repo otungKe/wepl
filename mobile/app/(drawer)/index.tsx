@@ -9,6 +9,7 @@ import { router, useFocusEffect } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import {
   getMyCommunities, getCommunityByInviteCode, requestToJoinCommunity,
+  getMyJoinRequests, PendingRequest,
   Community,
 } from "../../api/communities";
 import { getUnreadSummary, UnreadSummary } from "../../api/conversations";
@@ -16,16 +17,19 @@ import { on } from "../../utils/eventBus";
 import { COLORS, FONTS, RADIUS } from "../../constants/theme";
 import Avatar from "../../components/app/Avatar";
 import FAB from "../../components/app/FAB";
+import KYCBanner from "../../components/app/KYCBanner";
+import { useKYCGate } from "../../hooks/useKYCGate";
 
 type Sheet = null | "menu" | "join";
 type JoinStep = "input" | "loading" | "preview" | "requesting" | "success";
 
 export default function CommunitiesScreen() {
-  const [communities, setCommunities] = useState<Community[]>([]);
+  const [communities, setCommunities]     = useState<Community[]>([]);
+  const [pendingRequests, setPendingRequests] = useState<PendingRequest[]>([]);
   const [unreadSummary, setUnreadSummary] = useState<UnreadSummary>({ total: 0, by_community: {} });
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading]   = useState(true);
   const [refreshing, setRefreshing] = useState(false);
-  const [search, setSearch] = useState("");
+  const [search, setSearch]     = useState("");
 
   // FAB action sheet
   const [sheet, setSheet] = useState<Sheet>(null);
@@ -34,11 +38,18 @@ export default function CommunitiesScreen() {
   const [preview, setPreview] = useState<Community | null>(null);
   const [joinError, setJoinError] = useState<string | null>(null);
 
+  const { kycStatus, requireKYC } = useKYCGate();
+
   const load = useCallback(async () => {
     try {
-      const [comms, summary] = await Promise.all([getMyCommunities(), getUnreadSummary()]);
+      const [comms, summary, requests] = await Promise.all([
+        getMyCommunities(),
+        getUnreadSummary(),
+        getMyJoinRequests(),
+      ]);
       setCommunities(comms);
       setUnreadSummary(summary);
+      setPendingRequests(requests);
     } catch {}
   }, []);
 
@@ -104,15 +115,22 @@ export default function CommunitiesScreen() {
       {/* Header */}
       <View style={styles.header}>
         <Text style={styles.headerTitle}>Communities</Text>
-        <TouchableOpacity
-          style={styles.discoverBtn}
-          onPress={() => router.push("/discover")}
-          activeOpacity={0.8}
-        >
-          <Ionicons name="compass-outline" size={16} color={COLORS.primary} />
-          <Text style={styles.discoverBtnText}>Discover</Text>
-        </TouchableOpacity>
+        {pendingRequests.length > 0 && (
+          <TouchableOpacity
+            style={styles.pendingChip}
+            onPress={() => router.push("/join-requests")}
+            activeOpacity={0.8}
+          >
+            <Ionicons name="time-outline" size={13} color={COLORS.accent} />
+            <Text style={styles.pendingChipText}>
+              {pendingRequests.length} Pending
+            </Text>
+          </TouchableOpacity>
+        )}
       </View>
+
+      {/* KYC verification banner — hidden once approved */}
+      <KYCBanner status={kycStatus} />
 
       {/* Search bar */}
       <View style={styles.searchRow}>
@@ -193,7 +211,7 @@ export default function CommunitiesScreen() {
                 <TouchableOpacity
                   style={styles.sheetOption}
                   activeOpacity={0.7}
-                  onPress={() => { closeSheet(); router.push("/community/create"); }}
+                  onPress={() => { closeSheet(); if (requireKYC()) router.push("/community/create"); }}
                 >
                   <View style={[styles.sheetOptionIcon, { backgroundColor: COLORS.primary + "18" }]}>
                     <Ionicons name="add-circle-outline" size={22} color={COLORS.primary} />
@@ -320,6 +338,16 @@ export default function CommunitiesScreen() {
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: COLORS.background },
   center: { flex: 1, justifyContent: "center", alignItems: "center" },
+
+  // Pending requests chip
+  pendingChip: {
+    flexDirection: "row", alignItems: "center", gap: 5,
+    backgroundColor: "#fef7e0",
+    paddingHorizontal: 12, paddingVertical: 6,
+    borderRadius: RADIUS.full,
+    borderWidth: 1, borderColor: "#f6d860",
+  },
+  pendingChipText: { fontSize: FONTS.sm, fontWeight: "700", color: COLORS.accent },
 
   header: {
     flexDirection:    "row",

@@ -3,7 +3,7 @@ import API from "./client";
 export type TenureType   = 'open' | 'date' | 'period';
 export type Frequency    = 'daily' | 'weekly' | 'monthly' | 'anytime';
 export type AmountType   = 'fixed' | 'open';
-export type VotingThreshold = 'admins' | '25' | '50' | '100';
+export type VotingThreshold = 'admins' | '50' | '100' | string; // string also covers custom %
 
 export type ContributionStatus = 'active' | 'closed' | 'archived';
 
@@ -15,8 +15,15 @@ export type Contribution = {
   created_by: string;
   community: number | null;
   invite_code: string;
-  target_amount: string | null;
-  current_amount: string;
+  target_amount:        string | null;
+  member_target_amount:          string | null;
+  current_amount:                string;
+  // Section C governance
+  transaction_visibility:        'all' | 'own' | 'admins_all';
+  amendment_proposer:            'creator' | 'admins' | 'members';
+  amendment_voting_threshold:    string;
+  late_contribution_policy:      'open' | 'strict' | 'grace';
+  late_contribution_grace_days:  number;
   // Term
   tenure_type: TenureType;
   end_date: string | null;
@@ -28,12 +35,22 @@ export type Contribution = {
   // Governance
   voting_threshold: VotingThreshold;
   voting_label: string;
+  governance_locked_until: string | null;
+  // ROSCA — current user's rotation slot (null when no rotation set up)
+  my_rosca_slot: {
+    slot_order: number;
+    cycle_number: number;
+    has_received: boolean;
+    payout_amount: string | null;
+    received_at: string | null;
+  } | null;
   // Legacy
   min_approvals: number;
   is_active: boolean;
   status: ContributionStatus;
   participant_count: number;
   user_balance: string | null;
+  is_admin: boolean;
   created_at: string;
 };
 
@@ -41,8 +58,9 @@ export type Participant = {
   id: number;
   phone_number: string;
   name: string | null;
-  joined_at: string;
   is_active: boolean;
+  balance:      string;        // "45000.00" — how much this member has contributed
+  progress_pct: number | null; // 0–100+, null if no member_target set
 };
 
 export type Transaction = {
@@ -118,6 +136,7 @@ export type WelfareFund = {
   balance: string;
   monthly_contribution: string;
   created_at: string;
+  is_admin?: boolean; // server-derived; use instead of URL param
 };
 
 export type WelfareClaim = {
@@ -195,7 +214,8 @@ export type CreateContributionPayload = {
   description?: string;
   visibility: 'closed' | 'open';
   community?: number | null;
-  target_amount?: number | null;
+  target_amount?:        number | null;
+  member_target_amount?: number | null;
   tenure_type: TenureType;
   end_date?: string | null;
   period_months?: number | null;

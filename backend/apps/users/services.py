@@ -1,11 +1,13 @@
 import logging
-import random
+import secrets
 
-from django.conf import settings
 from django.core.cache import cache
 from django.core.exceptions import ValidationError
+
 from apps.core.exceptions import RateLimitError
+
 from .models import User
+from .sms import get_sms_gateway
 
 logger = logging.getLogger(__name__)
 
@@ -76,33 +78,31 @@ class OTPService:
         from django.contrib.auth.hashers import make_password
 
         if cls._is_rate_limited(phone):
-            logger.warning(f"OTP rate limit exceeded for {phone}")
+            logger.warning("OTP rate limit exceeded for %s", phone)
             raise RateLimitError("Too many OTP requests. Please try again later.")
 
-        otp = str(random.randint(100000, 999999))
+        # Use secrets for cryptographically secure OTP generation.
+        otp = str(secrets.randbelow(900_000) + 100_000)  # 100000–999999
 
-        # Store hashed OTP
+        # Store hashed OTP; plain text never persists.
         cache.set(cls._otp_key(phone), make_password(otp), timeout=cls.OTP_EXPIRY_SECONDS)
 
-        # Increment rate counter
+        # Atomic rate-counter increment.
+        # cache.add only sets the key when it does NOT exist, so two concurrent
+        # callers cannot both "win" the ValueError race that the old incr+except
+        # pattern had — one will add(1), the other will incr to 2.
         rate_key = cls._rate_key(phone)
-        try:
+        if not cache.add(rate_key, 1, timeout=cls.RATE_WINDOW_SECONDS):
             cache.incr(rate_key)
-        except ValueError:
-            cache.set(rate_key, 1, timeout=cls.RATE_WINDOW_SECONDS)
 
         message = f"Your WEPL OTP is {otp}. It expires in 5 minutes. Do not share it."
 
         try:
-            sender = getattr(settings, 'AT_SENDER_ID', None)
-            settings.AT_SMS.send(message, [phone], sender_id=sender)
-            logger.info(f"OTP SMS sent to {phone}")
+            get_sms_gateway().send(message, phone)
+            logger.info("OTP SMS sent to %s", phone)
         except Exception as exc:
-            logger.error(f"Failed to send OTP SMS to {phone}: {exc}")
-            if settings.DEBUG:
-                print(f"\n[DEV OTP] {phone} → {otp}\n")
-            else:
-                raise RuntimeError("Failed to send OTP. Please try again.") from exc
+            logger.error("Failed to send OTP SMS to %s: %s", phone, exc)
+            raise RuntimeError("Failed to send OTP. Please try again.") from exc
 
         return otp
 
@@ -130,13 +130,11 @@ class OTPService:
             logger.info(f"OTP verified for {phone}")
             return True
 
-        # Wrong OTP — increment failure counter
-        try:
+        # Wrong OTP — atomic failure counter increment (same add-then-incr pattern).
+        if not cache.add(verify_key, 1, timeout=cls.RATE_WINDOW_SECONDS):
             cache.incr(verify_key)
-        except ValueError:
-            cache.set(verify_key, 1, timeout=cls.RATE_WINDOW_SECONDS)
 
-        logger.info(f"OTP mismatch for {phone} (attempt {attempts + 1})")
+        logger.info("OTP mismatch for %s (attempt %d)", phone, attempts + 1)
         return False
 
 

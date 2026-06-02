@@ -135,10 +135,38 @@ class MpesaService:
         try:
             user = User.objects.get(phone_number=phone)
         except User.DoesNotExist:
-            logger.warning("Could not match phone %s to a user", phone)
+            logger.warning("C2B reconcile: no user for phone %s — receipt %s unmatched",
+                           phone, transaction.mpesa_receipt)
             return False
 
-        # Auto-join if not already a participant
+        # ── Community membership gate ──────────────────────────────────────────
+        # If this contribution belongs to a community, the payer must be an active
+        # member of that community before we add them as a participant.
+        # Skipping this check is the same bug as the communities join-bypass: anyone
+        # who knows a contribution ID (or guesses "WEPL-42") could pay their way in.
+        if contribution.community_id:
+            from apps.communities.models import CommunityMembership
+            is_community_member = CommunityMembership.objects.filter(
+                community_id=contribution.community_id,
+                user=user,
+                is_active=True,
+            ).exists()
+            if not is_community_member:
+                # Record the payment against the transaction row so the money is
+                # not lost, but do NOT auto-join. Flag for admin review.
+                transaction.contribution = contribution
+                transaction.user = user
+                transaction.is_reconciled = False  # intentionally left un-reconciled
+                transaction.save(update_fields=["contribution", "user", "is_reconciled"])
+                logger.warning(
+                    "C2B reconcile: user %s (phone %s) paid into community contribution %s "
+                    "but is NOT a community member — payment recorded, NOT auto-joined. "
+                    "Receipt: %s. Admin review required.",
+                    user.id, phone, contribution.id, transaction.mpesa_receipt,
+                )
+                return False
+
+        # Auto-join as participant if not already one (open / already-member path).
         ContributionParticipant.objects.get_or_create(
             contribution=contribution, user=user, defaults={"is_active": True}
         )
@@ -151,6 +179,9 @@ class MpesaService:
         transaction.contribution = contribution
         transaction.user = user
         transaction.is_reconciled = True
-        transaction.save()
-
+        transaction.save(update_fields=["contribution", "user", "is_reconciled"])
+        logger.info(
+            "C2B reconcile: receipt %s → user %s, contribution %s, amount %s",
+            transaction.mpesa_receipt, user.id, contribution.id, transaction.amount,
+        )
         return True

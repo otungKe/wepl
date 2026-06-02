@@ -8,7 +8,7 @@ import {
   RefreshControl,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { useFocusEffect } from "expo-router";
+import { useFocusEffect, router } from "expo-router";
 import { getMyTransactions, Transaction } from "../../api/contributions";
 import { COLORS, FONTS, RADIUS } from "../../constants/theme";
 import AppHeader from "../../components/app/AppHeader";
@@ -55,7 +55,7 @@ export default function TransactionsScreen() {
 
   return (
     <SafeAreaView style={styles.safe}>
-      <AppHeader title="Transactions" variant="light" leading="back" />
+      <AppHeader title="Transactions" variant="light" leading="back" onBack={() => router.replace("/(drawer)/profile")} />
 
       {loading ? (
         <View style={styles.center}><ActivityIndicator size="large" color={COLORS.primary} /></View>

@@ -1,7 +1,15 @@
 import threading
 import uuid
+from datetime import timedelta
+
+from django.utils import timezone
 
 _local = threading.local()
+
+# How often to write last_seen to the DB — avoids a write on every request.
+# A user is considered "online" if last seen within ONLINE_THRESHOLD.
+LAST_SEEN_UPDATE_INTERVAL = timedelta(seconds=60)
+ONLINE_THRESHOLD          = timedelta(minutes=5)
 
 
 def get_current_request_id() -> str | None:
@@ -32,6 +40,23 @@ class RequestIdMiddleware:
 
         response = self.get_response(request)
         response['X-Request-Id'] = request_id
+
+        # Update last_seen for authenticated users.
+        # Only write to DB if the stored value is stale by more than
+        # LAST_SEEN_UPDATE_INTERVAL — avoids a DB write on every request.
+        user = getattr(request, 'user', None)
+        if user and user.is_authenticated:
+            now = timezone.now()
+            if (
+                user.last_seen is None
+                or (now - user.last_seen) >= LAST_SEEN_UPDATE_INTERVAL
+            ):
+                try:
+                    from django.contrib.auth import get_user_model
+                    get_user_model().objects.filter(pk=user.pk).update(last_seen=now)
+                    user.last_seen = now   # keep in-memory copy consistent
+                except Exception:
+                    pass
 
         _local.request_id = None
         return response

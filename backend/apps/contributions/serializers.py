@@ -13,22 +13,31 @@ from .models import (
 
 
 class ContributionSerializer(serializers.ModelSerializer):
-    created_by      = serializers.CharField(source='created_by.phone_number', read_only=True)
+    created_by        = serializers.CharField(source='created_by.phone_number', read_only=True)
     participant_count = serializers.SerializerMethodField()
-    user_balance    = serializers.SerializerMethodField()
-    voting_label    = serializers.SerializerMethodField()
+    user_balance      = serializers.SerializerMethodField()
+    voting_label      = serializers.SerializerMethodField()
+    my_rosca_slot     = serializers.SerializerMethodField()
+    # Plain CharField so custom numeric percentages (e.g. '75') pass validation
+    voting_threshold  = serializers.CharField(required=False, default='admins')
+    # Whether the requesting user has admin rights on this contribution
+    is_admin          = serializers.SerializerMethodField()
 
     class Meta:
         model = Contribution
         fields = [
             'id', 'title', 'description', 'visibility',
             'created_by', 'community', 'invite_code',
-            'target_amount', 'current_amount',
+            'target_amount', 'current_amount', 'member_target_amount',
             'tenure_type', 'end_date', 'period_months',
+            'transaction_visibility', 'amendment_proposer',
+            'amendment_voting_threshold',
+            'late_contribution_policy', 'late_contribution_grace_days',
             'frequency', 'amount_type', 'fixed_amount',
             'voting_threshold', 'voting_label',
             'min_approvals', 'is_active', 'status', 'is_campaign',
-            'participant_count', 'user_balance', 'created_at',
+            'participant_count', 'user_balance', 'my_rosca_slot',
+            'is_admin', 'created_at',
         ]
         extra_kwargs = {
             'invite_code':    {'read_only': True},
@@ -56,11 +65,54 @@ class ContributionSerializer(serializers.ModelSerializer):
     def get_voting_label(self, obj):
         labels = {
             'admins': 'Admins only',
-            '25': '25% of members',
-            '50': '50% of members',
-            '100': 'All members',
+            '50':     '50%+1 majority',
+            '100':    'All members',
         }
-        return labels.get(obj.voting_threshold, obj.voting_threshold)
+        if obj.voting_threshold in labels:
+            return labels[obj.voting_threshold]
+        # Custom numeric percentage
+        try:
+            pct = int(obj.voting_threshold)
+            return f'{pct}% of members'
+        except (ValueError, TypeError):
+            return obj.voting_threshold
+
+    def get_my_rosca_slot(self, obj):
+        """
+        Returns the current user's ROSCA rotation slot so the mobile client can
+        show "Your turn: Slot 3 · Expected KES 4,500" without a separate API call.
+        Returns None when no ROSCA rotation has been set up (Issue 13).
+        """
+        request = self.context.get('request')
+        if not request or not request.user.is_authenticated:
+            return None
+        try:
+            slot = (
+                obj.rosca_slots
+                .select_related('participant__user')
+                .filter(participant__user=request.user)
+                .order_by('cycle_number', 'slot_order')
+                .first()
+            )
+            if slot is None:
+                return None
+            return {
+                'slot_order':    slot.slot_order,
+                'cycle_number':  slot.cycle_number,
+                'has_received':  slot.has_received,
+                'payout_amount': str(slot.payout_amount) if slot.payout_amount else None,
+                'received_at':   slot.received_at.isoformat() if slot.received_at else None,
+            }
+        except Exception:
+            return None
+
+    def get_is_admin(self, obj):
+        """True if the requesting user is the creator OR a community admin/treasurer."""
+        request = self.context.get('request')
+        if not request or not request.user.is_authenticated:
+            return False
+        from apps.ledger.permissions import FinancialPermissions
+        return FinancialPermissions.is_contribution_admin(obj, request.user)
 
     def validate(self, attrs):
         # For partial updates fall back to the existing instance values so that
@@ -89,15 +141,34 @@ class ContributionSerializer(serializers.ModelSerializer):
 
 
 class ContributionParticipantSerializer(serializers.ModelSerializer):
-    phone_number = serializers.CharField(source='user.phone_number', read_only=True)
-    name         = serializers.SerializerMethodField()
+    phone_number   = serializers.CharField(source='user.phone_number', read_only=True)
+    name           = serializers.SerializerMethodField()
+    balance        = serializers.SerializerMethodField()
+    progress_pct   = serializers.SerializerMethodField()
 
     def get_name(self, obj):
-        return obj.user.name or None   # blank string → null so frontend || fallback works cleanly
+        return obj.user.name or None
+
+    def get_balance(self, obj):
+        """How much this member has contributed to this contribution so far."""
+        b = obj.contribution.balances.filter(user=obj.user).first()
+        return str(b.amount) if b else '0.00'
+
+    def get_progress_pct(self, obj):
+        """
+        Percentage of member_target_amount reached by this member.
+        Returns None if the contribution has no member_target_amount.
+        """
+        target = obj.contribution.member_target_amount
+        if not target or target <= 0:
+            return None
+        b = obj.contribution.balances.filter(user=obj.user).first()
+        amount = b.amount if b else 0
+        return round(float(amount) / float(target) * 100, 1)
 
     class Meta:
         model = ContributionParticipant
-        fields = ['id', 'phone_number', 'name', 'joined_at', 'is_active']
+        fields = ['id', 'phone_number', 'name', 'is_active', 'balance', 'progress_pct']
 
 
 class ContributionPaymentSerializer(serializers.Serializer):
@@ -204,10 +275,31 @@ class DisbursementRequestSerializer(serializers.ModelSerializer):
 # ---------------------------------------------------------------------------
 
 class WelfareFundSerializer(serializers.ModelSerializer):
+    is_admin = serializers.SerializerMethodField()
+
+    def get_is_admin(self, obj):
+        """
+        True if the requesting user is an admin or treasurer of the fund's
+        community. Used by the mobile client to show/hide admin controls
+        without relying on spoofable URL params (Issue 07).
+        """
+        request = self.context.get('request')
+        if not request or not request.user.is_authenticated:
+            return False
+        if not obj.community:
+            return False
+        community = obj.community
+        user = request.user
+        return (
+            community.admin_id == user.pk
+            or community.treasurers.filter(pk=user.pk).exists()
+            or community.memberships.filter(user=user, is_admin=True).exists()
+        )
+
     class Meta:
         model = WelfareFund
-        fields = ['id', 'community', 'name', 'balance', 'monthly_contribution', 'created_at']
-        read_only_fields = ['balance']
+        fields = ['id', 'community', 'name', 'balance', 'monthly_contribution', 'created_at', 'is_admin']
+        read_only_fields = ['balance', 'is_admin']
 
 
 class WelfareContributionSerializer(serializers.ModelSerializer):

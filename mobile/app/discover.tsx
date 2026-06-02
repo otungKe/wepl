@@ -17,7 +17,7 @@ import { useFocusEffect, router } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import {
   discoverCommunities,
-  joinCommunity,
+  requestToJoinById,
   type Community,
 } from "../api/communities";
 import { joinContribution } from "../api/contributions";
@@ -42,17 +42,13 @@ const LIMIT = 20;
 
 // ─── Community card ───────────────────────────────────────────────────────────
 
-function CommunityCard({
-  item,
-  onJoined,
-}: {
-  item: Community;
-  onJoined: (id: number) => void;
-}) {
+function CommunityCard({ item }: { item: Community }) {
   const [joining, setJoining] = useState(false);
-  const [localStatus, setLocalStatus] = useState<
-    "none" | "PENDING" | "joined"
-  >(item.is_member ? "joined" : "none");
+  const [localStatus, setLocalStatus] = useState<"none" | "PENDING" | "joined">(
+    item.is_member                              ? "joined"  :
+    item.join_request_status === "PENDING"      ? "PENDING" :
+    "none"
+  );
 
   const categoryLabel =
     CATEGORIES.find((c) => c.key === item.category)?.label ?? item.category;
@@ -60,14 +56,13 @@ function CommunityCard({
   const handleJoin = async () => {
     setJoining(true);
     try {
-      await joinCommunity(item.id);
-      setLocalStatus("joined");
-      onJoined(item.id);
+      await requestToJoinById(item.id);
+      setLocalStatus("PENDING");
     } catch (e: any) {
       const msg =
         e?.response?.data?.error ||
         e?.response?.data?.detail ||
-        "Could not join community.";
+        "Could not send join request.";
       Alert.alert("Error", msg);
     } finally {
       setJoining(false);
@@ -94,18 +89,14 @@ function CommunityCard({
       {/* Body */}
       <View style={styles.cardBody}>
         <View style={styles.cardTitleRow}>
-          <Text style={styles.cardTitle} numberOfLines={1}>
-            {item.name}
-          </Text>
+          <Text style={styles.cardTitle} numberOfLines={1}>{item.name}</Text>
           <View style={styles.categoryChip}>
             <Text style={styles.categoryChipText}>{categoryLabel}</Text>
           </View>
         </View>
 
         {!!item.description && (
-          <Text style={styles.cardDesc} numberOfLines={2}>
-            {item.description}
-          </Text>
+          <Text style={styles.cardDesc} numberOfLines={2}>{item.description}</Text>
         )}
 
         <View style={styles.cardMeta}>
@@ -117,9 +108,7 @@ function CommunityCard({
             <>
               <Text style={styles.cardMetaDot}>·</Text>
               <Ionicons name="location-outline" size={13} color={COLORS.textMuted} />
-              <Text style={styles.cardMetaText} numberOfLines={1}>
-                {item.location}
-              </Text>
+              <Text style={styles.cardMetaText} numberOfLines={1}>{item.location}</Text>
             </>
           )}
         </View>
@@ -134,21 +123,14 @@ function CommunityCard({
           </View>
         ) : localStatus === "PENDING" ? (
           <View style={[styles.joinedBadge, { borderColor: COLORS.warning }]}>
-            <Text style={[styles.joinedBadgeText, { color: COLORS.warning }]}>
-              Pending
-            </Text>
+            <Text style={[styles.joinedBadgeText, { color: COLORS.warning }]}>Pending</Text>
           </View>
         ) : (
-          <TouchableOpacity
-            style={styles.joinBtn}
-            onPress={handleJoin}
-            disabled={joining}
-          >
-            {joining ? (
-              <ActivityIndicator size={12} color={COLORS.white} />
-            ) : (
-              <Text style={styles.joinBtnText}>Join</Text>
-            )}
+          <TouchableOpacity style={styles.joinBtn} onPress={handleJoin} disabled={joining}>
+            {joining
+              ? <ActivityIndicator size={12} color={COLORS.white} />
+              : <Text style={styles.joinBtnText}>Join</Text>
+            }
           </TouchableOpacity>
         )}
       </View>
@@ -485,14 +467,7 @@ export default function DiscoverScreen() {
       keyExtractor={(i) => `g-${i.id}`}
       contentContainerStyle={styles.listContent}
       renderItem={({ item }) => (
-        <CommunityCard
-          item={item}
-          onJoined={(id) => {
-            // Remove from discover list once joined
-            setGroups((prev) => prev.filter((c) => c.id !== id));
-            setGroupTotal((t) => t - 1);
-          }}
-        />
+        <CommunityCard item={item} />
       )}
       ListHeaderComponent={
         <View>
@@ -988,3 +963,4 @@ const styles = StyleSheet.create({
     lineHeight:  22,
   },
 });
+

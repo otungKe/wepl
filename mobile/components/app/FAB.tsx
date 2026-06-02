@@ -1,4 +1,4 @@
-import { TouchableOpacity, StyleSheet, View } from "react-native";
+import { TouchableOpacity, StyleSheet, View, ActivityIndicator } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { COLORS, RADIUS } from "../../constants/theme";
@@ -17,22 +17,28 @@ type Props = {
   icon?: keyof typeof ICON_MAP;
   onPress: () => void;
   disabled?: boolean;
+  /** Show a spinner in-place instead of the icon while an async action is in flight */
+  loading?: boolean;
   /** Extra bottom offset in px — pass the tab bar height when inside a tab screen */
   tabBarOffset?: number;
 };
 
-export default function FAB({ icon = "add", onPress, disabled, tabBarOffset = 0 }: Props) {
+export default function FAB({ icon = "add", onPress, disabled, loading = false, tabBarOffset = 0 }: Props) {
   const { bottom } = useSafeAreaInsets();
 
   return (
     <View style={[styles.wrap, { bottom: 20 + bottom + tabBarOffset }]} pointerEvents="box-none">
       <TouchableOpacity
-        style={[styles.btn, disabled && styles.disabled]}
+        style={[styles.btn, (disabled || loading) && styles.disabled]}
         onPress={onPress}
-        disabled={disabled}
+        disabled={disabled || loading}
         activeOpacity={0.85}
+        accessibilityRole="button"
       >
-        <Ionicons name={ICON_MAP[icon] ?? "add"} size={28} color={COLORS.white} />
+        {loading
+          ? <ActivityIndicator color={COLORS.white} size="small" />
+          : <Ionicons name={ICON_MAP[icon] ?? "add"} size={28} color={COLORS.white} />
+        }
       </TouchableOpacity>
     </View>
   );

@@ -82,7 +82,7 @@ export default function ReportsScreen() {
 
   return (
     <SafeAreaView style={styles.safe}>
-      <AppHeader title="Reports & Statements" variant="light" leading="back" />
+      <AppHeader title="Reports & Statements" variant="light" leading="back" onBack={() => router.replace("/(drawer)/profile")} />
 
       {/* Tab bar */}
       <View style={styles.tabBar}>

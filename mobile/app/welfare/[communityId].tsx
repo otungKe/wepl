@@ -16,6 +16,7 @@ import {
 import { initiateSTKPush, checkSTKStatus } from "../../api/mpesa";
 import { COLORS, FONTS, RADIUS } from "../../constants/theme";
 import AppHeader from "../../components/app/AppHeader";
+import { useKYCGate } from "../../hooks/useKYCGate";
 
 function statusBg(s: string) {
   switch (s) {
@@ -39,6 +40,8 @@ export default function WelfareScreen() {
 
   const [showPay, setShowPay]     = useState(false);
   const [showClaim, setShowClaim] = useState(false);
+
+  const { requireKYC } = useKYCGate();
   const [wAmount, setWAmount]     = useState("");
   const [wReason, setWReason]     = useState("");
   const [wPhone, setWPhone]       = useState("");
@@ -141,32 +144,14 @@ export default function WelfareScreen() {
     } finally { setSubmitting(false); }
   };
 
-  const handleVote = (claimId: number, action: 'approve' | 'reject') => {
-    const claim = claims.find((c) => c.id === claimId);
-    const label = action === 'approve' ? 'Approve' : 'Reject';
-    const amount = claim ? `KES ${Number(claim.amount_requested).toLocaleString()}` : 'this claim';
-    Alert.alert(
-      `${label} claim?`,
-      action === 'approve'
-        ? `Approving will immediately disburse ${amount} to the claimant's M-Pesa. This cannot be undone.`
-        : `Are you sure you want to reject ${amount}?`,
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: label,
-          style: action === 'approve' ? 'default' : 'destructive',
-          onPress: async () => {
-            try {
-              const updated = await voteWelfareClaim(claimId, action);
-              setClaims((prev) => prev.map((c) => c.id === claimId ? updated : c));
-              await load(); // reload activity + fund balance
-            } catch (e: any) {
-              Alert.alert("Error", e?.response?.data?.error || "Failed.");
-            }
-          },
-        },
-      ]
-    );
+  const handleVote = async (claimId: number, action: 'approve' | 'reject') => {
+    try {
+      const updated = await voteWelfareClaim(claimId, action);
+      setClaims((prev) => prev.map((c) => c.id === claimId ? updated : c));
+      await load();
+    } catch (e: any) {
+      Alert.alert("Error", e?.response?.data?.error || "Failed.");
+    }
   };
 
   if (loading) {
@@ -201,11 +186,11 @@ export default function WelfareScreen() {
               <Text style={styles.heroLabel}>TOTAL WELFARE POOL</Text>
               <Text style={styles.heroAmount}>KES {balance.toLocaleString()}</Text>
               <View style={styles.heroBtns}>
-                <TouchableOpacity style={styles.heroBtn} onPress={() => setShowPay(true)}>
+                <TouchableOpacity style={styles.heroBtn} onPress={() => { if (requireKYC()) setShowPay(true); }}>
                   <Ionicons name="add-circle-outline" size={18} color={COLORS.white} />
                   <Text style={styles.heroBtnText}>Contribute</Text>
                 </TouchableOpacity>
-                <TouchableOpacity style={[styles.heroBtn, styles.heroBtnOutline]} onPress={() => setShowClaim(true)}>
+                <TouchableOpacity style={[styles.heroBtn, styles.heroBtnOutline]} onPress={() => { if (requireKYC()) setShowClaim(true); }}>
                   <Ionicons name="hand-left-outline" size={18} color={COLORS.white} />
                   <Text style={styles.heroBtnText}>Submit Claim</Text>
                 </TouchableOpacity>

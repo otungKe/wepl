@@ -46,6 +46,8 @@ class Notification(models.Model):
         ('amendment_rejected',      'Amendment Rejected'),
         # Reminders
         ('reminder',                'Reminder'),
+        # ROSCA payout confirmed (B2C callback received)
+        ('rosca_payout_confirmed',  'ROSCA Payout Confirmed'),
     )
 
     user = models.ForeignKey(
@@ -79,3 +81,113 @@ class Notification(models.Model):
 
     def __str__(self):
         return f"[{self.notification_type}] {self.user.phone_number}: {self.title}"
+
+
+class NotificationPreferences(models.Model):
+    """
+    Per-user notification preference flags.
+
+    One row per user, auto-created on first access.
+    All flags default to True (opt-in for everything).
+
+    The send_notification Celery task checks these flags before creating a
+    Notification record or dispatching an FCM push — so toggling a category
+    OFF means the user genuinely receives nothing for that category.
+    """
+    user = models.OneToOneField(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name='notification_prefs',
+    )
+    # Master switch — if False, suppress ALL notifications.
+    push_enabled  = models.BooleanField(default=True)
+
+    # Category switches
+    payments      = models.BooleanField(default=True)  # payments & M-Pesa
+    contributions = models.BooleanField(default=True)  # contributions & governance
+    reminders     = models.BooleanField(default=True)  # scheduled reminders
+    communities   = models.BooleanField(default=True)  # community & chat activity
+    advances      = models.BooleanField(default=True)  # advances & welfare
+
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return f"NotifPrefs({self.user.phone_number})"
+
+
+# Maps each notification_type to one of the category fields above.
+# Types NOT in this map always pass through (e.g. system / admin messages).
+NOTIF_CATEGORY_MAP: dict[str, str] = {
+    # Payments & M-Pesa
+    'contribution_payment':      'payments',
+    'payment_recorded':          'payments',
+    'disbursement_sent':         'payments',
+    'advance_sent':              'payments',
+    'rosca_payout':              'payments',
+    'rosca_payout_confirmed':    'payments',
+    'welfare_disbursed':         'payments',
+    # Contributions & governance
+    'contribution_joined':       'contributions',
+    'contribution_milestone':    'contributions',
+    'rosca_rotation_set':        'contributions',
+    'disbursement_requested':    'contributions',
+    'disbursement_rejected':     'contributions',
+    'disbursement_executed':     'contributions',
+    'amendment_proposed':        'contributions',
+    'amendment_approved':        'contributions',
+    'amendment_rejected':        'contributions',
+    'contribution_join_request': 'contributions',
+    'contribution_invite':       'contributions',
+    'contribution_join_approved':'contributions',
+    'contribution_join_rejected':'contributions',
+    'contribution_invite_accepted':'contributions',
+    # Reminders
+    'reminder':                  'reminders',
+    # Community & chat
+    'community_join':            'communities',
+    'join_request':              'communities',
+    'join_approved':             'communities',
+    'join_rejected':             'communities',
+    'conversation_created':      'communities',
+    'new_message':               'communities',
+    # Advances & welfare
+    'advance_requested':         'advances',
+    'advance_approved':          'advances',
+    'advance_rejected':          'advances',
+    'welfare_claim':             'advances',
+    'welfare_rejected':          'advances',
+}
+
+
+class UserDevice(models.Model):
+    """
+    Stores FCM registration tokens so the backend can send push notifications
+    to specific devices (Issue 19).
+
+    One user may have multiple devices (e.g. phone + tablet).
+    Tokens are upserted on every app launch via POST /notifications/devices/.
+    Stale tokens are silently discarded by the FCM task after a 404 response.
+    """
+
+    PLATFORM_CHOICES = (
+        ('android', 'Android'),
+        ('ios',     'iOS'),
+    )
+
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name='devices',
+    )
+    fcm_token = models.TextField(unique=True)
+    platform  = models.CharField(max_length=10, choices=PLATFORM_CHOICES, default='android')
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        indexes = [
+            models.Index(fields=['user'], name='device_user_idx'),
+        ]
+
+    def __str__(self):
+        return f"{self.user.phone_number} [{self.platform}]"

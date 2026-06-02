@@ -39,3 +39,37 @@ export const deleteNotification = async (id: number) => {
 export const deleteAllNotifications = async () => {
   await API.delete("notifications/delete-all/");
 };
+
+/** Register or refresh an FCM device token with the backend (Issue 19). */
+export const registerDevice = async (
+  fcmToken: string,
+  platform: "android" | "ios"
+): Promise<void> => {
+  await API.post("notifications/devices/", { fcm_token: fcmToken, platform });
+};
+
+/** Unregister a device token on logout so stale tokens don't accumulate. */
+export const unregisterDevice = async (fcmToken: string): Promise<void> => {
+  await API.delete("notifications/devices/", { data: { fcm_token: fcmToken } });
+};
+
+export type NotifPrefs = {
+  push_enabled:  boolean;
+  payments:      boolean;
+  contributions: boolean;
+  reminders:     boolean;
+  communities:   boolean;
+  advances:      boolean;
+};
+
+/** Fetch the user's server-side notification preferences. */
+export const getNotifPrefs = async (): Promise<NotifPrefs> => {
+  const r = await API.get("notifications/preferences/");
+  return r.data;
+};
+
+/** Persist one or more preference flags to the server. */
+export const updateNotifPrefs = async (patch: Partial<NotifPrefs>): Promise<NotifPrefs> => {
+  const r = await API.patch("notifications/preferences/", patch);
+  return r.data;
+};

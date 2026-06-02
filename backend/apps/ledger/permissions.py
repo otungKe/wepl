@@ -68,3 +68,80 @@ class FinancialPermissions:
     def assert_community_admin(community, user, msg: str | None = None) -> None:
         if not FinancialPermissions.is_community_admin(community, user):
             raise PermissionDenied(msg or "Only community admins can perform this action.")
+
+    @staticmethod
+    def eligible_voter_count(contribution, threshold: str, excluding_user) -> int:
+        """
+        Count how many people can vote on a governance action for *contribution*
+        under *threshold*, excluding *excluding_user* (the actor/requester).
+
+        threshold values:
+          'admins' → contribution creator + community admins/treasurers
+          '50', '67', '100', or any numeric string → all active participants
+        """
+        from apps.contributions.models import ContributionParticipant
+
+        if threshold == 'admins':
+            count = 0
+            # Contribution creator is always an eligible admin voter
+            if (contribution.created_by_id is not None and
+                    contribution.created_by_id != excluding_user.id):
+                count += 1
+            if contribution.community_id:
+                from apps.communities.models import CommunityMembership
+                count += CommunityMembership.objects.filter(
+                    community_id=contribution.community_id,
+                    role__in=['admin', 'treasurer'],
+                    is_active=True,
+                ).exclude(user=excluding_user).count()
+            return count
+        else:
+            # Percentage-based: all active participants excluding the actor
+            return ContributionParticipant.objects.filter(
+                contribution=contribution, is_active=True,
+            ).exclude(user=excluding_user).count()
+
+    @staticmethod
+    def assert_quorum_exists(
+        contribution,
+        threshold: str,
+        actor,
+        action: str = "this action",
+    ) -> None:
+        """
+        Raise ValidationError if no eligible voter exists for the given threshold,
+        excluding the actor.
+
+        Call this before creating any governance request (disbursement, amendment)
+        so the actor discovers the deadlock immediately rather than submitting a
+        request that can never be approved.
+
+        Args:
+            contribution: the Contribution being governed
+            threshold:    the voting threshold string ('admins', '50', etc.)
+            actor:        the user initiating the action
+            action:       human-readable action name for the error message
+        """
+        from django.core.exceptions import ValidationError
+
+        count = FinancialPermissions.eligible_voter_count(contribution, threshold, actor)
+        if count == 0:
+            if threshold == 'admins':
+                detail = (
+                    "The approval threshold is 'Admins only' but there are no "
+                    "other admins who can vote on your request."
+                )
+                fix = (
+                    "Ask a community admin to change the approval threshold, "
+                    "or to perform this action on your behalf."
+                )
+            else:
+                detail = (
+                    f"The approval threshold requires {threshold}% of members "
+                    "but there are no other active participants who can vote."
+                )
+                fix = "Add more members to this contribution first."
+
+            raise ValidationError(
+                f"Cannot {action}: {detail} {fix}"
+            )

@@ -20,6 +20,9 @@ class NotificationService:
         join_request_id=None,
     ):
         """
+        Create a Notification record and enqueue an FCM push to the user's
+        registered devices (Issue 19).
+
         Accepts either a User instance (``user=``) or a plain integer
         (``user_id=``) so it can be called safely from ``transaction.on_commit``
         callbacks where the ORM object may no longer be in scope.
@@ -27,7 +30,7 @@ class NotificationService:
         if user_id is None and user is not None:
             user_id = user.id if hasattr(user, 'id') else user
 
-        return Notification.objects.create(
+        notification = Notification.objects.create(
             user_id=user_id,
             notification_type=notification_type,
             title=title,
@@ -37,6 +40,9 @@ class NotificationService:
             contribution_id=contribution_id,
             join_request_id=join_request_id,
         )
+        # FCM dispatch is handled by the send_notification Celery task that
+        # calls this method — do NOT dispatch here to avoid double-firing.
+        return notification
 
     @staticmethod
     def get_for_user(user):
@@ -61,3 +67,26 @@ class NotificationService:
     @staticmethod
     def delete_all(user):
         Notification.objects.filter(user=user).delete()
+
+    # ── Device registration ──────────────────────────────────────────────────
+
+    @staticmethod
+    def register_device(user, fcm_token, platform='android'):
+        """
+        Upsert a device token for a user.
+
+        Called on every app launch so the token stays fresh — FCM tokens rotate
+        periodically and the old token becomes invalid (Issue 19).
+        """
+        from .models import UserDevice
+        device, _ = UserDevice.objects.update_or_create(
+            fcm_token=fcm_token,
+            defaults={'user': user, 'platform': platform},
+        )
+        return device
+
+    @staticmethod
+    def unregister_device(user, fcm_token):
+        """Remove a token on logout so stale tokens don't accumulate."""
+        from .models import UserDevice
+        UserDevice.objects.filter(user=user, fcm_token=fcm_token).delete()

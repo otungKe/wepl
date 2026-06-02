@@ -57,8 +57,11 @@ class Contribution(models.Model):
     )
     invite_code = models.CharField(max_length=20, unique=True, default=_generate_invite_code)
 
-    target_amount = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
-    current_amount = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    target_amount        = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
+    current_amount       = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    # Per-member personal target: amount each individual participant should
+    # reach by the end date. Separate from target_amount (the pool total).
+    member_target_amount = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
 
     # Term / tenure
     tenure_type   = models.CharField(max_length=10, choices=TENURE_CHOICES, default='open')
@@ -70,9 +73,51 @@ class Contribution(models.Model):
     amount_type = models.CharField(max_length=10, choices=AMOUNT_TYPE_CHOICES, default='open')
     fixed_amount = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
 
-    # Governance
+    # Governance — disbursement voting
     voting_threshold = models.CharField(
         max_length=10, choices=VOTING_THRESHOLD_CHOICES, default='admins'
+    )
+
+    # ── Section C: Contribution Governance settings ───────────────────────────
+
+    # 1. Transaction visibility — who can see each other's payments
+    TX_VIS_CHOICES = (
+        ('all',        'All participants see all transactions'),
+        ('own',        'Each member sees only their own transactions'),
+        ('admins_all', 'Admins see all; members see their own only'),
+    )
+    transaction_visibility = models.CharField(
+        max_length=15, choices=TX_VIS_CHOICES, default='all'
+    )
+
+    # 2. Who can propose amendments to contribution settings
+    AMENDMENT_PROPOSER_CHOICES = (
+        ('creator', 'Creator only'),
+        ('admins',  'Admins and treasurers'),
+        ('members', 'Any active participant'),
+    )
+    amendment_proposer = models.CharField(
+        max_length=10, choices=AMENDMENT_PROPOSER_CHOICES, default='creator'
+    )
+
+    # 3. Amendment voting threshold (separate from disbursement threshold)
+    amendment_voting_threshold = models.CharField(
+        max_length=10, choices=VOTING_THRESHOLD_CHOICES, default='admins',
+        help_text="Threshold to approve a contribution amendment proposal.",
+    )
+
+    # 4. Late contribution policy — what happens after the end_date
+    LATE_CONTRIBUTION_CHOICES = (
+        ('open',   'Allow contributions anytime'),
+        ('strict', 'Block contributions after end date'),
+        ('grace',  'Allow during a grace period after end date'),
+    )
+    late_contribution_policy    = models.CharField(
+        max_length=10, choices=LATE_CONTRIBUTION_CHOICES, default='open'
+    )
+    late_contribution_grace_days = models.PositiveSmallIntegerField(
+        default=7,
+        help_text="Days after end_date that contributions are still accepted (grace policy only).",
     )
 
     # Legacy fields kept for backwards compatibility
@@ -93,22 +138,39 @@ class Contribution(models.Model):
         default=False,
         help_text='Marks this as a public fundraising campaign (visible in Discover).',
     )
+
+    # Set by AmendmentService._apply() whenever voting_threshold changes.
+    # Prevents disbursements approved under the old (possibly stricter) threshold
+    # from executing immediately after governance is relaxed (Issue 16).
+    governance_locked_until = models.DateTimeField(
+        null=True, blank=True,
+        help_text='Disbursements cannot execute until this timestamp passes after a governance change.',
+    )
+
     created_at  = models.DateTimeField(auto_now_add=True)
 
     def required_approvals(self):
-        """Compute required approvals from voting_threshold + live member count."""
+        """Compute required approvals from voting_threshold + live member count.
+
+        Handles the named thresholds (admins, 50, 100) plus any custom integer
+        percentage string (e.g. '60', '75'). Unknown values fall back to 1.
+        """
         total = self.participants.filter(is_active=True).count()
         t = self.voting_threshold
+
         if t == 'admins':
-            # Any single admin/treasurer approval is sufficient
             return 1
-        elif t == '25':
-            return max(1, math.ceil(total * 0.25))
-        elif t == '50':
-            return max(1, math.ceil(total * 0.50))
-        elif t == '100':
+        if t == '100':
             return max(1, total)
-        return 1
+
+        # Handle any numeric percentage: '50', '25', '75', etc.
+        try:
+            pct = int(t)
+            if pct <= 0:   return 1
+            if pct >= 100: return max(1, total)
+            return max(1, math.ceil(total * pct / 100))
+        except (ValueError, TypeError):
+            return 1
 
     class Meta:
         indexes = [

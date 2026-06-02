@@ -29,6 +29,7 @@ import { initiateSTKPush, checkSTKStatus } from "../../api/mpesa";
 import { COLORS, FONTS, RADIUS } from "../../constants/theme";
 import AppHeader from "../../components/app/AppHeader";
 import Avatar from "../../components/app/Avatar";
+import { useKYCGate } from "../../hooks/useKYCGate";
 
 type TabKey = 'members' | 'transactions' | 'disbursements' | 'amendments';
 
@@ -117,7 +118,7 @@ export default function ContributionDetailScreen() {
   const [notFound, setNotFound] = useState(false);
   const [forbidden, setForbidden] = useState(false);
   const [nonParticipantPreview, setNonParticipantPreview] = useState<{ id: number; title: string; status: string } | null>(null);
-  const [activeTab, setActiveTab] = useState<TabKey>('members');
+  const [activeTab, setActiveTab] = useState<TabKey>('transactions');
   const [showMenu, setShowMenu] = useState(false);
   const [myPhone, setMyPhone]   = useState("");
   const [myName, setMyName]     = useState("");
@@ -137,6 +138,8 @@ export default function ContributionDetailScreen() {
   // Transaction detail sheet
   const [selectedTx, setSelectedTx]           = useState<Transaction | null>(null);
   const [downloadingReceipt, setDownloading]  = useState(false);
+
+  const { requireKYC } = useKYCGate();
 
   // Edit standing order modal
   const [showEditOrder, setShowEditOrder]       = useState(false);
@@ -262,25 +265,48 @@ export default function ContributionDetailScreen() {
       setMpesaPolling(true);
       const checkoutId = result.checkout_request_id;
       let attempts = 0;
-      pollRef.current = setInterval(async () => {
+      let fired     = false;   // ensure Alert fires at most once per payment
+
+      // Capture the interval ID in the closure — NOT via pollRef — so that
+      // clearInterval always references the correct ID even if the component
+      // unmounts and pollRef.current is reset to null.
+      let intervalId: ReturnType<typeof setInterval>;
+
+      const stopPolling = () => {
+        clearInterval(intervalId);
+        pollRef.current = null;
+        setMpesaPolling(false);
+      };
+
+      intervalId = setInterval(async () => {
         attempts++;
         try {
           const s = await checkSTKStatus(checkoutId);
+
           if (s.status === 'SUCCESS') {
-            clearInterval(pollRef.current!);
-            pollRef.current = null;
-            setMpesaPolling(false);
-            await load();
-            Alert.alert("Payment received", `M-Pesa receipt: ${s.mpesa_receipt}`);
+            stopPolling();
+            if (!fired) {
+              fired = true;
+              await load();
+              Alert.alert("Payment received", `M-Pesa receipt: ${s.mpesa_receipt}`);
+            }
           } else if (s.status === 'FAILED' || attempts >= 12) {
-            clearInterval(pollRef.current!);
-            pollRef.current = null;
-            setMpesaPolling(false);
-            if (s.status === 'FAILED') Alert.alert("Payment failed", "M-Pesa payment was not completed.");
-            else Alert.alert("Timeout", "Could not confirm payment. Check your M-Pesa messages.");
+            stopPolling();
+            if (!fired) {
+              fired = true;
+              if (s.status === 'FAILED') {
+                Alert.alert("Payment failed", "M-Pesa payment was not completed. Please try again.");
+              } else {
+                Alert.alert("Payment pending", "We couldn't confirm the payment yet. Check your M-Pesa messages — if deducted, it will reflect shortly.");
+              }
+            }
           }
-        } catch { clearInterval(pollRef.current!); pollRef.current = null; setMpesaPolling(false); }
+        } catch {
+          stopPolling();
+        }
       }, 5000);
+
+      pollRef.current = intervalId;
     } catch (e: any) {
       Alert.alert("Error", e?.response?.data?.error || "STK push failed.");
     } finally {
@@ -309,34 +335,23 @@ export default function ContributionDetailScreen() {
     } finally { setSubmitting(false); }
   };
 
-  const handleExecuteOrder = (orderId: number) => {
-    Alert.alert("Execute payout?", "This will transfer funds immediately.", [
-      { text: "Cancel", style: "cancel" },
-      { text: "Execute", onPress: async () => {
-        try {
-          await executeStandingOrder(orderId);
-          const orders = await getStandingOrders(contributionId);
-          setStandingOrders(orders);
-          await load();
-        } catch (e: any) {
-          Alert.alert("Error", e?.response?.data?.error || "Failed.");
-        }
-      }},
-    ]);
+  const handleExecuteOrder = async (orderId: number) => {
+    try {
+      await executeStandingOrder(orderId);
+      const orders = await getStandingOrders(contributionId);
+      setStandingOrders(orders);
+    } catch (e: any) {
+      Alert.alert("Error", e?.response?.data?.error || "Failed.");
+    }
   };
 
-  const handleCancelOrder = (orderId: number) => {
-    Alert.alert("Cancel standing order?", "This will stop future payouts.", [
-      { text: "Keep", style: "cancel" },
-      { text: "Cancel Order", style: "destructive", onPress: async () => {
-        try {
-          await cancelStandingOrder(orderId);
-          setStandingOrders((prev) => prev.map((o) => o.id === orderId ? { ...o, is_active: false } : o));
-        } catch (e: any) {
-          Alert.alert("Error", e?.response?.data?.error || "Failed.");
-        }
-      }},
-    ]);
+  const handleCancelOrder = async (orderId: number) => {
+    try {
+      await cancelStandingOrder(orderId);
+      setStandingOrders((prev) => prev.map((o) => o.id === orderId ? { ...o, is_active: false } : o));
+    } catch (e: any) {
+      Alert.alert("Error", e?.response?.data?.error || "Failed.");
+    }
   };
 
   const handleOpenEditOrder = (order: StandingOrderType) => {
@@ -372,28 +387,13 @@ export default function ContributionDetailScreen() {
     }
   };
 
-  const handleCancelDisbursement = (requestId: number) => {
-    Alert.alert(
-      "Withdraw request?",
-      "This will cancel your disbursement request and it cannot be resubmitted automatically.",
-      [
-        { text: "Keep", style: "cancel" },
-        {
-          text: "Withdraw",
-          style: "destructive",
-          onPress: async () => {
-            try {
-              const updated = await cancelDisbursementRequest(requestId);
-              setDisbursements((prev) =>
-                prev.map((d) => (d.id === requestId ? updated : d))
-              );
-            } catch (e: any) {
-              Alert.alert("Error", e?.response?.data?.error || "Failed to cancel request.");
-            }
-          },
-        },
-      ]
-    );
+  const handleCancelDisbursement = async (requestId: number) => {
+    try {
+      const updated = await cancelDisbursementRequest(requestId);
+      setDisbursements((prev) => prev.map((d) => (d.id === requestId ? updated : d)));
+    } catch (e: any) {
+      Alert.alert("Error", e?.response?.data?.error || "Failed to cancel request.");
+    }
   };
 
   const handleCreateDisbursement = async () => {
@@ -407,82 +407,41 @@ export default function ContributionDetailScreen() {
       setShowDisbursement(false);
       setAmount(""); setDisbReason(""); setDisbRecipient("");
       await load();
-      Alert.alert("Request submitted", "Members will be notified to vote.");
     } catch (e: any) {
       Alert.alert("Error", e?.response?.data?.error || "Failed.");
     } finally { setSubmitting(false); }
   };
 
-  const handleClose = () => {
+  const handleClose = async () => {
     setShowMenu(false);
-    Alert.alert(
-      contribution?.status === 'closed' ? "Reopen Contribution" : "Close Contribution",
-      contribution?.status === 'closed'
-        ? "Reopen this contribution so members can continue participating?"
-        : "Close this contribution? No new activity will be allowed.",
-      [
-        { text: "Cancel", style: "cancel" },
-        {
-          text: contribution?.status === 'closed' ? "Reopen" : "Close",
-          onPress: async () => {
-            try {
-              const updated = contribution?.status === 'closed'
-                ? await reopenContribution(contributionId)
-                : await closeContribution(contributionId);
-              setContribution(updated);
-            } catch (e: any) {
-              Alert.alert("Error", e?.response?.data?.error || "Failed.");
-            }
-          },
-        },
-      ]
-    );
+    try {
+      const updated = contribution?.status === 'closed'
+        ? await reopenContribution(contributionId)
+        : await closeContribution(contributionId);
+      setContribution(updated);
+    } catch (e: any) {
+      Alert.alert("Error", e?.response?.data?.error || "Failed.");
+    }
   };
 
-  const handleArchive = () => {
+  const handleArchive = async () => {
     setShowMenu(false);
-    Alert.alert(
-      "Archive Contribution",
-      "Archive this contribution? It will be hidden from your active list.",
-      [
-        { text: "Cancel", style: "cancel" },
-        {
-          text: "Archive",
-          style: "destructive",
-          onPress: async () => {
-            try {
-              await archiveContribution(contributionId);
-              router.back();
-            } catch (e: any) {
-              Alert.alert("Error", e?.response?.data?.error || "Failed.");
-            }
-          },
-        },
-      ]
-    );
+    try {
+      await archiveContribution(contributionId);
+      router.back();
+    } catch (e: any) {
+      Alert.alert("Error", e?.response?.data?.error || "Failed.");
+    }
   };
 
-  const handleDelete = () => {
+  const handleDelete = async () => {
     setShowMenu(false);
-    Alert.alert(
-      "Delete Contribution",
-      "Permanently delete this contribution and all its data? This cannot be undone.",
-      [
-        { text: "Cancel", style: "cancel" },
-        {
-          text: "Delete",
-          style: "destructive",
-          onPress: async () => {
-            try {
-              await deleteContribution(contributionId);
-              router.back();
-            } catch (e: any) {
-              Alert.alert("Error", e?.response?.data?.error || "Failed.");
-            }
-          },
-        },
-      ]
-    );
+    try {
+      await deleteContribution(contributionId);
+      router.back();
+    } catch (e: any) {
+      Alert.alert("Error", e?.response?.data?.error || "Failed.");
+    }
   };
 
   const handleShare = async () => {
@@ -565,7 +524,7 @@ export default function ContributionDetailScreen() {
       setAmendments((prev) => prev.map((a) => a.id === amendmentId ? updated : a));
       if (updated.status === 'APPROVED') {
         await load(); // refresh contribution to show applied changes
-        Alert.alert("Amendment approved!", "The changes have been applied to this contribution.");
+        // UI reloads via load() — no extra alert needed
       }
     } catch (e: any) {
       Alert.alert("Error", e?.response?.data?.error || "Vote failed.");
@@ -576,7 +535,6 @@ export default function ContributionDetailScreen() {
     try {
       const jr = await requestJoinContribution(contributionId);
       setMyJoinRequest(jr);
-      Alert.alert("Request sent", "The contribution admins have been notified. You'll be notified once reviewed.");
     } catch (e: any) {
       Alert.alert("Error", e?.response?.data?.error || "Could not send join request.");
     }
@@ -589,7 +547,6 @@ export default function ContributionDetailScreen() {
       await inviteMemberToContribution(contributionId, invitePhone.trim());
       setShowInvite(false);
       setInvitePhone("");
-      Alert.alert("Invitation sent", `${invitePhone.trim()} has been invited to join this contribution.`);
     } catch (e: any) {
       Alert.alert("Error", e?.response?.data?.error || "Could not send invitation.");
     } finally {
@@ -606,7 +563,6 @@ export default function ContributionDetailScreen() {
         // Refresh participants + contribution (member count) so the new member appears instantly
         await load();
       }
-      Alert.alert(action === 'approve' ? "Approved" : "Declined", action === 'approve' ? "Member has been added to this contribution." : "Join request declined.");
     } catch (e: any) {
       Alert.alert("Error", e?.response?.data?.error || "Action failed.");
     }
@@ -619,35 +575,21 @@ export default function ContributionDetailScreen() {
       setMyInvite(null);
       if (action === 'accept') {
         await load();
-        Alert.alert("Welcome!", "You've joined this contribution.");
       } else {
-        Alert.alert("Declined", "You've declined the invitation.");
+        // UI updates via load()/setMyInvite — no extra alert needed
       }
     } catch (e: any) {
       Alert.alert("Error", e?.response?.data?.error || "Could not process response.");
     }
   };
 
-  const handleWithdrawAmendment = (amendmentId: number) => {
-    Alert.alert(
-      "Withdraw proposal",
-      "Are you sure you want to withdraw this amendment? All votes will be discarded.",
-      [
-        { text: "Cancel", style: "cancel" },
-        {
-          text: "Withdraw",
-          style: "destructive",
-          onPress: async () => {
-            try {
-              const updated = await withdrawAmendment(amendmentId);
-              setAmendments((prev) => prev.map((a) => a.id === amendmentId ? updated : a));
-            } catch (e: any) {
-              Alert.alert("Error", e?.response?.data?.error || "Could not withdraw proposal.");
-            }
-          },
-        },
-      ],
-    );
+  const handleWithdrawAmendment = async (amendmentId: number) => {
+    try {
+      const updated = await withdrawAmendment(amendmentId);
+      setAmendments((prev) => prev.map((a) => a.id === amendmentId ? updated : a));
+    } catch (e: any) {
+      Alert.alert("Error", e?.response?.data?.error || "Could not withdraw proposal.");
+    }
   };
 
   if (loading || (!contribution && !notFound && !forbidden && !nonParticipantPreview)) {
@@ -769,6 +711,8 @@ export default function ContributionDetailScreen() {
   if (!contribution) return null;
 
   const isCreator     = contribution.created_by === myPhone;
+  // is_admin from the API: true for creator OR community admin/treasurer
+  const isAdmin       = contribution.is_admin ?? isCreator;
   const isParticipant = participants.some((p) => p.phone_number === myPhone && p.is_active);
   const cur          = Number(contribution.current_amount);
   const tgt          = contribution.target_amount ? Number(contribution.target_amount) : 0;
@@ -777,8 +721,8 @@ export default function ContributionDetailScreen() {
   const pendingJoinRequests = joinRequests.length;
   const activeOrderCount    = standingOrders.filter((o) => o.is_active).length;
   const tabs: { key: TabKey; label: string; badge?: number }[] = [
-    { key: 'members',       label: 'Members', badge: pendingJoinRequests || undefined },
     { key: 'transactions',  label: 'Activity' },
+    { key: 'members',       label: 'Members', badge: pendingJoinRequests || undefined },
     { key: 'disbursements', label: 'Withdraw' },
     { key: 'amendments',    label: 'Amendments', badge: pendingAmendments },
   ];
@@ -802,7 +746,8 @@ export default function ContributionDetailScreen() {
               <Text style={styles.menuItemText}>Share invite code</Text>
             </TouchableOpacity>
 
-            {isCreator && (
+            {/* Admin actions — available to creator AND community admins */}
+            {isAdmin && (
               <>
                 <View style={styles.menuDivider} />
                 <TouchableOpacity style={styles.menuItem} onPress={() => { setShowMenu(false); handleEditOpen(); }}>
@@ -819,6 +764,12 @@ export default function ContributionDetailScreen() {
                   <Ionicons name="person-add-outline" size={18} color={COLORS.primary} />
                   <Text style={[styles.menuItemText, { color: COLORS.primary }]}>Invite Member</Text>
                 </TouchableOpacity>
+              </>
+            )}
+
+            {/* Creator-only destructive actions */}
+            {isCreator && (
+              <>
                 <View style={styles.menuDivider} />
                 <TouchableOpacity style={styles.menuItem} onPress={handleClose}>
                   <Ionicons
@@ -848,12 +799,9 @@ export default function ContributionDetailScreen() {
                 <View style={styles.menuDivider} />
                 <TouchableOpacity style={styles.menuItem} onPress={() => {
                   setShowMenu(false);
-                  Alert.alert("Leave contribution", "You will be removed as a participant.", [
-                    { text: "Cancel", style: "cancel" },
-                    { text: "Leave", style: "destructive", onPress: async () => {
-                      try { await leaveContribution(contributionId); router.back(); } catch {}
-                    }},
-                  ]);
+                  leaveContribution(contributionId)
+                    .then(() => router.back())
+                    .catch((e: any) => Alert.alert("Error", e?.response?.data?.error || "Could not leave contribution."));
                 }}>
                   <Ionicons name="exit-outline" size={18} color={COLORS.error} />
                   <Text style={[styles.menuItemText, { color: COLORS.error }]}>Leave</Text>
@@ -1061,7 +1009,10 @@ export default function ContributionDetailScreen() {
 
         {/* M-Pesa CTA — only for active participants */}
         {isParticipant && (
-          <TouchableOpacity style={styles.mpesaBtn} onPress={() => setShowMpesa(true)}>
+          <TouchableOpacity
+            style={styles.mpesaBtn}
+            onPress={() => { if (requireKYC()) setShowMpesa(true); }}
+          >
             <Ionicons name="phone-portrait-outline" size={18} color={COLORS.white} />
             <Text style={styles.mpesaBtnText}>Pay with M-Pesa</Text>
           </TouchableOpacity>
@@ -1143,56 +1094,65 @@ export default function ContributionDetailScreen() {
         {/* ── Members ─────────────────────────────────────────────────── */}
         {activeTab === 'members' && (
           <View style={styles.section}>
-            {/* Pending join requests — admin only */}
-            {isCreator && joinRequests.length > 0 && (
-              <>
-                <View style={styles.sectionHead}>
-                  <Text style={styles.sectionLabel}>JOIN REQUESTS</Text>
-                </View>
-                {joinRequests.map((jr) => (
-                  <View key={jr.id} style={[styles.card, { marginBottom: 8 }]}>
-                    <View style={styles.cardHead}>
-                      <Avatar name={jr.name || jr.phone_number} size={34} />
-                      <View style={{ flex: 1, marginLeft: 10 }}>
-                        <Text style={styles.memberName}>{jr.name || jr.phone_number}</Text>
-                        {jr.name ? <Text style={styles.memberPhone}>{jr.phone_number}</Text> : null}
-                      </View>
-                    </View>
-                    <View style={styles.voteRow}>
-                      <TouchableOpacity
-                        style={[styles.voteBtn, { backgroundColor: COLORS.success }]}
-                        onPress={() => handleActionJoinRequest(jr.id, 'approve')}
-                      >
-                        <Ionicons name="checkmark-outline" size={14} color={COLORS.white} />
-                        <Text style={styles.voteBtnText}>Approve</Text>
-                      </TouchableOpacity>
-                      <TouchableOpacity
-                        style={[styles.voteBtn, { backgroundColor: COLORS.error }]}
-                        onPress={() => handleActionJoinRequest(jr.id, 'reject')}
-                      >
-                        <Ionicons name="close-outline" size={14} color={COLORS.white} />
-                        <Text style={styles.voteBtnText}>Decline</Text>
-                      </TouchableOpacity>
-                    </View>
+            {/* Pending join requests — compact entry row for admins */}
+            {isAdmin && joinRequests.length > 0 && (
+              <TouchableOpacity
+                style={styles.joinRequestEntry}
+                onPress={() => router.push({
+                  pathname: `/contribution/${contributionId}/join-requests`,
+                  params: { title: contribution.title },
+                })}
+                activeOpacity={0.75}
+              >
+                <View style={styles.joinRequestEntryLeft}>
+                  <View style={styles.joinRequestBadge}>
+                    <Text style={styles.joinRequestBadgeText}>{joinRequests.length}</Text>
                   </View>
-                ))}
-                <View style={[styles.sectionHead, { marginTop: 12 }]}>
-                  <Text style={styles.sectionLabel}>PARTICIPANTS</Text>
+                  <View>
+                    <Text style={styles.joinRequestEntryTitle}>
+                      {joinRequests.length} join request{joinRequests.length !== 1 ? 's' : ''} pending
+                    </Text>
+                    <Text style={styles.joinRequestEntrySub}>Tap to review and approve</Text>
+                  </View>
                 </View>
-              </>
+                <Ionicons name="chevron-forward" size={16} color={COLORS.primary} />
+              </TouchableOpacity>
             )}
 
             {participants.length === 0 ? (
               <Text style={styles.empty}>No members yet.</Text>
             ) : participants.map((p) => {
               // For the logged-in user, fall back to the name saved at login if server hasn't returned one yet
-              const displayName = p.name || (p.phone_number === myPhone ? myName : null) || null;
+              const displayName   = p.name || (p.phone_number === myPhone ? myName : null) || null;
+              const memberTarget  = contribution?.member_target_amount;
+              const hasMemberGoal = !!memberTarget && p.progress_pct !== null;
+              const pct           = Math.min(p.progress_pct ?? 0, 100);
+              const reached       = pct >= 100;
               return (
                 <View key={p.id} style={styles.memberRow}>
-                  <Avatar name={displayName || p.phone_number} size={36} />
+                  <Avatar name={displayName || p.phone_number || "?"} size={36} />
                   <View style={{ flex: 1, marginLeft: 10 }}>
                     <Text style={styles.memberName}>{displayName || p.phone_number}</Text>
-                    {displayName ? <Text style={styles.memberPhone}>{p.phone_number}</Text> : null}
+                    {displayName && p.phone_number
+                      ? <Text style={styles.memberPhone}>{p.phone_number}</Text>
+                      : null}
+                    {hasMemberGoal && (
+                      <>
+                        {/* Progress bar */}
+                        <View style={styles.progressBarBg}>
+                          <View style={[
+                            styles.progressBarFill,
+                            { width: `${pct}%` as any },
+                            reached && { backgroundColor: COLORS.success },
+                          ]} />
+                        </View>
+                        <Text style={[styles.progressLabel, reached && { color: COLORS.success }]}>
+                          {reached
+                            ? `✓ Goal reached — KES ${Number(p.balance).toLocaleString()}`
+                            : `KES ${Number(p.balance).toLocaleString()} of KES ${Number(memberTarget).toLocaleString()} (${pct.toFixed(0)}%)`}
+                        </Text>
+                      </>
+                    )}
                   </View>
                 </View>
               );
@@ -1246,7 +1206,7 @@ export default function ContributionDetailScreen() {
           <View style={styles.section}>
 
             {/* Standing Orders — summary entry point */}
-            {isCreator && (
+            {isAdmin && (
               <>
                 <TouchableOpacity
                   style={styles.soSummaryRow}
@@ -1280,7 +1240,7 @@ export default function ContributionDetailScreen() {
             {/* Disbursement Requests */}
             <View style={styles.sectionHead}>
               <Text style={styles.sectionLabel}>DISBURSEMENT REQUESTS</Text>
-              <TouchableOpacity onPress={() => setShowDisbursement(true)}>
+              <TouchableOpacity onPress={() => { if (requireKYC()) setShowDisbursement(true); }}>
                 <Text style={styles.sectionAction}>+ Request</Text>
               </TouchableOpacity>
             </View>
@@ -1354,7 +1314,7 @@ export default function ContributionDetailScreen() {
           <View style={styles.section}>
             <View style={styles.sectionHead}>
               <Text style={styles.sectionLabel}>AMENDMENT PROPOSALS</Text>
-              {isCreator && (
+              {isAdmin && (
                 <TouchableOpacity onPress={handleAmendOpen}>
                   <Text style={styles.sectionAction}>+ Propose</Text>
                 </TouchableOpacity>
@@ -1861,6 +1821,18 @@ const styles = StyleSheet.create({
   heroBadgeText: { fontSize: 11, fontWeight: "700", color: COLORS.white },
   heroMeta:     { fontSize: FONTS.sm, color: "rgba(255,255,255,0.75)" },
 
+  joinRequestEntry: {
+    flexDirection: "row", alignItems: "center", justifyContent: "space-between",
+    backgroundColor: COLORS.primaryPale, borderRadius: RADIUS.md,
+    padding: 14, marginBottom: 12,
+    borderWidth: 1, borderColor: COLORS.primary + "30",
+  },
+  joinRequestEntryLeft:  { flexDirection: "row", alignItems: "center", gap: 12 },
+  joinRequestBadge:      { width: 32, height: 32, borderRadius: 16, backgroundColor: COLORS.primary, justifyContent: "center", alignItems: "center" },
+  joinRequestBadgeText:  { color: COLORS.white, fontWeight: "700", fontSize: FONTS.sm },
+  joinRequestEntryTitle: { fontSize: FONTS.md, fontWeight: "700", color: COLORS.primary },
+  joinRequestEntrySub:   { fontSize: FONTS.sm, color: COLORS.textSecondary, marginTop: 1 },
+
   mpesaBtn:     { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8, backgroundColor: "#1D7A45", margin: 16, marginBottom: 8, padding: 15, borderRadius: RADIUS.md },
   mpesaBtnText: { color: COLORS.white, fontWeight: "700", fontSize: FONTS.md },
 
@@ -1900,9 +1872,20 @@ const styles = StyleSheet.create({
   emptyBoxTitle: { fontSize: FONTS.md, fontWeight: "700", color: COLORS.text },
   emptyBoxSub:   { fontSize: FONTS.sm, color: COLORS.textMuted, textAlign: "center", lineHeight: 20 },
 
-  memberRow:   { flexDirection: "row", alignItems: "center", paddingVertical: 8 },
+  memberRow:   { flexDirection: "row", alignItems: "flex-start", paddingVertical: 8 },
   memberName:  { fontSize: FONTS.md, fontWeight: "600", color: COLORS.text },
   memberPhone: { fontSize: FONTS.sm, color: COLORS.textMuted },
+  progressBarBg: {
+    height: 5, backgroundColor: COLORS.divider,
+    borderRadius: 3, marginTop: 6, marginBottom: 3, overflow: "hidden",
+  },
+  progressBarFill: {
+    height: "100%" as any, backgroundColor: COLORS.primary,
+    borderRadius: 3,
+  },
+  progressLabel: {
+    fontSize: 11, color: COLORS.textSecondary, fontWeight: "500",
+  },
 
   txRow:      { flexDirection: "row", alignItems: "center", gap: 12, paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: COLORS.divider },
   txDot:      { width: 10, height: 10, borderRadius: 5 },

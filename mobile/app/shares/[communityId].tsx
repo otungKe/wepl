@@ -13,6 +13,7 @@ import { initiateSTKPush, checkSTKStatus } from "../../api/mpesa";
 import { COLORS, FONTS, RADIUS } from "../../constants/theme";
 import AppHeader from "../../components/app/AppHeader";
 import Avatar from "../../components/app/Avatar";
+import { useKYCGate } from "../../hooks/useKYCGate";
 
 export default function SharesScreen() {
   const { communityId, name } = useLocalSearchParams<{ communityId: string; name?: string }>();
@@ -28,6 +29,8 @@ export default function SharesScreen() {
   const [phone, setPhone]       = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [polling, setPolling]   = useState(false);
+
+  const { requireKYC } = useKYCGate();
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const load = useCallback(async () => {
@@ -161,7 +164,7 @@ export default function SharesScreen() {
               ) : (
                 <Text style={styles.noHolding}>You have no shares yet</Text>
               )}
-              <TouchableOpacity style={styles.addBtn} onPress={() => setShowAdd(true)}>
+              <TouchableOpacity style={styles.addBtn} onPress={() => { if (requireKYC()) setShowAdd(true); }}>
                 <Ionicons name="add-circle-outline" size={18} color={COLORS.white} />
                 <Text style={styles.addBtnText}>Add to My Shares</Text>
               </TouchableOpacity>

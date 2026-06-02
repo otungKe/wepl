@@ -1,19 +1,45 @@
+import logging
+
 from django.db.models import Count, Max, Q
 from django.db.models.functions import Coalesce, Greatest
 from django.shortcuts import get_object_or_404
 
-from rest_framework.views import APIView
-from rest_framework.response import Response
-from rest_framework.permissions import IsAuthenticated
 from rest_framework import status
+from rest_framework.exceptions import PermissionDenied, ValidationError
+from rest_framework.response import Response
+from rest_framework.views import APIView
 
-from .models import Community, CommunityMembership, CommunityJoinRequest
-from .serializers import CommunitySerializer, CommunityMembershipSerializer, CommunityJoinRequestSerializer
+from apps.users.auth import IsActiveSession
+
+from .models import Community, CommunityJoinRequest, CommunityMembership
+from .serializers import (
+    CommunityJoinRequestSerializer,
+    CommunityMembershipSerializer,
+    CommunitySerializer,
+    CommunityWriteSerializer,
+)
 from .services import CommunityService
 
+logger = logging.getLogger(__name__)
+
+Role = CommunityMembership.Role
+
+
+def _ctx(request):
+    """Serializer context carrying the current request (for is_member checks)."""
+    return {"request": request}
+
+
+def _is_admin(community, user) -> bool:
+    return community.memberships.filter(
+        user=user, role=Role.ADMIN, is_active=True,
+    ).exists()
+
+
+# ── My communities ─────────────────────────────────────────────────────────────
 
 class MyCommunitiesView(APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsActiveSession]
 
     def get(self, request):
         communities = (
@@ -21,58 +47,60 @@ class MyCommunitiesView(APIView):
             .filter(memberships__user=request.user, memberships__is_active=True)
             .distinct()
             .annotate(
-                last_msg=Max('conversations__messages__created_at'),
-                last_join=Max('memberships__joined_at'),
-                last_request=Max('join_requests__created_at'),
-                last_contrib=Max('contributions__created_at'),
+                last_msg=Max("conversations__messages__created_at"),
+                last_join=Max("memberships__joined_at"),
+                last_request=Max("join_requests__created_at"),
+                last_contrib=Max("contributions__created_at"),
             )
             .annotate(
                 last_activity=Greatest(
-                    Coalesce('last_msg', 'created_at'),
-                    Coalesce('last_join', 'created_at'),
-                    Coalesce('last_request', 'created_at'),
-                    Coalesce('last_contrib', 'created_at'),
-                    'created_at',
+                    Coalesce("last_msg",     "created_at"),
+                    Coalesce("last_join",    "created_at"),
+                    Coalesce("last_request", "created_at"),
+                    Coalesce("last_contrib", "created_at"),
+                    "created_at",
                 )
             )
-            .order_by('-last_activity')
+            .order_by("-last_activity")
         )
-        return Response(CommunitySerializer(communities, many=True).data)
+        return Response(CommunitySerializer(communities, many=True, context=_ctx(request)).data)
 
+
+# ── Discover ───────────────────────────────────────────────────────────────────
 
 class DiscoverCommunitiesView(APIView):
     """
     GET /api/communities/discover/
     Query params:
       q        — name / description search (case-insensitive)
-      category — filter by category slug  (e.g. savings, chama, welfare …)
-      location — partial location filter
-      limit    — max results, default 30, max 100
+      category — filter by category slug
+      location — partial match
+      limit    — max results per page (default 30, max 100)
       offset   — pagination offset
     """
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsActiveSession]
 
     def get(self, request):
-        q        = request.query_params.get('q', '').strip()
-        category = request.query_params.get('category', '').strip()
-        location = request.query_params.get('location', '').strip()
-        limit    = min(int(request.query_params.get('limit',  30)), 100)
-        offset   = int(request.query_params.get('offset', 0))
+        q        = request.query_params.get("q", "").strip()
+        category = request.query_params.get("category", "").strip()
+        location = request.query_params.get("location", "").strip()
 
-        # Only public communities the current user is NOT already a member of
+        try:
+            limit  = min(max(int(request.query_params.get("limit",  30)), 1), 100)
+            offset = max(int(request.query_params.get("offset",  0)), 0)
+        except (TypeError, ValueError):
+            raise ValidationError("limit and offset must be integers.")
+
         qs = (
             Community.objects
             .filter(is_private=False)
             .exclude(memberships__user=request.user, memberships__is_active=True)
             .annotate(
                 annotated_member_count=Count(
-                    'memberships',
-                    filter=Q(memberships__is_active=True),
-                    distinct=True,
+                    "memberships", filter=Q(memberships__is_active=True), distinct=True,
                 )
             )
         )
-
         if q:
             qs = qs.filter(Q(name__icontains=q) | Q(description__icontains=q))
         if category:
@@ -80,53 +108,146 @@ class DiscoverCommunitiesView(APIView):
         if location:
             qs = qs.filter(location__icontains=location)
 
-        qs = qs.order_by('-annotated_member_count', '-created_at')
-
-        total       = qs.count()
-        communities = list(qs[offset: offset + limit])
+        qs    = qs.order_by("-annotated_member_count", "-created_at")
+        total = qs.count()
 
         return Response({
-            'count':    total,
-            'has_more': (offset + limit) < total,
-            'results':  CommunitySerializer(
-                communities, many=True, context={'request': request}
+            "count":    total,
+            "has_more": (offset + limit) < total,
+            "results":  CommunitySerializer(
+                list(qs[offset: offset + limit]), many=True, context=_ctx(request),
             ).data,
         })
 
 
+# ── CRUD ───────────────────────────────────────────────────────────────────────
+
 class CommunityCreateView(APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsActiveSession]
 
     def post(self, request):
-        share_price = request.data.get('share_price')
-        serializer = CommunitySerializer(data=request.data)
-        if not serializer.is_valid():
-            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        share_price = request.data.get("share_price")
+        serializer  = CommunityWriteSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
         community = CommunityService.create_community(
-            request.user, serializer.validated_data, share_price=share_price
+            request.user, serializer.validated_data, share_price=share_price,
         )
-        return Response(CommunitySerializer(community).data, status=status.HTTP_201_CREATED)
+        return Response(
+            CommunitySerializer(community, context=_ctx(request)).data,
+            status=status.HTTP_201_CREATED,
+        )
 
 
 class CommunityDetailView(APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsActiveSession]
 
     def get(self, request, community_id):
         community = get_object_or_404(Community, id=community_id)
-        return Response(CommunitySerializer(community).data)
+        # Private communities are only visible to active members.
+        if community.is_private and not CommunityService.is_member(request.user, community):
+            raise PermissionDenied("This community is private.")
+        return Response(CommunitySerializer(community, context=_ctx(request)).data)
 
+
+class CommunityUpdateView(APIView):
+    """PATCH — creator or admin can amend community details including governance settings."""
+    permission_classes = [IsActiveSession]
+    ALLOWED_FIELDS = {
+        "name", "description", "is_private", "category", "location",
+        # Section A governance settings
+        "join_policy", "invite_permission", "contribution_permission",
+        "member_list_visibility", "max_members",
+        # Section B
+        "cooling_off_days",
+    }
+
+    def patch(self, request, community_id):
+        community = get_object_or_404(Community, id=community_id)
+        if community.created_by_id != request.user.id and not _is_admin(community, request.user):
+            raise PermissionDenied("Only the creator or an admin can edit community details.")
+
+        payload = {k: v for k, v in request.data.items() if k in self.ALLOWED_FIELDS}
+        if not payload:
+            raise ValidationError(
+                f"No valid fields provided. Editable: {sorted(self.ALLOWED_FIELDS)}"
+            )
+
+        # Guard: can't reduce max_members below current active member count
+        if "max_members" in payload and payload["max_members"] is not None:
+            active = community.memberships.filter(is_active=True).count()
+            if int(payload["max_members"]) < active:
+                raise ValidationError(
+                    f"max_members ({payload['max_members']}) cannot be less than "
+                    f"the current active member count ({active})."
+                )
+
+        serializer = CommunityWriteSerializer(community, data=payload, partial=True)
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+        logger.info("Community '%s' (id=%s) updated by %s", community.name, community.id, request.user.phone_number)
+        return Response(CommunitySerializer(community, context=_ctx(request)).data)
+
+
+class CommunityDeleteView(APIView):
+    permission_classes = [IsActiveSession]
+
+    def delete(self, request, community_id):
+        community = get_object_or_404(Community, id=community_id)
+        if community.created_by_id != request.user.id:
+            raise PermissionDenied("Only the creator can delete this community.")
+        logger.info("Community '%s' (id=%s) deleted by %s", community.name, community.id, request.user.phone_number)
+        community.delete()
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+# ── Membership ─────────────────────────────────────────────────────────────────
 
 class JoinCommunityView(APIView):
-    permission_classes = [IsAuthenticated]
+    """
+    Direct join endpoint.
+
+    Enforces join_policy:
+      open        → join immediately (if below max_members)
+      request     → redirect to the request-to-join flow
+      invite_only → blocked; must use invite link
+    """
+    permission_classes = [IsActiveSession]
 
     def post(self, request, community_id):
         community = get_object_or_404(Community, id=community_id)
+
+        policy = community.join_policy
+
+        if policy == Community.JoinPolicy.INVITE_ONLY:
+            raise PermissionDenied(
+                "This community is invite-only. Ask a member for an invite link."
+            )
+
+        if policy == Community.JoinPolicy.REQUEST:
+            # Redirect the caller to submit a join request instead.
+            return Response(
+                {
+                    "error": "join_request_required",
+                    "message": "This community requires admin approval to join. "
+                               "Submit a join request via the invite code flow.",
+                },
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        # policy == OPEN — check member cap before joining
+        if community.max_members:
+            active = community.memberships.filter(is_active=True).count()
+            if active >= community.max_members:
+                raise ValidationError(
+                    f"This community has reached its maximum of {community.max_members} members."
+                )
+
         membership = CommunityService.join_community(request.user, community)
         return Response({"message": f"You joined {community.name}", "role": membership.role})
 
 
 class LeaveCommunityView(APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsActiveSession]
 
     def post(self, request, community_id):
         community = get_object_or_404(Community, id=community_id)
@@ -135,75 +256,50 @@ class LeaveCommunityView(APIView):
 
 
 class CommunityMembersView(APIView):
-    permission_classes = [IsAuthenticated]
+    """
+    GET /communities/<id>/members/
+
+    Respects member_list_visibility:
+      all    → any active member can see the full list
+      admins → only admins/creator can see the full list;
+               regular members see only their own membership row
+    """
+    permission_classes = [IsActiveSession]
 
     def get(self, request, community_id):
         community = get_object_or_404(Community, id=community_id)
+
+        is_member_flag = CommunityService.is_member(request.user, community)
+        if not is_member_flag and community.created_by_id != request.user.id:
+            raise PermissionDenied("You are not a member of this community.")
+
+        is_admin_flag = (
+            community.created_by_id == request.user.id
+            or _is_admin(community, request.user)
+        )
+
+        vis = community.member_list_visibility
+        if vis == Community.MemberListVisibility.ADMINS and not is_admin_flag:
+            # Non-admins see only their own row
+            own = community.memberships.filter(user=request.user, is_active=True)
+            return Response(CommunityMembershipSerializer(own, many=True).data)
+
         members = CommunityService.get_members(community)
         return Response(CommunityMembershipSerializer(members, many=True).data)
 
 
-class CommunityUpdateView(APIView):
-    """PATCH /communities/<community_id>/update/ — creator or admin can amend community details."""
-    permission_classes = [IsAuthenticated]
-
-    ALLOWED_FIELDS = {'name', 'description', 'is_private', 'category', 'location'}
-
-    def patch(self, request, community_id):
-        community = get_object_or_404(Community, id=community_id)
-
-        # Only creator or admin membership
-        is_creator = community.created_by == request.user
-        is_admin   = CommunityMembership.objects.filter(
-            community=community, user=request.user,
-            role__in=['admin', 'treasurer'], is_active=True,
-        ).exists()
-
-        if not is_creator and not is_admin:
-            return Response(
-                {"error": "Only the community creator or an admin can edit community details."},
-                status=status.HTTP_403_FORBIDDEN,
-            )
-
-        payload = {k: v for k, v in request.data.items() if k in self.ALLOWED_FIELDS}
-        if not payload:
-            return Response(
-                {"error": f"No valid fields provided. Editable fields: {sorted(self.ALLOWED_FIELDS)}"},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-
-        serializer = CommunitySerializer(community, data=payload, partial=True)
-        if not serializer.is_valid():
-            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-
-        serializer.save()
-        return Response(CommunitySerializer(community).data)
-
-
-class CommunityDeleteView(APIView):
-    permission_classes = [IsAuthenticated]
-
-    def delete(self, request, community_id):
-        community = get_object_or_404(Community, id=community_id)
-        if community.created_by != request.user:
-            return Response({"error": "Only the creator can delete this community."}, status=403)
-        community.delete()
-        return Response(status=status.HTTP_204_NO_CONTENT)
-
-
-# ---------------------------------------------------------------------------
-# Role assignment
-# ---------------------------------------------------------------------------
+# ── Role management ────────────────────────────────────────────────────────────
 
 class AssignRoleView(APIView):
     """POST /communities/<community_id>/members/<membership_id>/role/"""
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsActiveSession]
 
     def post(self, request, community_id, membership_id):
         community = get_object_or_404(Community, id=community_id)
-        role = request.data.get("role")
         try:
-            membership = CommunityService.assign_role(request.user, community, membership_id, role)
+            membership = CommunityService.assign_role(
+                request.user, community, membership_id, request.data.get("role"),
+            )
         except CommunityMembership.DoesNotExist:
             return Response({"error": "Member not found."}, status=404)
         return Response(CommunityMembershipSerializer(membership).data)
@@ -211,7 +307,7 @@ class AssignRoleView(APIView):
 
 class RemoveMemberView(APIView):
     """DELETE /communities/<community_id>/members/<membership_id>/"""
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsActiveSession]
 
     def delete(self, request, community_id, membership_id):
         community = get_object_or_404(Community, id=community_id)
@@ -222,27 +318,23 @@ class RemoveMemberView(APIView):
         return Response(status=status.HTTP_204_NO_CONTENT)
 
 
-# ---------------------------------------------------------------------------
-# Invite code lookup
-# ---------------------------------------------------------------------------
+# ── Invite code ────────────────────────────────────────────────────────────────
 
 class CommunityByInviteView(APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsActiveSession]
 
     def get(self, request, code):
         community = CommunityService.get_community_by_invite(code)
         if not community:
             return Response({"error": "Invalid invite code."}, status=404)
-        return Response(CommunitySerializer(community).data)
+        return Response(CommunitySerializer(community, context=_ctx(request)).data)
 
 
-# ---------------------------------------------------------------------------
-# Join requests
-# ---------------------------------------------------------------------------
+# ── Join requests ──────────────────────────────────────────────────────────────
 
 class JoinRequestCreateView(APIView):
     """POST /communities/invite/<code>/request/ — submit a join request."""
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsActiveSession]
 
     def post(self, request, code):
         community = CommunityService.get_community_by_invite(code)
@@ -252,9 +344,52 @@ class JoinRequestCreateView(APIView):
         return Response(CommunityJoinRequestSerializer(req).data, status=201)
 
 
+class MyJoinRequestsView(APIView):
+    """GET /communities/my-requests/ — list the current user's pending join requests."""
+    permission_classes = [IsActiveSession]
+
+    def get(self, request):
+        requests = (
+            CommunityJoinRequest.objects
+            .filter(requester=request.user, status="PENDING")
+            .select_related("community")
+            .order_by("-created_at")
+        )
+        data = [
+            {
+                "id":          r.id,
+                "community_id":    r.community.id,
+                "community_name":  r.community.name,
+                "community_photo": r.community.community_photo.url if r.community.community_photo else None,
+                "member_count":    r.community.member_count if hasattr(r.community, 'member_count') else 0,
+                "created_at":  r.created_at.isoformat(),
+            }
+            for r in requests
+        ]
+        return Response(data)
+
+
+class JoinRequestCreateByIdView(APIView):
+    """POST /communities/<id>/request/ — submit a join request by community ID.
+
+    Used by the Discover flow where the serializer withholds invite_code from
+    non-members, so the client must use the community ID instead.
+    """
+    permission_classes = [IsActiveSession]
+
+    def post(self, request, community_id):
+        community = get_object_or_404(Community, id=community_id)
+        try:
+            req, _ = CommunityService.request_to_join(request.user, community)
+        except (ValidationError, Exception) as e:
+            msg = e.detail[0] if hasattr(e, 'detail') else str(e)
+            return Response({"error": msg}, status=400)
+        return Response(CommunityJoinRequestSerializer(req).data, status=201)
+
+
 class JoinRequestActionView(APIView):
     """POST /communities/join-requests/<req_id>/action/ — admin approves/rejects."""
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsActiveSession]
 
     def post(self, request, req_id):
         action = request.data.get("action")

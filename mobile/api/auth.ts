@@ -46,3 +46,23 @@ export const submitKYC = async (formData: FormData) => {
   });
   return response.data;
 };
+
+export type Visibility = "everyone" | "members" | "nobody";
+
+export type PrivacyPrefs = {
+  phone_visibility:        Visibility;
+  photo_visibility:        Visibility;
+  contribution_visibility: Visibility;
+  discoverable:            boolean;
+  show_online_status:      boolean;
+};
+
+export const getPrivacyPrefs = async (): Promise<PrivacyPrefs> => {
+  const r = await API.get("users/privacy/");
+  return r.data;
+};
+
+export const updatePrivacyPrefs = async (patch: Partial<PrivacyPrefs>): Promise<PrivacyPrefs> => {
+  const r = await API.patch("users/privacy/", patch);
+  return r.data;
+};

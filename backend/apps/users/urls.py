@@ -8,7 +8,13 @@ from .views import (
     ProtectedView,
     UserProfileView,
     KYCView,
+    KYCEmailVerifyView,
+    KYCResendEmailView,
+    KYCCheckIDView,
+    KYCCheckEmailView,
     FinancialSummaryView,
+    PrivacyPreferencesView,
+    AccountDeletionView,
 )
 
 urlpatterns = [
@@ -26,7 +32,17 @@ urlpatterns = [
     path('financial-summary/', FinancialSummaryView.as_view()),
 
     # KYC
-    path('kyc/', KYCView.as_view()),
+    path('kyc/',                       KYCView.as_view()),
+    path('kyc/verify-email/',          KYCEmailVerifyView.as_view()),
+    path('kyc/resend-verification/',   KYCResendEmailView.as_view()),
+    path('kyc/check-id/',              KYCCheckIDView.as_view()),
+    path('kyc/check-email/',           KYCCheckEmailView.as_view()),
+
+    # PRIVACY PREFERENCES
+    path('privacy/', PrivacyPreferencesView.as_view()),
+
+    # ACCOUNT DELETION (Kenya Data Protection Act 2019)
+    path('account/', AccountDeletionView.as_view()),
 
     # TEST ROUTE
     path('protected/', ProtectedView.as_view()),

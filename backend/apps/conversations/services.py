@@ -1,3 +1,5 @@
+import logging
+
 from django.core.exceptions import PermissionDenied
 from django.db.models import Max
 from django.db.models.functions import Coalesce
@@ -6,6 +8,8 @@ from django.utils import timezone
 
 from .models import Conversation, Message, ConversationReadStatus
 from apps.communities.models import Community, CommunityMembership
+
+logger = logging.getLogger(__name__)
 
 
 class ConversationService:
@@ -22,6 +26,11 @@ class ConversationService:
             topic=topic,
             photo=photo,
             created_by=user,
+        )
+        logger.info(
+            "ConversationService.create_conversation: user %s created conversation %s "
+            "in community %s (topic=%r)",
+            user.id, conversation.id, community.id, topic,
         )
         return conversation
 
@@ -43,9 +52,14 @@ class ConversationService:
             user=sender,
             is_active=True,
         ).exists():
+            logger.warning(
+                "ConversationService.create_message: user %s attempted to send a message "
+                "in conversation %s without community membership",
+                sender.id, conversation_id,
+            )
             raise PermissionDenied("Not a member of this community.")
 
-        return Message.objects.create(
+        msg = Message.objects.create(
             conversation=conversation,
             sender=sender,
             content=content,
@@ -53,6 +67,12 @@ class ConversationService:
             attachment=attachment,
             reply_to_id=reply_to_id,
         )
+        logger.info(
+            "ConversationService.create_message: user %s sent message %s "
+            "in conversation %s (type=%s)",
+            sender.id, msg.id, conversation_id, message_type,
+        )
+        return msg
 
     @staticmethod
     def get_messages(conversation_id, user):
@@ -118,5 +138,15 @@ class ConversationService:
                 is_active=True,
             ).exists()
             if not is_admin:
+                logger.warning(
+                    "ConversationService.delete_conversation: user %s unauthorized delete "
+                    "attempt on conversation %s",
+                    user.id, conversation.id,
+                )
                 raise PermissionDenied("Only the creator or a community admin can delete this conversation.")
+        logger.info(
+            "ConversationService.delete_conversation: user %s deleted conversation %s "
+            "in community %s",
+            user.id, conversation.id, conversation.community_id,
+        )
         conversation.delete()

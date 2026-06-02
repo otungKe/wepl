@@ -6,6 +6,12 @@ BASE_DIR = Path(__file__).resolve().parent.parent.parent
 
 SECRET_KEY = config('SECRET_KEY')
 
+# ─── Firebase (FCM push notifications) ───────────────────────────────────────
+# Path to a Firebase service-account JSON file (download from Firebase Console
+# → Project Settings → Service Accounts → Generate new private key).
+# Leave blank to disable push notifications — the app will still work without it.
+FIREBASE_CREDENTIALS_JSON = config('FIREBASE_CREDENTIALS_JSON', default='')
+
 # ─── Sentry (error tracking) ──────────────────────────────────────────────────
 # Set SENTRY_DSN in your environment to enable. Leave blank to disable.
 SENTRY_DSN = config('SENTRY_DSN', default='')
@@ -192,6 +198,11 @@ CELERY_BEAT_SCHEDULE = {
     'fire-due-reminders': {
         'task': 'apps.reminders.tasks.fire_due_reminders',
         'schedule': crontab(minute='*/30'),
+    },
+    # Notify borrowers with overdue emergency advances — runs daily at 9am EAT
+    'notify-overdue-advances': {
+        'task': 'apps.contributions.tasks.notify_overdue_advances',
+        'schedule': crontab(minute=0, hour=9),
     },
 }
 

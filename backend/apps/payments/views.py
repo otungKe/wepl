@@ -13,8 +13,9 @@ from django.shortcuts import get_object_or_404
 
 from rest_framework.views import APIView
 from rest_framework.response import Response
-from rest_framework.permissions import IsAuthenticated
 from rest_framework import status
+
+from apps.users.auth import IsActiveSession
 
 from apps.core.pagination import FinancialCursorPagination
 from apps.contributions.models import Contribution, ContributionParticipant
@@ -35,7 +36,7 @@ class ContributionPaymentsView(APIView):
     Requires the requesting user to be an active participant in the contribution
     (prevents IDOR enumeration of financial data across contributions).
     """
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsActiveSession]
 
     def get(self, request, contribution_id):
         contribution = get_object_or_404(Contribution, id=contribution_id)
@@ -49,6 +50,11 @@ class ContributionPaymentsView(APIView):
         is_creator = contribution.created_by_id == request.user.id
 
         if not is_participant and not is_creator:
+            logger.warning(
+                "ContributionPaymentsView: user %s attempted to access payments "
+                "for contribution %s without membership",
+                request.user.id, contribution_id,
+            )
             return Response(
                 {"error": "You are not a participant in this contribution."},
                 status=status.HTTP_403_FORBIDDEN,
@@ -57,6 +63,11 @@ class ContributionPaymentsView(APIView):
         payments = Payment.objects.filter(
             contribution=contribution
         ).select_related('user', 'recorded_by').order_by('-created_at')
+
+        logger.info(
+            "ContributionPaymentsView: user %s fetched payment history for contribution %s",
+            request.user.id, contribution_id,
+        )
 
         paginator = FinancialCursorPagination()
         page = paginator.paginate_queryset(payments, request)

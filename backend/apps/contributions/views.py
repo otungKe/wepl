@@ -1,13 +1,16 @@
+import logging
 from decimal import Decimal, InvalidOperation
 
 from django.shortcuts import get_object_or_404
 
 from rest_framework.views import APIView
 from rest_framework.response import Response
-from rest_framework.permissions import IsAuthenticated
 from rest_framework import status
 
 from apps.core.pagination import FinancialCursorPagination
+from apps.users.auth import IsActiveSession
+
+logger = logging.getLogger(__name__)
 
 MAX_SINGLE_CONTRIBUTION = Decimal('1000000')
 
@@ -60,7 +63,7 @@ def _member_only(contribution, user):
 # ---------------------------------------------------------------------------
 
 class ContributionCreateView(APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsActiveSession]
 
     def post(self, request):
         member_phones   = request.data.get('member_phones', [])
@@ -73,17 +76,26 @@ class ContributionCreateView(APIView):
 
         community = serializer.validated_data.get('community')
         if community:
-            from apps.communities.models import CommunityMembership
-            is_admin = (
-                community.created_by == request.user or
-                CommunityMembership.objects.filter(
-                    community=community, user=request.user,
-                    role='admin', is_active=True
-                ).exists()
-            )
-            if not is_admin:
+            from apps.communities.models import CommunityMembership, Community as CommunityModel
+
+            is_creator = community.created_by == request.user
+            is_admin   = is_creator or CommunityMembership.objects.filter(
+                community=community, user=request.user,
+                role__in=['admin', 'treasurer'], is_active=True
+            ).exists()
+            is_member  = is_admin or CommunityMembership.objects.filter(
+                community=community, user=request.user, is_active=True
+            ).exists()
+
+            perm = community.contribution_permission
+            if perm == CommunityModel.ContributionPermission.ADMINS and not is_admin:
                 return Response(
-                    {"error": "Only community admins can create contributions."},
+                    {"error": "Only admins and treasurers can create contributions in this community."},
+                    status=status.HTTP_403_FORBIDDEN,
+                )
+            if perm == CommunityModel.ContributionPermission.MEMBERS and not is_member:
+                return Response(
+                    {"error": "You must be a member of this community to create a contribution."},
                     status=status.HTTP_403_FORBIDDEN,
                 )
 
@@ -92,6 +104,10 @@ class ContributionCreateView(APIView):
             serializer.validated_data,
             member_phones=member_phones,
             add_all_members=add_all_members,
+        )
+        logger.info(
+            "ContributionCreateView: user %s created contribution %s ('%s')",
+            request.user.id, contribution.id, contribution.title,
         )
         return Response(
             ContributionSerializer(contribution, context={'request': request}).data,
@@ -102,7 +118,7 @@ class ContributionCreateView(APIView):
 
 
 class MyContributionsView(APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsActiveSession]
 
     def get(self, request):
         active = request.query_params.get('active', 'true').lower() != 'false'
@@ -115,11 +131,31 @@ class MyContributionsView(APIView):
 
 
 class CommunityContributionsView(APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsActiveSession]
 
     def get(self, request, community_id):
         from django.db.models import Count, Q, Prefetch
+        from apps.communities.models import Community, CommunityMembership
         from .models import ContributionBalance
+
+        community = get_object_or_404(Community, id=community_id)
+        is_member = (
+            community.created_by_id == request.user.id or
+            CommunityMembership.objects.filter(
+                community=community, user=request.user, is_active=True
+            ).exists()
+        )
+        if not is_member:
+            logger.warning(
+                "CommunityContributionsView: user %s attempted to list contributions "
+                "for community %s without membership",
+                request.user.id, community_id,
+            )
+            return Response(
+                {"error": "You must be a member of this community to view its contributions."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
         contributions = Contribution.objects.filter(
             community_id=community_id, is_active=True
         ).annotate(
@@ -141,7 +177,7 @@ class CommunityContributionsView(APIView):
 
 
 class OpenContributionsView(APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsActiveSession]
 
     def get(self, request):
         from django.db.models import Count, Q, Prefetch
@@ -175,15 +211,21 @@ class DiscoverCampaignsView(APIView):
       limit  — default 30, max 100
       offset — pagination offset
     """
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsActiveSession]
 
     def get(self, request):
         from django.db.models import Count, Q
         from django.utils import timezone
 
-        q      = request.query_params.get('q', '').strip()
-        limit  = min(int(request.query_params.get('limit',  30)), 100)
-        offset = int(request.query_params.get('offset', 0))
+        q = request.query_params.get('q', '').strip()
+        try:
+            limit  = min(int(request.query_params.get('limit',  30)), 100)
+            offset = int(request.query_params.get('offset', 0))
+        except (ValueError, TypeError):
+            return Response(
+                {"error": "limit and offset must be integers."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
         qs = (
             Contribution.objects
@@ -254,7 +296,7 @@ class DiscoverCampaignsView(APIView):
 
 
 class ContributionDetailView(APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsActiveSession]
 
     def get(self, request, contribution_id):
         from apps.communities.models import CommunityMembership
@@ -287,7 +329,7 @@ class ContributionDetailView(APIView):
 
 
 class ContributionByInviteView(APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsActiveSession]
 
     def get(self, request, invite_code):
         c = ContributionService.get_by_invite_code(invite_code)
@@ -297,31 +339,40 @@ class ContributionByInviteView(APIView):
 
 
 class JoinContributionView(APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsActiveSession]
 
     def post(self, request, contribution_id):
         participant = ContributionService.join_contribution(contribution_id, request.user)
+        logger.info(
+            "JoinContributionView: user %s joined contribution %s",
+            request.user.id, contribution_id,
+        )
         return Response(ContributionParticipantSerializer(participant).data)
 
 
 class LeaveContributionView(APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsActiveSession]
 
     def post(self, request, contribution_id):
         ContributionService.leave_contribution(contribution_id, request.user)
+        logger.info(
+            "LeaveContributionView: user %s left contribution %s",
+            request.user.id, contribution_id,
+        )
         return Response({"message": "Left successfully"})
 
 
 class ContributionCloseView(APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsActiveSession]
 
     def post(self, request, contribution_id):
         c = ContributionService.close_contribution(contribution_id, request.user)
+        logger.info("ContributionCloseView: user %s closed contribution %s", request.user.id, contribution_id)
         return Response(ContributionSerializer(c, context={'request': request}).data)
 
 
 class ContributionReopenView(APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsActiveSession]
 
     def post(self, request, contribution_id):
         c = ContributionService.reopen_contribution(contribution_id, request.user)
@@ -329,10 +380,11 @@ class ContributionReopenView(APIView):
 
 
 class ContributionArchiveView(APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsActiveSession]
 
     def post(self, request, contribution_id):
         c = ContributionService.archive_contribution(contribution_id, request.user)
+        logger.info("ContributionArchiveView: user %s archived contribution %s", request.user.id, contribution_id)
         return Response(ContributionSerializer(c, context={'request': request}).data)
 
 
@@ -343,7 +395,7 @@ class ContributionUpdateView(APIView):
     Sensitive field changes (fixed_amount, target_amount, voting_threshold,
     end_date, period_months, visibility) must go through an amendment proposal.
     """
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsActiveSession]
     DIRECT_FIELDS = {'title', 'description'}
 
     def patch(self, request, contribution_id):
@@ -380,15 +432,16 @@ class ContributionUpdateView(APIView):
 
 
 class ContributionDeleteView(APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsActiveSession]
 
     def delete(self, request, contribution_id):
         ContributionService.delete_contribution(contribution_id, request.user)
+        logger.info("ContributionDeleteView: user %s deleted contribution %s", request.user.id, contribution_id)
         return Response(status=status.HTTP_204_NO_CONTENT)
 
 
 class ContributionParticipantsView(APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsActiveSession]
 
     def get(self, request, contribution_id):
         ps = ContributionService.get_participants(contribution_id)
@@ -405,7 +458,7 @@ class ContributeView(APIView):
 
     This endpoint exists only to provide a clear migration error message.
     """
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsActiveSession]
 
     def post(self, request):
         return Response(
@@ -422,7 +475,7 @@ class ContributeView(APIView):
 
 
 class MyTransactionsView(APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsActiveSession]
 
     def get(self, request):
         txs = ContributionTransaction.objects.filter(
@@ -438,24 +491,49 @@ class MyTransactionsView(APIView):
 class ContributionTransactionsView(APIView):
     """
     GET /contributions/<contribution_id>/transactions/
-    Returns all transactions for a contribution — visible to any active participant.
+
+    Section C — transaction_visibility:
+      all        → all participants see all transactions
+      own        → each member sees only their own
+      admins_all → admins see all; members see their own only
     """
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsActiveSession]
 
     def get(self, request, contribution_id):
-        # Must be an active participant (or the creator)
+        contribution = get_object_or_404(Contribution, id=contribution_id)
+
         is_participant = ContributionParticipant.objects.filter(
-            contribution_id=contribution_id,
-            user=request.user,
-            is_active=True,
+            contribution=contribution, user=request.user, is_active=True,
         ).exists()
         if not is_participant:
             return Response(
                 {"error": "You are not a participant in this contribution."},
                 status=status.HTTP_403_FORBIDDEN,
             )
+
+        # Determine whether this user can see everyone's transactions
+        vis = contribution.transaction_visibility
+        is_admin = _is_contribution_member(contribution, request.user) and (
+            contribution.created_by == request.user or (
+                contribution.community and
+                __import__('apps.communities.models', fromlist=['CommunityMembership'])
+                .CommunityMembership.objects.filter(
+                    community=contribution.community,
+                    user=request.user,
+                    role__in=['admin', 'treasurer'],
+                    is_active=True,
+                ).exists()
+            )
+        )
+
+        see_all = (
+            vis == 'all' or
+            (vis == 'admins_all' and is_admin)
+        )
+
         txs = ContributionTransaction.objects.filter(
-            contribution_id=contribution_id
+            contribution=contribution,
+            **({}  if see_all else {'user': request.user}),
         ).select_related('user', 'contribution').order_by('-created_at')
         paginator = FinancialCursorPagination()
         page = paginator.paginate_queryset(txs, request)
@@ -469,7 +547,7 @@ class ContributionTransactionsView(APIView):
 # ---------------------------------------------------------------------------
 
 class ROSCARotationView(APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsActiveSession]
 
     def get(self, request, contribution_id):
         contribution = get_object_or_404(Contribution, id=contribution_id)
@@ -485,7 +563,7 @@ class ROSCARotationView(APIView):
 
 
 class ROSCAAdvanceSlotView(APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsActiveSession]
 
     def post(self, request, contribution_id):
         slot = ROSCAService.mark_slot_paid(contribution_id, request.user)
@@ -497,7 +575,7 @@ class ROSCAAdvanceSlotView(APIView):
 # ---------------------------------------------------------------------------
 
 class DisbursementRequestListCreateView(APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsActiveSession]
 
     def get(self, request, contribution_id):
         contribution = get_object_or_404(Contribution, id=contribution_id)
@@ -522,23 +600,32 @@ class DisbursementRequestListCreateView(APIView):
         req = DisbursementService.create_request(
             contribution_id, request.user, amount, reason, recipient_phone
         )
+        logger.info(
+            "DisbursementRequestListCreateView: user %s created disbursement request %s "
+            "for KES %s on contribution %s",
+            request.user.id, req.id, amount, contribution_id,
+        )
         return Response(DisbursementRequestSerializer(req).data, status=status.HTTP_201_CREATED)
 
 
 class DisbursementVoteView(APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsActiveSession]
 
     def post(self, request, request_id):
         vote_choice = request.data.get('vote', '').upper()
         if vote_choice not in ('APPROVE', 'REJECT'):
             return Response({"error": "vote must be APPROVE or REJECT"}, status=status.HTTP_400_BAD_REQUEST)
         req = DisbursementService.vote(request_id, request.user, vote_choice)
+        logger.info(
+            "DisbursementVoteView: user %s cast %s on disbursement request %s",
+            request.user.id, vote_choice, request_id,
+        )
         return Response(DisbursementRequestSerializer(req).data)
 
 
 class DisbursementCancelView(APIView):
     """Allow the requester to withdraw a pending disbursement request."""
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsActiveSession]
 
     def post(self, request, request_id):
         req = DisbursementService.cancel_request(request_id, request.user)
@@ -550,7 +637,7 @@ class DisbursementCancelView(APIView):
 # ---------------------------------------------------------------------------
 
 class CommunitySharesFundView(APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsActiveSession]
 
     def get(self, request, community_id):
         fund = get_object_or_404(SharesFund, community_id=community_id)
@@ -562,7 +649,7 @@ class CommunitySharesContributeView(APIView):
     DISABLED: All shares contributions must go through M-Pesa STK push.
     Use POST /api/mpesa/stk-push/ with payment_type='shares' instead.
     """
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsActiveSession]
 
     def post(self, request, community_id):
         return Response(
@@ -573,7 +660,7 @@ class CommunitySharesContributeView(APIView):
 
 class WelfareClaimVoteView(APIView):
     """Admin-only: approve or reject a pending welfare claim."""
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsActiveSession]
 
     def post(self, request, claim_id):
         action = request.data.get('action', 'approve').lower()
@@ -583,6 +670,10 @@ class WelfareClaimVoteView(APIView):
             claim = WelfareService.reject_claim(claim_id, request.user)
         else:
             claim = WelfareService.approve_claim(claim_id, request.user)
+        logger.info(
+            "WelfareClaimVoteView: user %s %sd welfare claim %s",
+            request.user.id, action, claim_id,
+        )
         return Response(WelfareClaimSerializer(claim).data)
 
 
@@ -591,7 +682,7 @@ class WelfareClaimVoteView(APIView):
 # ---------------------------------------------------------------------------
 
 class WelfareFundView(APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsActiveSession]
 
     def get(self, request, community_id):
         from apps.communities.models import Community
@@ -621,7 +712,7 @@ class WelfareContributeView(APIView):
     Called internally by the M-Pesa STK callback after a successful welfare payment.
     Direct POST from the mobile client is disabled — use M-Pesa STK push instead.
     """
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsActiveSession]
 
     def post(self, request, community_id):
         return Response(
@@ -631,7 +722,7 @@ class WelfareContributeView(APIView):
 
 
 class WelfareClaimListCreateView(APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsActiveSession]
 
     def _check_membership(self, community, user):
         """Return True if user is a member or creator of the community."""
@@ -670,6 +761,11 @@ class WelfareClaimListCreateView(APIView):
             return Response({"error": "You must be a community member to submit a welfare claim."}, status=status.HTTP_403_FORBIDDEN)
         fund = WelfareService.get_or_create_community_fund(community)
         claim = WelfareService.submit_claim(fund.id, request.user, amount, reason)
+        logger.info(
+            "WelfareClaimListCreateView: user %s submitted welfare claim %s "
+            "for KES %s in community %s",
+            request.user.id, claim.id, amount, community_id,
+        )
         return Response(WelfareClaimSerializer(claim).data, status=status.HTTP_201_CREATED)
 
 
@@ -680,7 +776,7 @@ class WelfareActivityView(APIView):
     - WITHDRAWAL — approved/disbursed claims
     Sorted newest first.
     """
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsActiveSession]
 
     def get(self, request, community_id):
         from apps.communities.models import Community
@@ -727,7 +823,7 @@ class WelfareActivityView(APIView):
 # ---------------------------------------------------------------------------
 
 class AdvanceListCreateView(APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsActiveSession]
 
     def get(self, request, contribution_id):
         contribution = get_object_or_404(Contribution, id=contribution_id)
@@ -752,18 +848,29 @@ class AdvanceListCreateView(APIView):
         advance = EmergencyAdvanceService.request_advance(
             contribution_id, request.user, amount, interest_rate, repayment_due
         )
+        logger.info(
+            "AdvanceListCreateView: user %s requested advance %s for KES %s "
+            "on contribution %s",
+            request.user.id, advance.id, amount, contribution_id,
+        )
         return Response(EmergencyAdvanceSerializer(advance).data, status=status.HTTP_201_CREATED)
 
 
 class AdvanceActionView(APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsActiveSession]
 
     def post(self, request, advance_id):
         action = request.data.get('action', '').lower()
         if action == 'approve':
             advance = EmergencyAdvanceService.approve_advance(advance_id, request.user)
+            logger.info(
+                "AdvanceActionView: user %s approved advance %s", request.user.id, advance_id,
+            )
         elif action == 'reject':
             advance = EmergencyAdvanceService.reject_advance(advance_id, request.user)
+            logger.info(
+                "AdvanceActionView: user %s rejected advance %s", request.user.id, advance_id,
+            )
         elif action == 'repay':
             # DISABLED — advance repayments are M-Pesa only.
             return Response(
@@ -783,7 +890,7 @@ class AdvanceActionView(APIView):
 
 
 class MyAdvancesView(APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsActiveSession]
 
     def get(self, request):
         advances = EmergencyAdvance.objects.filter(
@@ -801,7 +908,7 @@ class MyAdvancesView(APIView):
 # ---------------------------------------------------------------------------
 
 class StandingOrderListCreateView(APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsActiveSession]
 
     def get(self, request, contribution_id):
         contribution = get_object_or_404(Contribution, id=contribution_id)
@@ -823,7 +930,7 @@ class StandingOrderListCreateView(APIView):
 
 
 class StandingOrderExecuteView(APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsActiveSession]
 
     def post(self, request, order_id):
         order = StandingOrderService.execute_standing_order(order_id, request.user)
@@ -831,7 +938,7 @@ class StandingOrderExecuteView(APIView):
 
 
 class StandingOrderCancelView(APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsActiveSession]
 
     def post(self, request, order_id):
         order = StandingOrderService.cancel_standing_order(order_id, request.user)
@@ -840,7 +947,7 @@ class StandingOrderCancelView(APIView):
 
 class StandingOrderUpdateView(APIView):
     """PATCH standing-orders/<order_id>/update/ — amend amount, frequency, or fixed_payee_phone."""
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsActiveSession]
 
     def patch(self, request, order_id):
         allowed = {'amount', 'frequency', 'fixed_payee_phone'}
@@ -863,7 +970,7 @@ class AmendmentListCreateView(APIView):
     GET  /contributions/<id>/amendments/ — list all amendments for a contribution
     POST /contributions/<id>/amendments/ — propose a new amendment (admin/creator only)
     """
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsActiveSession]
 
     def get(self, request, contribution_id):
         contribution = get_object_or_404(Contribution, id=contribution_id)
@@ -885,7 +992,7 @@ class AmendmentListCreateView(APIView):
 
 class AmendmentVoteView(APIView):
     """POST /contributions/amendments/<amendment_id>/vote/ — cast APPROVE or REJECT."""
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsActiveSession]
 
     def post(self, request, amendment_id):
         vote_choice = request.data.get('vote', '').upper()
@@ -897,7 +1004,7 @@ class AmendmentVoteView(APIView):
 
 class AmendmentWithdrawView(APIView):
     """POST /contributions/amendments/<amendment_id>/withdraw/ — proposer retracts their proposal."""
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsActiveSession]
 
     def post(self, request, amendment_id):
         amendment = AmendmentService.withdraw(amendment_id, request.user)
@@ -913,7 +1020,7 @@ class ContributionJoinRequestListView(APIView):
     GET  /contributions/<id>/join-requests/  — list pending requests (admins only)
     POST /contributions/<id>/join-requests/  — member submits a join request
     """
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsActiveSession]
 
     def get(self, request, contribution_id):
         contribution = get_object_or_404(Contribution, id=contribution_id)
@@ -932,48 +1039,65 @@ class ContributionJoinRequestListView(APIView):
 
     def post(self, request, contribution_id):
         jr = ContributionJoinRequestService.request_join(contribution_id, request.user)
+        logger.info(
+            "ContributionJoinRequestListView: user %s submitted join request %s "
+            "for contribution %s",
+            request.user.id, jr.id, contribution_id,
+        )
         return Response(ContributionJoinRequestSerializer(jr).data, status=status.HTTP_201_CREATED)
 
 
 class ContributionJoinRequestActionView(APIView):
     """POST /contributions/join-requests/<id>/action/ — admin approves or rejects a REQUEST."""
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsActiveSession]
 
     def post(self, request, request_id):
         action = request.data.get('action', '').lower()
         if action not in ('approve', 'reject'):
             return Response({"error": "action must be 'approve' or 'reject'."}, status=status.HTTP_400_BAD_REQUEST)
         jr = ContributionJoinRequestService.action_request(request_id, request.user, action)
+        logger.info(
+            "ContributionJoinRequestActionView: user %s %sd join request %s",
+            request.user.id, action, request_id,
+        )
         return Response(ContributionJoinRequestSerializer(jr).data)
 
 
 class ContributionInviteView(APIView):
     """POST /contributions/<id>/invite/ — admin invites a community member."""
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsActiveSession]
 
     def post(self, request, contribution_id):
         phone = request.data.get('phone', '').strip()
         if not phone:
             return Response({"error": "'phone' is required."}, status=status.HTTP_400_BAD_REQUEST)
         jr = ContributionJoinRequestService.invite_user(contribution_id, request.user, phone)
+        logger.info(
+            "ContributionInviteView: user %s invited %s to contribution %s (invite %s)",
+            request.user.id, phone, contribution_id, jr.id,
+        )
         return Response(ContributionJoinRequestSerializer(jr).data, status=status.HTTP_201_CREATED)
 
 
 class ContributionInviteRespondView(APIView):
     """POST /contributions/invitations/<id>/respond/ — invitee accepts or declines."""
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsActiveSession]
 
     def post(self, request, request_id):
         action = request.data.get('action', '').lower()
         if action not in ('accept', 'decline'):
             return Response({"error": "action must be 'accept' or 'decline'."}, status=status.HTTP_400_BAD_REQUEST)
         jr = ContributionJoinRequestService.respond_to_invite(request_id, request.user, action)
+        logger.info(
+            "ContributionInviteRespondView: user %s %sd invitation %s",
+            request.user.id, action, request_id,
+        )
         return Response(ContributionJoinRequestSerializer(jr).data)
 
 
 class MyContributionJoinRequestView(APIView):
     """GET /contributions/<id>/my-join-request/ — return the current user's REQUEST row."""
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsActiveSession]
 
     def get(self, request, contribution_id):
         jr = ContributionJoinRequestService.get_my_request(contribution_id, request.user)
@@ -984,7 +1108,7 @@ class MyContributionJoinRequestView(APIView):
 
 class MyContributionInviteView(APIView):
     """GET /contributions/<id>/my-invite/ — return a pending INVITE for the current user."""
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsActiveSession]
 
     def get(self, request, contribution_id):
         jr = ContributionJoinRequestService.get_my_invite(contribution_id, request.user)

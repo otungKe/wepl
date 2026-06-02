@@ -1,4 +1,7 @@
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import axios from "axios";
+import { API_BASE_URL } from "../../constants/config";
+import PinPad from "../../components/app/PinPad";
 import {
   View,
   Text,
@@ -14,14 +17,17 @@ import {
   TextInput,
   KeyboardAvoidingView,
   Linking,
+  Animated,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { router, useFocusEffect } from "expo-router";
+import { router, useFocusEffect, useLocalSearchParams } from "expo-router";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { Ionicons } from "@expo/vector-icons";
 import Constants from "expo-constants";
 import * as storage from "../../utils/secureStorage";
+import API from "../../api/client";
 import { getProfile, updateProfile } from "../../api/auth";
+import { getNotifPrefs, updateNotifPrefs } from "../../api/notifications";
 import { COLORS, FONTS, RADIUS } from "../../constants/theme";
 import AppHeader from "../../components/app/AppHeader";
 
@@ -144,25 +150,66 @@ export default function SettingsScreen() {
   const [notif,          setNotif]          = useState<NotifPrefs>(DEFAULT_NOTIF);
   const [biometric,      setBiometric]      = useState(false);
 
+  // PIN confirmation overlay for biometric toggle
+  const [pinOverlay,      setPinOverlay]      = useState(false);
+  const [pinError,        setPinError]        = useState("");
+  const [pinResetKey,     setPinResetKey]     = useState(0);
+  const [pinLoading,      setPinLoading]      = useState(false);
+  const pendingBioVal     = useRef<boolean | null>(null);   // value awaiting PIN confirm
+
+  // Raw axios — bypasses the 401 interceptor so a wrong PIN doesn't log the user out
+  const rawAxios = axios.create({ baseURL: API_BASE_URL });
+
   // Edit modal
   const [editVisible, setEditVisible] = useState(false);
   const [editName,    setEditName]    = useState("");
   const [editBio,     setEditBio]     = useState("");
   const [saving,      setSaving]      = useState(false);
 
+  // Success banner — shown when returning from change-pin with pinChanged=1
+  const { pinChanged } = useLocalSearchParams<{ pinChanged?: string }>();
+  const bannerAnim  = useRef(new Animated.Value(0)).current;
+  const [showBanner, setShowBanner] = useState(false);
+
+  useEffect(() => {
+    if (pinChanged !== "1") return;
+    setShowBanner(true);
+    // Fade in
+    Animated.timing(bannerAnim, {
+      toValue: 1, duration: 300, useNativeDriver: true,
+    }).start();
+    // Auto-dismiss after 3.5 seconds
+    const t = setTimeout(() => {
+      Animated.timing(bannerAnim, {
+        toValue: 0, duration: 400, useNativeDriver: true,
+      }).start(() => setShowBanner(false));
+    }, 3500);
+    return () => clearTimeout(t);
+  }, [pinChanged]);
+
   useFocusEffect(
     useCallback(() => {
       let active = true;
       (async () => {
         try {
-          const [p, rawNotif, rawBio] = await Promise.all([
+          const [p, serverPrefs, rawBio] = await Promise.all([
             getProfile().catch(() => null),
-            AsyncStorage.getItem(NOTIF_KEY),
+            getNotifPrefs().catch(() => null),       // load from backend
             AsyncStorage.getItem(BIOMETRIC_KEY),
           ]);
           if (!active) return;
           if (p) setProfile(p);
-          if (rawNotif) setNotif({ ...DEFAULT_NOTIF, ...JSON.parse(rawNotif) });
+          if (serverPrefs) {
+            // Map server field names → local state shape
+            setNotif({
+              push:          serverPrefs.push_enabled,
+              payments:      serverPrefs.payments,
+              contributions: serverPrefs.contributions,
+              reminders:     serverPrefs.reminders,
+              communities:   serverPrefs.communities,
+              advances:      serverPrefs.advances,
+            });
+          }
           setBiometric(rawBio === "true");
         } finally {
           if (active) setLoadingProfile(false);
@@ -173,14 +220,92 @@ export default function SettingsScreen() {
   );
 
   async function saveNotifPref(key: keyof NotifPrefs, val: boolean) {
+    // Optimistic local update
     const updated = { ...notif, [key]: val };
     setNotif(updated);
-    await AsyncStorage.setItem(NOTIF_KEY, JSON.stringify(updated));
+
+    // Persist to server (map local key → server field name)
+    const serverKey = key === "push" ? "push_enabled" : key;
+    try {
+      await updateNotifPrefs({ [serverKey]: val } as any);
+    } catch {
+      // Revert on failure
+      setNotif(notif);
+    }
   }
 
-  async function saveBiometric(val: boolean) {
+  /** Step 1 — user taps toggle: open PIN overlay first */
+  function saveBiometric(val: boolean) {
+    pendingBioVal.current = val;
+    setPinError("");
+    setPinResetKey(k => k + 1);
+    setPinOverlay(true);
+  }
+
+  /** Step 2 — PIN verified: proceed with enable/disable */
+  async function confirmBiometricWithPin(pin: string) {
+    const phone = profile.phone_number || (await storage.getItem("phone")) || "";
+    if (!phone) {
+      setPinError("Phone number not found. Please sign out and sign in again.");
+      setPinResetKey(k => k + 1);
+      return;
+    }
+
+    setPinLoading(true);
+    try {
+      await rawAxios.post("users/pin/login/", { phone_number: phone, pin });
+    } catch (e: any) {
+      setPinLoading(false);
+      const status = e?.response?.status;
+      if (status === 429) {
+        setPinError("Account temporarily locked after too many attempts. Try again in 30 minutes.");
+      } else if (status === 401) {
+        setPinError("Incorrect PIN. Please try again.");
+      } else {
+        setPinError(e?.response?.data?.error || "Could not verify PIN. Try again.");
+      }
+      setPinResetKey(k => k + 1);
+      return;
+    }
+    setPinLoading(false);
+
+    // PIN correct — close overlay and proceed
+    setPinOverlay(false);
+    const val = pendingBioVal.current!;
+
+    if (val) {
+      // Enabling: check hardware + run live biometric test
+      const LocalAuth = await import("expo-local-authentication");
+      const hasHardware = await LocalAuth.hasHardwareAsync();
+      const isEnrolled  = await LocalAuth.isEnrolledAsync();
+
+      if (!hasHardware || !isEnrolled) {
+        Alert.alert(
+          "Biometric not available",
+          !hasHardware
+            ? "This device does not have biometric hardware."
+            : "No biometrics enrolled. Add a fingerprint or face in your device Settings first.",
+        );
+        return;
+      }
+
+      const result = await LocalAuth.authenticateAsync({
+        promptMessage:         "Confirm biometric login",
+        cancelLabel:           "Cancel",
+        disableDeviceFallback: false,
+      });
+      if (!result.success) return;   // user cancelled — don't enable
+    }
+
     setBiometric(val);
     await AsyncStorage.setItem(BIOMETRIC_KEY, String(val));
+
+    Alert.alert(
+      val ? "Biometric login enabled" : "Biometric login disabled",
+      val
+        ? "You can now log in using your fingerprint or face."
+        : "You'll use your PIN to log in from now on.",
+    );
   }
 
   function openEditProfile() {
@@ -198,6 +323,7 @@ export default function SettingsScreen() {
     try {
       const updated = await updateProfile({ name: editName.trim(), bio: editBio.trim() });
       setProfile(p => ({ ...p, name: updated.name ?? editName.trim(), bio: updated.bio ?? editBio.trim() }));
+      if (editName.trim()) await storage.setItem("name", editName.trim());
       setEditVisible(false);
     } catch {
       Alert.alert("Error", "Could not save profile. Please try again.");
@@ -207,14 +333,9 @@ export default function SettingsScreen() {
   }
 
   function handleResetPIN() {
-    Alert.alert(
-      "Reset PIN",
-      "You will be guided through OTP verification to set a new PIN.",
-      [
-        { text: "Cancel",   style: "cancel" },
-        { text: "Continue", onPress: () => router.push("/pin") },
-      ]
-    );
+    // New flow: verify current PIN → new PIN → confirm → OTP → done.
+    // All steps handled by the change-pin screen.
+    router.push("/change-pin");
   }
 
   async function handleClearCache() {
@@ -241,22 +362,36 @@ export default function SettingsScreen() {
 
   function handleDeleteAccount() {
     Alert.alert(
-      "Delete Account",
-      "This permanently deletes all your data and cannot be undone.",
+      "Delete your account?",
+      "Your personal data will be permanently erased. Financial records are retained for legal compliance. This cannot be undone.",
       [
         { text: "Cancel", style: "cancel" },
         {
-          text:    "Delete Account",
-          style:   "destructive",
+          text:  "Delete Account",
+          style: "destructive",
           onPress: () =>
             Alert.alert(
-              "Final Confirmation",
-              "Account deletions are processed by our support team within 48 hours.",
+              "Are you absolutely sure?",
+              "Type DELETE in the next step to confirm, or tap Cancel.",
               [
                 { text: "Cancel", style: "cancel" },
                 {
-                  text:    "Contact Support",
-                  onPress: () => Linking.openURL("mailto:support@wepl.app?subject=Account%20Deletion%20Request"),
+                  text:    "Yes, delete my account",
+                  style:   "destructive",
+                  onPress: async () => {
+                    try {
+                      await API.delete("users/account/");
+                      await storage.multiRemove(["access", "refresh", "phone", "name"]);
+                      await AsyncStorage.removeItem(BIOMETRIC_KEY);
+                      router.replace("/");
+                    } catch (e: any) {
+                      const msg = e?.response?.data?.error;
+                      Alert.alert(
+                        "Cannot delete account",
+                        msg || "Please resolve any outstanding advances or community ownership before deleting.",
+                      );
+                    }
+                  },
                 },
               ]
             ),
@@ -265,15 +400,18 @@ export default function SettingsScreen() {
     );
   }
 
-  function handleLogout() {
-    Alert.alert("Logout", "Are you sure you want to logout?", [
+  function handleSignOut() {
+    Alert.alert("Sign out", "Are you sure you want to sign out?", [
       { text: "Cancel", style: "cancel" },
       {
-        text:    "Logout",
+        text:    "Sign out",
         style:   "destructive",
         onPress: async () => {
           await storage.multiRemove(["access", "refresh", "phone", "name"]);
-          router.replace("/");
+          await AsyncStorage.removeItem(BIOMETRIC_KEY);
+          // Navigate to the welcome/landing screen and replace the full stack
+          // so the user cannot press Back to re-enter the app.
+          router.replace("/login");
         },
       },
     ]);
@@ -297,7 +435,7 @@ export default function SettingsScreen() {
   if (loadingProfile) {
     return (
       <SafeAreaView style={s.safe}>
-        <AppHeader title="Settings" variant="light" leading="back" onBack={() => router.navigate("/(drawer)/profile")} />
+        <AppHeader title="Settings" variant="light" leading="back" onBack={() => router.replace("/(drawer)/profile")} />
         <View style={{ flex: 1, justifyContent: "center", alignItems: "center" }}>
           <ActivityIndicator color={COLORS.primary} />
         </View>
@@ -307,7 +445,15 @@ export default function SettingsScreen() {
 
   return (
     <SafeAreaView style={s.safe}>
-      <AppHeader title="Settings" variant="light" leading="back" />
+      <AppHeader title="Settings" variant="light" leading="back" onBack={() => router.replace("/(drawer)/profile")} />
+
+      {/* PIN-changed success banner */}
+      {showBanner && (
+        <Animated.View style={[s.successBanner, { opacity: bannerAnim }]}>
+          <Ionicons name="checkmark-circle" size={18} color="#166534" />
+          <Text style={s.successBannerText}>PIN changed successfully</Text>
+        </Animated.View>
+      )}
 
       <ScrollView contentContainerStyle={s.body} showsVerticalScrollIndicator={false}>
 
@@ -334,7 +480,11 @@ export default function SettingsScreen() {
             iconBg={kycColor + "18"}
             label="Identity (KYC)"
             value={kycLabel}
-            onPress={profile.kyc_status !== "approved" ? () => router.push("/kyc") : undefined}
+            onPress={
+              profile.kyc_status === "approved"   ? undefined :
+              profile.kyc_status === "pending"     ? () => router.push("/kyc-status") :
+              /* not_submitted | rejected */          () => router.push("/kyc")
+            }
             showArrow={profile.kyc_status !== "approved"}
           />
         </Card>
@@ -410,17 +560,6 @@ export default function SettingsScreen() {
           )}
         </Card>
 
-        {/* ── Reminders ────────────────────────────────────── */}
-        <SectionHeader title="Reminders" />
-        <Card>
-          <Row
-            icon="alarm-outline"
-            label="Manage Reminders"
-            value="Set & track reminders"
-            onPress={() => router.push("/reminders")}
-          />
-        </Card>
-
         {/* ── Preferences ──────────────────────────────────── */}
         <SectionHeader title="Preferences" />
         <Card>
@@ -490,9 +629,9 @@ export default function SettingsScreen() {
         <Card>
           <Row
             icon="log-out-outline"
-            label="Logout"
+            label="Sign out"
             danger
-            onPress={handleLogout}
+            onPress={handleSignOut}
             showArrow={false}
           />
           <Divider />
@@ -558,6 +697,37 @@ export default function SettingsScreen() {
           </Pressable>
         </KeyboardAvoidingView>
       </Modal>
+
+      {/* PIN confirmation overlay for biometric toggle */}
+      <Modal
+        visible={pinOverlay}
+        animationType="slide"
+        presentationStyle="fullScreen"
+        onRequestClose={() => {
+          setPinOverlay(false);
+          pendingBioVal.current = null;
+        }}
+      >
+        <PinPad
+          key={`bio-pin-${pinResetKey}`}
+          icon="finger-print"
+          title="Confirm your PIN"
+          subtitle={
+            pendingBioVal.current
+              ? "Enter your PIN to enable biometric login"
+              : "Enter your PIN to disable biometric login"
+          }
+          onComplete={confirmBiometricWithPin}
+          error={pinError}
+          loading={pinLoading}
+          resetKey={pinResetKey}
+          onBack={() => {
+            setPinOverlay(false);
+            pendingBioVal.current = null;
+            setPinError("");
+          }}
+        />
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -566,6 +736,23 @@ export default function SettingsScreen() {
 
 const s = StyleSheet.create({
   safe: { flex: 1, backgroundColor: COLORS.background },
+
+  successBanner: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    backgroundColor: "#DCFCE7",
+    borderLeftWidth: 4,
+    borderLeftColor: "#16A34A",
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+  },
+  successBannerText: {
+    fontSize: FONTS.sm,
+    fontWeight: "600",
+    color: "#166534",
+    flex: 1,
+  },
   body: { paddingHorizontal: 16, paddingTop: 8, gap: 4 },
 
   sectionHeader: {

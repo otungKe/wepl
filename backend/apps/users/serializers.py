@@ -71,12 +71,41 @@ class UserSerializer(serializers.ModelSerializer):
             'is_pin_set',
             'kyc_status',
         ]
+        extra_kwargs = {
+            'profile_photo': {'required': False, 'allow_null': True},
+        }
 
     def get_kyc_status(self, obj) -> str:
         try:
             return obj.kyc.status
         except KYCProfile.DoesNotExist:
             return 'not_submitted'
+
+    def to_representation(self, instance):
+        """
+        Override to return an absolute URL for profile_photo.
+
+        SerializerMethodField was NOT used because it makes the field
+        read-only, silently discarding the uploaded file on PATCH.
+        Using to_representation keeps the field writable while still
+        controlling the output URL format.
+        """
+        data = super().to_representation(instance)
+
+        if instance.profile_photo:
+            try:
+                url = instance.profile_photo.url
+                # MinIO/S3 returns a full URL already; local storage returns
+                # a relative path — make it absolute using the request context.
+                if url and not url.startswith("http"):
+                    request = self.context.get("request")
+                    if request:
+                        url = request.build_absolute_uri(url)
+                data['profile_photo'] = url
+            except Exception:
+                data['profile_photo'] = None
+
+        return data
 
 
 # ─────────────────────────────────────────────────────────────
@@ -99,13 +128,26 @@ class KYCSubmitSerializer(serializers.ModelSerializer):
             'email',
             'id_front',
             'id_back',
+            'selfie',
             'county',
-            'sub_county',
+            'physical_address',
             'occupation',
             'source_of_income',
             'expected_monthly_income',
             'referral_code',
         ]
+        extra_kwargs = {
+            'email': {
+                'required': True,
+                'allow_blank': False,
+                'error_messages': {'required': 'Email address is required for identity verification.'},
+            },
+            'physical_address': {
+                'required': True,
+                'allow_blank': False,
+                'error_messages': {'required': 'Physical address is required.'},
+            },
+        }
 
     def validate_id_number(self, value):
         """Kenyan national ID / Passport: 7–9 digits for national ID."""
@@ -160,10 +202,11 @@ class KYCStatusSerializer(serializers.ModelSerializer):
             'id_number',
             'date_of_birth',
             'email',
+            'email_verified',
             'id_front',
             'id_back',
             'county',
-            'sub_county',
+            'physical_address',
             'occupation',
             'source_of_income',
             'expected_monthly_income',

@@ -85,8 +85,45 @@ def _compute_next_run(frequency: str, from_dt) -> object:
 class ContributionService:
 
     @staticmethod
+    def _check_governance_deadlock(user, validated_data) -> None:
+        """
+        Check both voting thresholds (disbursement + amendment) for deadlocks
+        before the contribution is created.
+
+        Uses FinancialPermissions.assert_quorum_exists on a lightweight proxy
+        object so the real contribution row doesn't need to exist yet.
+        """
+        from apps.ledger.permissions import FinancialPermissions
+
+        community = validated_data.get('community')
+
+        class _ProxyContribution:
+            """Minimal duck-type so assert_quorum_exists works without a DB row."""
+            def __init__(self, creator, comm):
+                self.created_by_id  = creator.id
+                self.community_id   = comm.id if comm else None
+                self.community      = comm
+
+        proxy = _ProxyContribution(user, community)
+
+        disb_threshold = validated_data.get('voting_threshold', 'admins')
+        FinancialPermissions.assert_quorum_exists(
+            proxy, disb_threshold, user,
+            action="create a contribution with this disbursement approval threshold",
+        )
+
+        amend_threshold = validated_data.get('amendment_voting_threshold', 'admins')
+        FinancialPermissions.assert_quorum_exists(
+            proxy, amend_threshold, user,
+            action="create a contribution with this amendment approval threshold",
+        )
+
+    @staticmethod
     @transaction.atomic
     def create_contribution(user, validated_data, member_phones=None, add_all_members=False):
+        # Guard: detect governance deadlock (disbursement + amendment) before creating
+        ContributionService._check_governance_deadlock(user, validated_data)
+
         contribution = Contribution.objects.create(created_by=user, **validated_data)
         ContributionAccount.objects.create(contribution=contribution)
 
@@ -127,6 +164,23 @@ class ContributionService:
         contribution = Contribution.objects.get(id=contribution_id)
         if contribution.status != 'active':
             raise ValidationError("This contribution is closed and no longer accepting new members.")
+
+        # Section B: block joining a ROSCA mid-cycle.
+        # Once the rotation has been initialised (slots exist), new members
+        # cannot join the current cycle — they must wait for the next one.
+        if contribution.contribution_type == 'ROSCA':
+            from .models import ROSCASlot
+            rotation_active = ROSCASlot.objects.filter(
+                contribution=contribution, cycle_number=1
+            ).exists()
+            already_participant = ContributionParticipant.objects.filter(
+                contribution=contribution, user=user
+            ).exists()
+            if rotation_active and not already_participant:
+                raise ValidationError(
+                    "This ROSCA rotation has already started. "
+                    "New members can join after the current cycle completes."
+                )
         participant, created = ContributionParticipant.objects.get_or_create(
             contribution=contribution, user=user
         )
@@ -249,6 +303,29 @@ class ContributionService:
             contribution=contribution, user=user, is_active=True
         ).exists():
             raise ValidationError("User is not an active participant")
+
+        # Section C — late contribution policy
+        if contribution.end_date:
+            from datetime import date, timedelta
+            today = timezone.now().date()
+            policy = contribution.late_contribution_policy
+
+            if policy == 'strict' and today > contribution.end_date:
+                raise ValidationError(
+                    f"This contribution closed on "
+                    f"{contribution.end_date.strftime('%d %b %Y')}. "
+                    "No further payments are accepted."
+                )
+            elif policy == 'grace':
+                grace_deadline = contribution.end_date + timedelta(
+                    days=contribution.late_contribution_grace_days or 7
+                )
+                if today > grace_deadline:
+                    raise ValidationError(
+                        f"The grace period for this contribution ended on "
+                        f"{grace_deadline.strftime('%d %b %Y')}. "
+                        "No further payments are accepted."
+                    )
 
         # ── Idempotency: don't double-credit the same M-Pesa receipt ──────────
         idem_key = idempotency_key or (
@@ -498,6 +575,14 @@ class DisbursementService:
         if Decimal(str(amount)) > contribution.current_amount:
             raise ValidationError("Amount exceeds current pool balance.")
 
+        # Quorum check: ensure at least one eligible voter exists excluding the requester.
+        # Catches dynamic deadlocks (e.g. last admin left after contribution was created).
+        from apps.ledger.permissions import FinancialPermissions
+        FinancialPermissions.assert_quorum_exists(
+            contribution, contribution.voting_threshold, user,
+            action="submit this disbursement request",
+        )
+
         req = DisbursementRequest.objects.create(
             contribution=contribution,
             requested_by=user,
@@ -520,6 +605,7 @@ class DisbursementService:
                     title=f"Disbursement request — {contribution.title}",
                     message=f"{_dn(user)} requests KES {amount:,.0f}: {reason[:80]}",
                     contribution_id=contribution.id,
+                    join_request_id=req.id,  # used by the mobile inline approve/reject buttons
                 )
         return req
 
@@ -533,6 +619,11 @@ class DisbursementService:
 
         if req.requested_by == voter:
             raise PermissionDenied("You cannot vote on your own disbursement request.")
+
+        # Section B: cooling-off check for disbursement voting
+        if contribution.community:
+            from apps.communities.services import check_cooling_off
+            check_cooling_off(voter, contribution.community, 'disbursement_vote')
 
         # Authorization
         threshold = contribution.voting_threshold
@@ -595,6 +686,17 @@ class DisbursementService:
 
         if contribution.current_amount < req.amount:
             raise ValidationError("Insufficient pool balance at execution time.")
+
+        # Governance cooldown check (Issue 16): block execution if voting_threshold
+        # was changed recently — gives the group 24 h to review approvals that were
+        # cast under the previous (possibly stricter) governance rules.
+        if contribution.governance_locked_until and contribution.governance_locked_until > timezone.now():
+            from django.utils.timezone import localtime
+            unlock = localtime(contribution.governance_locked_until).strftime('%d %b %Y %H:%M')
+            raise ValidationError(
+                f"Governance rules were recently changed. Disbursements are locked until {unlock} "
+                f"to allow the group to review pending approvals under the new rules."
+            )
 
         # ── Reserve funds: DEBIT ledger entry immediately ─────────────────────
         idem_key = f"disb-exec-{req.id}"
@@ -727,6 +829,11 @@ class WelfareService:
         fund   = WelfareFund.objects.select_for_update().get(id=fund_id)
         amount = Decimal(str(amount_requested))
 
+        # Section B: cooling-off period check
+        if fund.community:
+            from apps.communities.services import check_cooling_off
+            check_cooling_off(user, fund.community, 'welfare_claim')
+
         if WelfareClaim.objects.filter(fund=fund, claimant=user, status='PENDING').exists():
             raise ValidationError(
                 "You already have a pending claim. "
@@ -759,6 +866,7 @@ class WelfareService:
                     title=f"Welfare claim — {fund.community.name}",
                     message=f"{_dn(user)} requests KES {amount:,.0f}: {reason[:80]}",
                     community_id=fund.community.id,
+                    join_request_id=claim.id,  # used by mobile inline approve/reject buttons
                 )
         return claim
 
@@ -885,6 +993,11 @@ class EmergencyAdvanceService:
         if not FinancialPermissions.is_active_participant(contribution, user):
             raise PermissionDenied("You must be an active participant.")
 
+        # Section B: cooling-off period check
+        if contribution.community:
+            from apps.communities.services import check_cooling_off
+            check_cooling_off(user, contribution.community, 'emergency_advance')
+
         # Derive eligibility from ledger (not mutable ContributionBalance)
         from apps.ledger.queries import member_contribution_total
         member_total = member_contribution_total(contribution.id, user.id)
@@ -934,6 +1047,7 @@ class EmergencyAdvanceService:
                         f"at {interest_rate}% interest."
                     ),
                     contribution_id=contribution.id,
+                    join_request_id=advance.id,  # used by mobile inline approve/reject buttons
                 )
         return advance
 
@@ -1333,7 +1447,9 @@ class AmendmentService:
 
     @staticmethod
     def _amendment_required(contribution, proposer):
-        if contribution.voting_threshold == 'admins':
+        # Section C: use amendment_voting_threshold, not the disbursement threshold
+        threshold = contribution.amendment_voting_threshold
+        if threshold == 'admins':
             if contribution.community:
                 from apps.communities.models import CommunityMembership
                 participant_ids = set(
@@ -1373,10 +1489,34 @@ class AmendmentService:
     def propose(contribution_id, user, changes: dict, reason: str = ''):
         contribution = Contribution.objects.get(id=contribution_id)
 
-        if not FinancialPermissions.is_contribution_admin(contribution, user):
-            raise PermissionDenied(
-                "Only the contribution creator or a community admin can propose amendments."
-            )
+        # Section C — check amendment_proposer setting
+        proposer_policy = contribution.amendment_proposer
+        if proposer_policy == 'creator':
+            if contribution.created_by != user:
+                raise PermissionDenied(
+                    "Only the contribution creator can propose amendments."
+                )
+        elif proposer_policy == 'admins':
+            if not FinancialPermissions.is_contribution_admin(contribution, user):
+                raise PermissionDenied(
+                    "Only admins and treasurers can propose amendments."
+                )
+        elif proposer_policy == 'members':
+            if not FinancialPermissions.is_active_participant(contribution, user):
+                raise PermissionDenied(
+                    "Only active participants can propose amendments."
+                )
+        else:
+            if not FinancialPermissions.is_contribution_admin(contribution, user):
+                raise PermissionDenied(
+                    "Only the contribution creator or a community admin can propose amendments."
+                )
+
+        # Quorum check: ensure at least one eligible voter exists for the amendment threshold.
+        FinancialPermissions.assert_quorum_exists(
+            contribution, contribution.amendment_voting_threshold, user,
+            action="propose this amendment",
+        )
 
         bad_keys = set(changes.keys()) - AmendmentService.SENSITIVE_FIELDS
         if bad_keys:
@@ -1475,7 +1615,8 @@ class AmendmentService:
         if amendment.proposed_by == voter:
             raise PermissionDenied("You cannot vote on your own amendment proposal.")
 
-        threshold = contribution.voting_threshold
+        # Section C: amendment votes use amendment_voting_threshold, not disbursement threshold
+        threshold = contribution.amendment_voting_threshold
         if threshold == 'admins':
             if contribution.community:
                 from apps.communities.models import CommunityMembership
@@ -1537,6 +1678,8 @@ class AmendmentService:
     @staticmethod
     def _apply(amendment, contribution):
         from decimal import Decimal
+        from datetime import timedelta
+
         DECIMAL_FIELDS = {'fixed_amount', 'target_amount'}
         INT_FIELDS     = {'period_months'}
 
@@ -1549,6 +1692,15 @@ class AmendmentService:
             else:
                 setattr(contribution, field, value)
             update_fields.append(field)
+
+        # Governance cooldown (Issue 16): if the voting threshold was relaxed,
+        # lock disbursement execution for 24 h so that pending approvals that
+        # were cast under the old (stricter) rules cannot slip through the new
+        # (looser) threshold and execute immediately.
+        if 'voting_threshold' in amendment.changes:
+            contribution.governance_locked_until = timezone.now() + timedelta(hours=24)
+            if 'governance_locked_until' not in update_fields:
+                update_fields.append('governance_locked_until')
 
         contribution.save(update_fields=update_fields)
         amendment.status      = 'APPROVED'
@@ -1693,6 +1845,17 @@ class ContributionJoinRequestService:
 
         if invitee == admin:
             raise ValidationError("You cannot invite yourself.")
+
+        # Respect the invitee's discoverable privacy setting.
+        from apps.users.models import PrivacyPreferences
+        try:
+            prefs = invitee.privacy_prefs
+            if not prefs.discoverable:
+                raise ValidationError(
+                    f"{phone} has restricted who can invite them to contributions."
+                )
+        except PrivacyPreferences.DoesNotExist:
+            pass  # no prefs row → default discoverable=True
 
         if not ContributionJoinRequestService._is_community_member(contribution, invitee):
             raise ValidationError(f"{phone} is not a member of this community.")

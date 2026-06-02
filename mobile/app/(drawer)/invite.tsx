@@ -8,6 +8,7 @@ import {
   Alert,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
+import { router } from "expo-router";
 import * as storage from "../../utils/secureStorage";
 import { COLORS, FONTS, RADIUS } from "../../constants/theme";
 import AppHeader from "../../components/app/AppHeader";
@@ -31,7 +32,7 @@ export default function InviteScreen() {
 
   return (
     <SafeAreaView style={styles.safe}>
-      <AppHeader title="Invite a friend" variant="light" leading="back" />
+      <AppHeader title="Invite a friend" variant="light" leading="back" onBack={() => router.replace("/(drawer)/profile")} />
 
       <View style={styles.body}>
         <Text style={styles.hero}>🎉</Text>

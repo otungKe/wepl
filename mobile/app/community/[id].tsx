@@ -22,15 +22,16 @@ import { Ionicons } from "@expo/vector-icons";
 import { router, useLocalSearchParams, useFocusEffect } from "expo-router";
 import AsyncStorage from "@react-native-async-storage/async-storage"; // used for non-sensitive conv timestamps
 import * as storage from "../../utils/secureStorage";
-import { getCommunity, getCommunityMembers, deleteCommunity, leaveCommunity, assignMemberRole, removeMember, updateCommunity, Community, CommunityMember } from "../../api/communities";
+import { getCommunity, getCommunityMembers, deleteCommunity, leaveCommunity, assignMemberRole, removeMember, updateCommunity, requestToJoinById, Community, CommunityMember } from "../../api/communities";
 import { getCommunityConversations, Conversation } from "../../api/conversations";
 import { on } from "../../utils/eventBus";
 import { getCommunityContributions, Contribution } from "../../api/contributions";
 import { COLORS, FONTS, RADIUS } from "../../constants/theme";
 import AppHeader from "../../components/app/AppHeader";
 import Avatar from "../../components/app/Avatar";
+import FAB from "../../components/app/FAB";
 
-type Tab = "members" | "conversations" | "contributions" | "meet";
+type Tab = "overview" | "contributions" | "conversations" | "reports" | "members";
 
 const MEET_PLATFORMS = [
   {
@@ -190,7 +191,7 @@ export default function CommunityDetailScreen() {
   const communityId = Number(id);
 
   const [community, setCommunity] = useState<Community | null>(null);
-  const [tab, setTab] = useState<Tab>("members");
+  const [tab, setTab] = useState<Tab>("overview");
   const [members, setMembers] = useState<CommunityMember[]>([]);
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [contributions, setContributions] = useState<Contribution[]>([]);
@@ -221,25 +222,38 @@ export default function CommunityDetailScreen() {
       const phone = await storage.getItem("phone");
       if (phone && !myPhone) setMyPhone(phone);
 
-      const [c, m, conv, contrib] = await Promise.all([
-        getCommunity(communityId),
-        getCommunityMembers(communityId),
-        getCommunityConversations(communityId),
-        getCommunityContributions(communityId),
-      ]);
+      // Step 1: always fetch basic community info — this succeeds for
+      // discoverable communities even before the user joins.
+      const c = await getCommunity(communityId);
       setCommunity(c);
-      setMembers(m);
-      setConversations(conv);
-      setContributions(contrib);
 
-      // Load which conversations this user has cleared
-      if (phone && conv.length > 0) {
-        const cleared: Record<number, string> = {};
-        await Promise.all(conv.map(async (cv) => {
-          const ts = await AsyncStorage.getItem(`conv_cleared_${phone}_${cv.id}`);
-          if (ts) cleared[cv.id] = ts;
-        }));
-        setClearedConvs(cleared);
+      // Step 2: member-restricted data — silently skip for non-members.
+      // A 403 here means the user hasn't joined yet; the NonMemberGate
+      // will render using the community data already set above.
+      try {
+        const [m, conv, contrib] = await Promise.all([
+          getCommunityMembers(communityId),
+          getCommunityConversations(communityId),
+          getCommunityContributions(communityId),
+        ]);
+        setMembers(m);
+        setConversations(conv);
+        setContributions(contrib);
+
+        // Load per-conversation clear timestamps
+        if (phone && conv.length > 0) {
+          const cleared: Record<number, string> = {};
+          await Promise.all(conv.map(async (cv) => {
+            const ts = await AsyncStorage.getItem(`conv_cleared_${phone}_${cv.id}`);
+            if (ts) cleared[cv.id] = ts;
+          }));
+          setClearedConvs(cleared);
+        }
+      } catch {
+        // Non-member — restricted data unavailable, that's expected.
+        setMembers([]);
+        setConversations([]);
+        setContributions([]);
       }
     } catch (e: any) {
       if (e?.response?.status === 404) setNotFound(true);
@@ -278,6 +292,7 @@ export default function CommunityDetailScreen() {
 
   const isCreator = community?.created_by === myPhone;
   const isAdmin   = isCreator || members.some((m) => m.phone_number === myPhone && m.role === 'admin');
+  const isMember  = isCreator || members.some((m) => m.phone_number === myPhone);
 
   const handleShare = async () => {
     setMenuVisible(false);
@@ -359,13 +374,7 @@ export default function CommunityDetailScreen() {
     );
   };
 
-  const handleEditOpen = () => {
-    setMenuVisible(false);
-    setEditName(community?.name ?? "");
-    setEditDesc(community?.description ?? "");
-    setEditPrivate(community?.is_private ?? false);
-    setShowEdit(true);
-  };
+  // handleEditOpen removed — edit is now handled by community/settings.tsx
 
   const handleSaveEdit = async () => {
     if (!editName.trim()) { Alert.alert("Required", "Community name cannot be empty."); return; }
@@ -437,6 +446,19 @@ export default function CommunityDetailScreen() {
     );
   }
 
+  // Non-member gate — show a join suggestion instead of the full community UI.
+  // Use community.member_count from the API (always present for discoverable
+  // communities) rather than members.length which is 0 for non-members.
+  if (!isMember) {
+    return (
+      <NonMemberGate
+        community={community}
+        memberCount={community?.member_count ?? 0}
+        onBack={() => router.back()}
+      />
+    );
+  }
+
   const stat = `${community?.member_count ?? members.length} ${
     (community?.member_count ?? members.length) === 1 ? "Member" : "Members"
   }`;
@@ -444,6 +466,324 @@ export default function CommunityDetailScreen() {
     contributions.length === 1 ? "Contribution" : "Contributions"
   }`;
 
+  // Render a full-screen dedicated page for sub-tabs (non-overview)
+  if (tab !== "overview") {
+
+    // ── Reports tab — community financial accountability ──────────────────
+    if (tab === "reports") {
+      const activePools  = contributions.filter((c) => c.status === "active");
+      const closedPools  = contributions.filter((c) => c.status !== "active");
+      const totalPooled  = activePools.reduce((s, c) => s + Number(c.current_amount), 0);
+      return (
+        <SafeAreaView style={styles.safe}>
+          <AppHeader title="Reports" variant="light" leading="back" onBack={() => setTab("overview")} />
+          <ScrollView contentContainerStyle={{ padding: 16, gap: 16, paddingBottom: 48 }}>
+
+            {/* Summary card */}
+            <View style={reportStyles.summaryCard}>
+              <Text style={reportStyles.summaryLabel}>COMMUNITY WEALTH</Text>
+              <Text style={reportStyles.summaryAmount}>KES {totalPooled.toLocaleString()}</Text>
+              <View style={reportStyles.summaryRow}>
+                <View style={reportStyles.summaryStat}>
+                  <Text style={reportStyles.summaryStatNum}>{activePools.length}</Text>
+                  <Text style={reportStyles.summaryStatLbl}>Active Pools</Text>
+                </View>
+                <View style={reportStyles.summaryDivider} />
+                <View style={reportStyles.summaryStat}>
+                  <Text style={reportStyles.summaryStatNum}>{members.length}</Text>
+                  <Text style={reportStyles.summaryStatLbl}>Members</Text>
+                </View>
+                <View style={reportStyles.summaryDivider} />
+                <View style={reportStyles.summaryStat}>
+                  <Text style={reportStyles.summaryStatNum}>{contributions.length}</Text>
+                  <Text style={reportStyles.summaryStatLbl}>Total Pools</Text>
+                </View>
+              </View>
+            </View>
+
+            {/* Active pools breakdown */}
+            {activePools.length > 0 && (
+              <View>
+                <Text style={reportStyles.sectionLabel}>ACTIVE POOLS</Text>
+                {activePools.map((c) => {
+                  const cur = Number(c.current_amount);
+                  const tgt = c.target_amount ? Number(c.target_amount) : 0;
+                  const pct = tgt > 0 ? Math.min((cur / tgt) * 100, 100) : 0;
+                  return (
+                    <TouchableOpacity
+                      key={c.id}
+                      style={reportStyles.poolCard}
+                      onPress={() => router.push({ pathname: `/contribution/${c.id}` })}
+                    >
+                      <View style={reportStyles.poolHead}>
+                        <Text style={reportStyles.poolName}>{c.title}</Text>
+                        <Text style={reportStyles.poolBalance}>KES {cur.toLocaleString()}</Text>
+                      </View>
+                      {tgt > 0 && (
+                        <>
+                          <View style={reportStyles.progressBg}>
+                            <View style={[reportStyles.progressFill, { width: `${pct}%` as any }]} />
+                          </View>
+                          <Text style={reportStyles.poolPct}>{Math.round(pct)}% of KES {tgt.toLocaleString()} target</Text>
+                        </>
+                      )}
+                      <View style={reportStyles.poolMeta}>
+                        <Ionicons name="people-outline" size={13} color={COLORS.textMuted} />
+                        <Text style={reportStyles.poolMetaTxt}>{c.participant_count} members</Text>
+                        <Text style={reportStyles.poolMetaDot}>·</Text>
+                        <Text style={reportStyles.poolMetaTxt}>{c.frequency}</Text>
+                        <Text style={reportStyles.poolMetaDot}>·</Text>
+                        <Text style={reportStyles.poolMetaTxt}>
+                          {c.amount_type === "fixed" && c.fixed_amount
+                            ? `KES ${Number(c.fixed_amount).toLocaleString()} fixed`
+                            : "Open amount"}
+                        </Text>
+                      </View>
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+            )}
+
+            {/* Closed / archived pools */}
+            {closedPools.length > 0 && (
+              <View>
+                <Text style={reportStyles.sectionLabel}>CLOSED / ARCHIVED</Text>
+                {closedPools.map((c) => (
+                  <TouchableOpacity
+                    key={c.id}
+                    style={[reportStyles.poolCard, { opacity: 0.6 }]}
+                    onPress={() => router.push({ pathname: `/contribution/${c.id}` })}
+                  >
+                    <View style={reportStyles.poolHead}>
+                      <Text style={reportStyles.poolName}>{c.title}</Text>
+                      <Text style={[reportStyles.poolBalance, { color: COLORS.textMuted }]}>
+                        KES {Number(c.current_amount).toLocaleString()}
+                      </Text>
+                    </View>
+                    <Text style={[reportStyles.poolMetaTxt, { marginTop: 4 }]}>{c.status.toUpperCase()}</Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+            )}
+
+            {/* Link to personal reports */}
+            <TouchableOpacity
+              style={reportStyles.linkRow}
+              onPress={() => router.push("/(drawer)/reports")}
+            >
+              <Ionicons name="bar-chart-outline" size={18} color={COLORS.primary} />
+              <Text style={reportStyles.linkText}>View your personal financial report</Text>
+              <Ionicons name="chevron-forward" size={16} color={COLORS.primary} />
+            </TouchableOpacity>
+
+          </ScrollView>
+        </SafeAreaView>
+      );
+    }
+
+    const tabTitle =
+      tab === "contributions" ? "Pools" :
+      tab === "conversations" ? "Discussions" :
+      "Members";
+
+    const listData: any[] =
+      tab === "members"       ? members :
+      tab === "conversations" ? conversations :
+      contributions;
+
+    return (
+      <SafeAreaView style={styles.safe}>
+        <AppHeader
+          title={tabTitle}
+          variant="light"
+          leading="back"
+          onBack={() => setTab("overview")}
+        />
+
+        {/* Member action modal still needed on Members tab */}
+        <Modal
+          visible={selectedMember !== null}
+          transparent
+          animationType="slide"
+          onRequestClose={() => setSelectedMember(null)}
+        >
+          <View style={{ flex: 1, justifyContent: "flex-end" }}>
+            <TouchableOpacity style={StyleSheet.absoluteFill} activeOpacity={1} onPress={() => setSelectedMember(null)} />
+            <View style={styles.memberSheet}>
+              <View style={styles.sheetHandle} />
+              <View style={styles.memberProfile}>
+                <Avatar name={selectedMember?.name ?? ""} uri={selectedMember?.profile_photo} size={72} />
+                <Text style={styles.memberPhone}>{selectedMember?.name}</Text>
+                <Text style={styles.memberPhoneSub}>{selectedMember?.phone_number}</Text>
+                <View style={[styles.memberRolePill, selectedMember?.phone_number === community?.created_by ? styles.memberRolePillOwner : styles.memberRolePillDefault]}>
+                  <Text style={[styles.memberRolePillText, selectedMember?.phone_number === community?.created_by && { color: COLORS.accent }]}>
+                    {selectedMember?.phone_number === community?.created_by ? "Owner" : selectedMember?.role}
+                  </Text>
+                </View>
+                <Text style={styles.memberJoined}>
+                  {selectedMember?.is_online === true  ? "● Online now" :
+                   selectedMember?.is_online === false ? "● Offline"   : ""}
+                </Text>
+              </View>
+              {isCreator && selectedMember?.phone_number !== community?.created_by && (
+                memberActionLoading ? (
+                  <ActivityIndicator size="large" color={COLORS.primary} style={{ marginVertical: 24 }} />
+                ) : (
+                  <View style={styles.memberActions}>
+                    {selectedMember?.role !== 'admin' ? (
+                      <TouchableOpacity style={styles.memberActionBtn} onPress={() => handleAssignRole('admin')}>
+                        <View style={[styles.memberActionIcon, { backgroundColor: COLORS.primary + "18" }]}>
+                          <Ionicons name="shield-checkmark-outline" size={20} color={COLORS.primary} />
+                        </View>
+                        <View style={{ flex: 1 }}>
+                          <Text style={styles.memberActionTitle}>Make Admin</Text>
+                          <Text style={styles.memberActionSub}>Grant admin rights to this member</Text>
+                        </View>
+                        <Ionicons name="chevron-forward" size={16} color={COLORS.textMuted} />
+                      </TouchableOpacity>
+                    ) : (
+                      <TouchableOpacity style={styles.memberActionBtn} onPress={() => handleAssignRole('member')}>
+                        <View style={[styles.memberActionIcon, { backgroundColor: COLORS.textMuted + "22" }]}>
+                          <Ionicons name="shield-outline" size={20} color={COLORS.textMuted} />
+                        </View>
+                        <View style={{ flex: 1 }}>
+                          <Text style={styles.memberActionTitle}>Remove Admin</Text>
+                          <Text style={styles.memberActionSub}>Revert to regular member</Text>
+                        </View>
+                        <Ionicons name="chevron-forward" size={16} color={COLORS.textMuted} />
+                      </TouchableOpacity>
+                    )}
+                    <View style={styles.memberActionDivider} />
+                    <TouchableOpacity style={styles.memberActionBtn} onPress={handleRemoveMember}>
+                      <View style={[styles.memberActionIcon, { backgroundColor: COLORS.error + "18" }]}>
+                        <Ionicons name="person-remove-outline" size={20} color={COLORS.error} />
+                      </View>
+                      <View style={{ flex: 1 }}>
+                        <Text style={[styles.memberActionTitle, { color: COLORS.error }]}>Remove from Community</Text>
+                        <Text style={styles.memberActionSub}>This member will lose access</Text>
+                      </View>
+                      <Ionicons name="chevron-forward" size={16} color={COLORS.textMuted} />
+                    </TouchableOpacity>
+                  </View>
+                )
+              )}
+              <TouchableOpacity style={styles.memberCloseBtn} onPress={() => setSelectedMember(null)}>
+                <Text style={styles.memberCloseBtnText}>Close</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </Modal>
+
+        <FlatList
+          data={listData}
+          keyExtractor={(item: any) => String(item.id)}
+          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={COLORS.primary} />}
+          contentContainerStyle={{ paddingBottom: 100 }}
+          renderItem={({ item }) => {
+            if (tab === "members") {
+              const m = item as CommunityMember;
+              const isOwnerRow = m.phone_number === community?.created_by;
+              return (
+                <TouchableOpacity style={styles.row} onPress={() => setSelectedMember(m)} activeOpacity={0.7}>
+                  <Avatar name={m.name} uri={m.profile_photo} size={40} isOnline={m.is_online} />
+                  <View style={styles.rowText}>
+                    <Text style={styles.rowName}>{m.name}</Text>
+                    {m.phone_number
+                      ? <Text style={styles.rowSub}>{m.phone_number}</Text>
+                      : null}
+                  </View>
+                  {isOwnerRow ? (
+                    <View style={[styles.roleBadge, { backgroundColor: COLORS.accent + "22" }]}>
+                      <Text style={[styles.roleBadgeText, { color: COLORS.accent }]}>owner</Text>
+                    </View>
+                  ) : m.role !== "member" ? (
+                    <View style={styles.roleBadge}>
+                      <Text style={styles.roleBadgeText}>{m.role}</Text>
+                    </View>
+                  ) : null}
+                  <Ionicons name="chevron-forward" size={16} color={COLORS.textMuted} />
+                </TouchableOpacity>
+              );
+            }
+            if (tab === "conversations") {
+              const c = item as Conversation;
+              const hasUnread = c.unread_count > 0;
+              const myMember  = members.find((m) => m.phone_number === myPhone);
+              const myRole    = isCreator ? 'admin' : (myMember?.role ?? 'member');
+              const clearedAt = clearedConvs[c.id];
+              const lastMsgHidden = !!(clearedAt && (!c.last_message || new Date(c.last_message.created_at) <= new Date(clearedAt)));
+              return (
+                <TouchableOpacity
+                  style={styles.row}
+                  onPress={() => router.push({ pathname: `/conversation/${c.id}`, params: { topic: c.topic, communityId: String(communityId), createdBy: c.created_by, myRole } })}
+                >
+                  <Avatar name={c.topic} uri={c.photo} size={48} />
+                  <View style={{ flex: 1 }}>
+                    <Text style={[styles.rowName, hasUnread && { fontWeight: "800" }]}>{c.topic}</Text>
+                    <Text style={[styles.rowSub, hasUnread && { color: COLORS.text, fontWeight: "500" }]} numberOfLines={1}>
+                      {lastMsgHidden ? "No messages yet" : (c.last_message?.content ?? "No messages yet")}
+                    </Text>
+                  </View>
+                  <View style={{ alignItems: "flex-end", gap: 4 }}>
+                    {c.last_message && !lastMsgHidden && <Text style={styles.rowTime}>{timeShort(c.last_message.created_at)}</Text>}
+                    {hasUnread && (
+                      <View style={styles.unreadBadge}>
+                        <Text style={styles.unreadBadgeText}>{c.unread_count > 99 ? "99+" : c.unread_count}</Text>
+                      </View>
+                    )}
+                  </View>
+                </TouchableOpacity>
+              );
+            }
+            const x = item as Contribution;
+            const cur = Number(x.current_amount);
+            const tgt = x.target_amount ? Number(x.target_amount) : 0;
+            const pct = tgt > 0 ? Math.min((cur / tgt) * 100, 100) : 0;
+            return (
+              <TouchableOpacity style={styles.contribCard} onPress={() => router.push({ pathname: `/contribution/${x.id}` })}>
+                <Text style={styles.contribTitle}>{x.title}</Text>
+                <Text style={styles.contribAmount}>KES {cur.toLocaleString()} {tgt > 0 ? `/ ${tgt.toLocaleString()}` : ""}</Text>
+                {tgt > 0 && (
+                  <View style={styles.progressBg}>
+                    <View style={[styles.progressFill, { width: `${pct}%` }]} />
+                  </View>
+                )}
+              </TouchableOpacity>
+            );
+          }}
+          ListEmptyComponent={
+            <Text style={styles.emptyText}>
+              {tab === "members" ? "No members yet" :
+               tab === "conversations" ? "No discussions yet" :
+               "No pools yet"}
+            </Text>
+          }
+          ItemSeparatorComponent={() =>
+            tab === "contributions" ? <View style={{ height: 10 }} /> : <View style={styles.divider} />
+          }
+        />
+
+        {/* Standardised FAB — same component and position as Communities list */}
+        {tab === "contributions" && (
+          // Show the create button based on contribution_permission setting:
+          //   'admins'  → only admins see it (default)
+          //   'members' → any active member sees it
+          (community?.contribution_permission === 'members' ? isMember : isAdmin)
+        ) && (
+          <FAB onPress={() => router.push({ pathname: `/contribution/create`, params: { communityId: String(communityId) } })} />
+        )}
+        {tab === "conversations" && (
+          <FAB onPress={() => router.push({ pathname: `/conversation/create`, params: { communityId: String(communityId) } })} />
+        )}
+        {tab === "members" && isAdmin && (
+          <FAB onPress={() => router.push({ pathname: `/community/${communityId}/add-members` })} />
+        )}
+      </SafeAreaView>
+    );
+  }
+
+  // ── Overview layout ────────────────────────────────────────────────────────
   return (
     <SafeAreaView style={styles.safe}>
       <AppHeader
@@ -465,9 +805,12 @@ export default function CommunityDetailScreen() {
             />
             {isAdmin && (
               <MenuItem
-                icon="create-outline"
-                label="Edit Community"
-                onPress={handleEditOpen}
+                icon="settings-outline"
+                label="Community Settings"
+                onPress={() => {
+                  setMenuVisible(false);
+                  router.push({ pathname: `/community/settings`, params: { id: String(communityId), name: community?.name ?? "" } });
+                }}
               />
             )}
             {!isCreator && (
@@ -646,7 +989,7 @@ export default function CommunityDetailScreen() {
           tab === "members"       ? members       :
           tab === "conversations" ? conversations :
           tab === "contributions" ? contributions :
-          []
+          [] // overview renders entirely inside ListHeaderComponent
         }
         keyExtractor={(item: any) => String(item.id)}
         refreshControl={
@@ -692,10 +1035,10 @@ export default function CommunityDetailScreen() {
             {(() => {
               const totalUnread = conversations.reduce((sum, c) => sum + (c.unread_count ?? 0), 0);
               const tabDefs: { key: Tab; label: string }[] = [
-                { key: "members",       label: "Members" },
+                { key: "overview",      label: "Overview" },
+                { key: "contributions", label: "Pools" },
                 { key: "conversations", label: "Discussions" },
-                { key: "contributions", label: "Contributions" },
-                { key: "meet",          label: "Meet" },
+                { key: "reports",       label: "Reports" },
               ];
               return (
                 <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.tabScroll} contentContainerStyle={{ paddingHorizontal: 12, gap: 8, paddingVertical: 10 }}>
@@ -719,62 +1062,218 @@ export default function CommunityDetailScreen() {
               );
             })()}
 
-            {/* Action rows */}
-            <View style={styles.actionsBlock}>
-              <ActionRow
-                icon="person-add-outline"
-                label="Add Members"
-                onPress={() => router.push({ pathname: `/community/${communityId}/add-members` })}
-              />
-              <View style={styles.actionDivider} />
-              <ActionRow
-                icon="chatbubble-outline"
-                label="New Conversation"
-                onPress={() => router.push({
-                  pathname: `/conversation/create`,
-                  params: { communityId: String(communityId) },
-                })}
-              />
-              {isAdmin && (
-                <>
-                  <View style={styles.actionDivider} />
-                  <ActionRow
-                    icon="wallet-outline"
-                    label="New Contribution"
-                    onPress={() => router.push({
-                      pathname: `/contribution/create`,
-                      params: { communityId: String(communityId) },
-                    })}
-                  />
-                </>
-              )}
-              {community?.has_welfare_fund && (
-                <>
-                  <View style={styles.actionDivider} />
-                  <ActionRow
-                    icon="heart-outline"
-                    label="Welfare Fund"
-                    onPress={() => router.push({
-                      pathname: `/welfare/${communityId}`,
-                      params: { name: community?.name, isAdmin: isAdmin ? "1" : "0" },
-                    })}
-                  />
-                </>
-              )}
-              {community?.has_shares_fund && (
-                <>
-                  <View style={styles.actionDivider} />
-                  <ActionRow
-                    icon="bar-chart-outline"
-                    label="Shares Fund"
-                    onPress={() => router.push({
-                      pathname: `/shares/${communityId}`,
-                      params: { name: community?.name },
-                    })}
-                  />
-                </>
-              )}
-            </View>
+            {/* ── Overview tab content ─────────────────────────────────────── */}
+            {tab === "overview" && (() => {
+              const activePools   = contributions.filter((c) => c.status === "active");
+              const totalPooled   = activePools.reduce((s, c) => s + Number(c.current_amount), 0);
+              const recentConvs   = conversations.slice(0, 3);
+              const myMember      = members.find((m) => m.phone_number === myPhone);
+              const myRole        = isCreator ? "admin" : (myMember?.role ?? "member");
+
+              return (
+                <View style={{ paddingHorizontal: 16, paddingBottom: 24, gap: 20 }}>
+
+                  {/* Wealth summary */}
+                  <View style={overviewStyles.wealthCard}>
+                    <Text style={overviewStyles.wealthLabel}>TOTAL POOLED</Text>
+                    <Text style={overviewStyles.wealthAmount}>KES {totalPooled.toLocaleString()}</Text>
+                    <Text style={overviewStyles.wealthMeta}>
+                      {activePools.length} active pool{activePools.length !== 1 ? "s" : ""} · {members.length} member{members.length !== 1 ? "s" : ""}
+                    </Text>
+                  </View>
+
+                  {/* Quick actions */}
+                  <View style={overviewStyles.quickRow}>
+                    <TouchableOpacity
+                      style={overviewStyles.quickBtn}
+                      onPress={() => router.push({ pathname: `/conversation/create`, params: { communityId: String(communityId) } })}
+                    >
+                      <View style={[overviewStyles.quickIcon, { backgroundColor: COLORS.primary + "18" }]}>
+                        <Ionicons name="chatbubble-outline" size={20} color={COLORS.primary} />
+                      </View>
+                      <Text style={overviewStyles.quickLabel}>Chat</Text>
+                    </TouchableOpacity>
+
+                    {(community?.contribution_permission === 'members' ? isMember : isAdmin) && (
+                      <TouchableOpacity
+                        style={overviewStyles.quickBtn}
+                        onPress={() => router.push({ pathname: `/contribution/create`, params: { communityId: String(communityId) } })}
+                      >
+                        <View style={[overviewStyles.quickIcon, { backgroundColor: "#1D7A4518" }]}>
+                          <Ionicons name="wallet-outline" size={20} color="#1D7A45" />
+                        </View>
+                        <Text style={overviewStyles.quickLabel}>New Pool</Text>
+                      </TouchableOpacity>
+                    )}
+
+                    {community?.has_welfare_fund && (
+                      <TouchableOpacity
+                        style={overviewStyles.quickBtn}
+                        onPress={() => router.push({ pathname: `/welfare/${communityId}`, params: { name: community?.name, isAdmin: isAdmin ? "1" : "0" } })}
+                      >
+                        <View style={[overviewStyles.quickIcon, { backgroundColor: COLORS.error + "18" }]}>
+                          <Ionicons name="heart-outline" size={20} color={COLORS.error} />
+                        </View>
+                        <Text style={overviewStyles.quickLabel}>Welfare</Text>
+                      </TouchableOpacity>
+                    )}
+
+                    {community?.has_shares_fund && (
+                      <TouchableOpacity
+                        style={overviewStyles.quickBtn}
+                        onPress={() => router.push({ pathname: `/shares/${communityId}`, params: { name: community?.name } })}
+                      >
+                        <View style={[overviewStyles.quickIcon, { backgroundColor: COLORS.primary + "18" }]}>
+                          <Ionicons name="bar-chart-outline" size={20} color={COLORS.primary} />
+                        </View>
+                        <Text style={overviewStyles.quickLabel}>Shares</Text>
+                      </TouchableOpacity>
+                    )}
+
+                    <TouchableOpacity
+                      style={overviewStyles.quickBtn}
+                      onPress={() => router.push({ pathname: `/community/${communityId}/add-members` })}
+                    >
+                      <View style={[overviewStyles.quickIcon, { backgroundColor: COLORS.accent + "18" }]}>
+                        <Ionicons name="person-add-outline" size={20} color={COLORS.accent} />
+                      </View>
+                      <Text style={overviewStyles.quickLabel}>Invite</Text>
+                    </TouchableOpacity>
+                  </View>
+
+                  {/* Active pools */}
+                  {activePools.length > 0 && (
+                    <View>
+                      <View style={overviewStyles.sectionHead}>
+                        <Text style={overviewStyles.sectionLabel}>ACTIVE POOLS</Text>
+                        {activePools.length > 3 && (
+                          <TouchableOpacity onPress={() => setTab("contributions")}>
+                            <Text style={overviewStyles.seeAll}>See all</Text>
+                          </TouchableOpacity>
+                        )}
+                      </View>
+                      {activePools.slice(0, 3).map((c) => {
+                        const cur = Number(c.current_amount);
+                        const tgt = c.target_amount ? Number(c.target_amount) : 0;
+                        const pct = tgt > 0 ? Math.min((cur / tgt) * 100, 100) : 0;
+                        return (
+                          <TouchableOpacity
+                            key={c.id}
+                            style={overviewStyles.poolCard}
+                            onPress={() => router.push({ pathname: `/contribution/${c.id}` })}
+                          >
+                            <View style={{ flex: 1 }}>
+                              <Text style={overviewStyles.poolTitle}>{c.title}</Text>
+                              <Text style={overviewStyles.poolAmount}>
+                                KES {cur.toLocaleString()}
+                                {tgt > 0 ? <Text style={overviewStyles.poolTarget}> / {tgt.toLocaleString()}</Text> : null}
+                              </Text>
+                              {tgt > 0 && (
+                                <View style={overviewStyles.progressBg}>
+                                  <View style={[overviewStyles.progressFill, { width: `${pct}%` as any }]} />
+                                </View>
+                              )}
+                              <Text style={overviewStyles.poolMeta}>{c.participant_count} member{c.participant_count !== 1 ? "s" : ""} · {c.frequency}</Text>
+                            </View>
+                            <Ionicons name="chevron-forward" size={16} color={COLORS.textMuted} style={{ marginLeft: 8 }} />
+                          </TouchableOpacity>
+                        );
+                      })}
+                    </View>
+                  )}
+
+                  {activePools.length === 0 && (
+                    <View style={overviewStyles.emptyPool}>
+                      <Ionicons name="wallet-outline" size={36} color={COLORS.textMuted} />
+                      <Text style={overviewStyles.emptyPoolText}>No active savings pools yet</Text>
+                      {(community?.contribution_permission === 'members' ? isMember : isAdmin) && (
+                        <TouchableOpacity
+                          onPress={() => router.push({ pathname: `/contribution/create`, params: { communityId: String(communityId) } })}
+                          style={overviewStyles.emptyPoolBtn}
+                        >
+                          <Text style={overviewStyles.emptyPoolBtnText}>Create a pool</Text>
+                        </TouchableOpacity>
+                      )}
+                    </View>
+                  )}
+
+                  {/* Recent discussions */}
+                  {recentConvs.length > 0 && (
+                    <View>
+                      <View style={overviewStyles.sectionHead}>
+                        <Text style={overviewStyles.sectionLabel}>RECENT DISCUSSIONS</Text>
+                        {conversations.length > 3 && (
+                          <TouchableOpacity onPress={() => setTab("conversations")}>
+                            <Text style={overviewStyles.seeAll}>See all</Text>
+                          </TouchableOpacity>
+                        )}
+                      </View>
+                      {recentConvs.map((c) => {
+                        const hasUnread = (c.unread_count ?? 0) > 0;
+                        return (
+                          <TouchableOpacity
+                            key={c.id}
+                            style={overviewStyles.convRow}
+                            onPress={() => router.push({ pathname: `/conversation/${c.id}`, params: { topic: c.topic, communityId: String(communityId), createdBy: c.created_by, myRole } })}
+                          >
+                            <Avatar name={c.topic} uri={c.photo} size={40} />
+                            <View style={{ flex: 1, marginLeft: 12 }}>
+                              <Text style={[overviewStyles.convTopic, hasUnread && { fontWeight: "800" }]}>{c.topic}</Text>
+                              <Text style={overviewStyles.convPreview} numberOfLines={1}>
+                                {c.last_message?.content ?? "No messages yet"}
+                              </Text>
+                            </View>
+                            {hasUnread && (
+                              <View style={overviewStyles.unreadDot}>
+                                <Text style={overviewStyles.unreadDotText}>{c.unread_count}</Text>
+                              </View>
+                            )}
+                          </TouchableOpacity>
+                        );
+                      })}
+                    </View>
+                  )}
+
+                  {/* Members preview */}
+                  {members.length > 0 && (
+                    <View>
+                      <View style={overviewStyles.sectionHead}>
+                        <Text style={overviewStyles.sectionLabel}>MEMBERS</Text>
+                        <TouchableOpacity onPress={() => setTab("members")}>
+                          <Text style={overviewStyles.seeAll}>View all {members.length}</Text>
+                        </TouchableOpacity>
+                      </View>
+                      <View style={overviewStyles.membersRow}>
+                        {members.slice(0, 8).map((m) => (
+                          <TouchableOpacity
+                            key={m.id}
+                            style={overviewStyles.memberAvatarWrap}
+                            onPress={() => setTab("members")}
+                          >
+                            <Avatar name={m.name} uri={m.profile_photo} size={46} />
+                            <Text style={overviewStyles.memberAvatarName} numberOfLines={1}>
+                              {m.name?.split(" ")[0] ?? m.phone_number.slice(-4)}
+                            </Text>
+                          </TouchableOpacity>
+                        ))}
+                        {members.length > 8 && (
+                          <TouchableOpacity style={overviewStyles.memberAvatarWrap} onPress={() => setTab("members")}>
+                            <View style={overviewStyles.memberMore}>
+                              <Text style={overviewStyles.memberMoreText}>+{members.length - 8}</Text>
+                            </View>
+                            <Text style={overviewStyles.memberAvatarName}>more</Text>
+                          </TouchableOpacity>
+                        )}
+                      </View>
+                    </View>
+                  )}
+
+                </View>
+              );
+            })()}
+
+            {/* Action rows removed — actions live in Overview quick-icons
+                and per-tab FABs (Pools / Discussions / Members). */}
 
           </>
         }
@@ -873,7 +1372,7 @@ export default function CommunityDetailScreen() {
           );
         }}
         ListEmptyComponent={
-          tab === "meet" ? null :
+          tab === "overview" ? null :
           <Text style={styles.emptyText}>
             {tab === "members" ? "No members yet" :
              tab === "conversations" ? "No discussions yet" :
@@ -885,6 +1384,171 @@ export default function CommunityDetailScreen() {
         }
       />
 
+
+    </SafeAreaView>
+  );
+}
+
+// ── Non-member join suggestion screen ────────────────────────────────────────
+function NonMemberGate({
+  community,
+  memberCount,
+  onBack,
+}: {
+  community: Community | null;
+  memberCount: number;
+  onBack: () => void;
+}) {
+  const [joining, setJoining] = useState(false);
+
+  // Seed local status from the API — covers the case where the user already
+  // sent a request in a previous session and returns to the page.
+  const [requestStatus, setRequestStatus] = useState<'none' | 'PENDING' | 'REJECTED'>(
+    community?.join_request_status === 'PENDING'  ? 'PENDING'  :
+    community?.join_request_status === 'REJECTED' ? 'REJECTED' :
+    'none'
+  );
+
+  const handleJoin = async () => {
+    if (!community) return;
+    setJoining(true);
+    try {
+      // Request by ID — invite_code is withheld from non-members by the
+      // serializer, so we use the dedicated /communities/{id}/request/ endpoint.
+      await requestToJoinById(community.id);
+      setRequestStatus('PENDING');
+    } catch (e: any) {
+      Alert.alert("Error", e?.response?.data?.error || "Could not send join request.");
+    } finally {
+      setJoining(false);
+    }
+  };
+
+  const benefits = [
+    { icon: "wallet-outline",     text: "Access shared savings pools and contribute together" },
+    { icon: "chatbubble-outline", text: "Join group discussions and stay informed" },
+    { icon: "people-outline",     text: "Connect with all community members" },
+    { icon: "bar-chart-outline",  text: "View community financial reports and progress" },
+  ];
+
+  return (
+    <SafeAreaView style={{ flex: 1, backgroundColor: COLORS.background }}>
+      <AppHeader
+        title={community?.name ?? "Community"}
+        variant="light"
+        leading="back"
+        onBack={onBack}
+      />
+
+      <ScrollView contentContainerStyle={{ flexGrow: 1, paddingHorizontal: 24, paddingTop: 32, paddingBottom: 48 }}>
+
+        {/* Group icon + member count */}
+        <View style={{ alignItems: "center", gap: 12, marginBottom: 28 }}>
+          <Avatar name={community?.name ?? ""} uri={community?.community_photo} size={88} />
+          <Text style={{ fontSize: FONTS.xl, fontWeight: "700", color: COLORS.text, textAlign: "center" }}>
+            {community?.name}
+          </Text>
+          <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+            <Ionicons name="people-outline" size={16} color={COLORS.textMuted} />
+            <Text style={{ fontSize: FONTS.sm, color: COLORS.textMuted }}>
+              {memberCount} member{memberCount !== 1 ? "s" : ""}
+            </Text>
+          </View>
+        </View>
+
+        {/* Status-dependent content */}
+        {requestStatus === 'PENDING' ? (
+          // ── Request pending ────────────────────────────────────────────────
+          <View style={{ alignItems: "center", gap: 16, paddingVertical: 16 }}>
+            <View style={{ width: 72, height: 72, borderRadius: 36, backgroundColor: COLORS.primaryPale, justifyContent: "center", alignItems: "center" }}>
+              <Ionicons name="time-outline" size={36} color={COLORS.primary} />
+            </View>
+            <Text style={{ fontSize: FONTS.xl, fontWeight: "700", color: COLORS.text, textAlign: "center" }}>
+              Request sent!
+            </Text>
+            <Text style={{ fontSize: FONTS.md, color: COLORS.textSecondary, textAlign: "center", lineHeight: 22 }}>
+              Your request to join <Text style={{ fontWeight: "700", color: COLORS.text }}>{community?.name}</Text> has been sent to the admin for approval.
+            </Text>
+            <View style={{ backgroundColor: COLORS.background, borderRadius: RADIUS.md, padding: 16, gap: 10, width: "100%" }}>
+              <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
+                <Ionicons name="notifications-outline" size={16} color={COLORS.primary} />
+                <Text style={{ flex: 1, fontSize: FONTS.sm, color: COLORS.textSecondary, lineHeight: 18 }}>
+                  You'll receive a notification once the admin reviews your request.
+                </Text>
+              </View>
+              <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
+                <Ionicons name="lock-closed-outline" size={16} color={COLORS.textMuted} />
+                <Text style={{ flex: 1, fontSize: FONTS.sm, color: COLORS.textMuted, lineHeight: 18 }}>
+                  Community content is only accessible after your request is approved.
+                </Text>
+              </View>
+            </View>
+            <TouchableOpacity
+              style={{ marginTop: 8, backgroundColor: COLORS.white, borderWidth: 1.5, borderColor: COLORS.border, padding: 14, borderRadius: RADIUS.md, alignItems: "center", width: "100%" }}
+              onPress={onBack}
+            >
+              <Text style={{ fontWeight: "700", fontSize: FONTS.md, color: COLORS.textSecondary }}>Back to Communities</Text>
+            </TouchableOpacity>
+          </View>
+
+        ) : requestStatus === 'REJECTED' ? (
+          // ── Request was declined ───────────────────────────────────────────
+          <View style={{ alignItems: "center", gap: 16, paddingVertical: 16 }}>
+            <View style={{ width: 72, height: 72, borderRadius: 36, backgroundColor: "#fce8e6", justifyContent: "center", alignItems: "center" }}>
+              <Ionicons name="close-circle-outline" size={36} color={COLORS.error} />
+            </View>
+            <Text style={{ fontSize: FONTS.xl, fontWeight: "700", color: COLORS.text, textAlign: "center" }}>
+              Request declined
+            </Text>
+            <Text style={{ fontSize: FONTS.md, color: COLORS.textSecondary, textAlign: "center", lineHeight: 22 }}>
+              Your previous request to join <Text style={{ fontWeight: "700", color: COLORS.text }}>{community?.name}</Text> was not approved. You can send a new request.
+            </Text>
+            <TouchableOpacity
+              style={{ backgroundColor: COLORS.primary, padding: 16, borderRadius: RADIUS.md, alignItems: "center", width: "100%", opacity: joining ? 0.7 : 1 }}
+              onPress={handleJoin}
+              disabled={joining}
+            >
+              {joining
+                ? <ActivityIndicator color={COLORS.white} />
+                : <Text style={{ color: COLORS.white, fontWeight: "700", fontSize: FONTS.md }}>Request Again</Text>
+              }
+            </TouchableOpacity>
+            <TouchableOpacity style={{ padding: 12 }} onPress={onBack}>
+              <Text style={{ fontSize: FONTS.sm, color: COLORS.textMuted, fontWeight: "600" }}>Not now</Text>
+            </TouchableOpacity>
+          </View>
+
+        ) : (
+          // ── No request yet — show join CTA ─────────────────────────────────
+          <>
+            <View style={{ backgroundColor: COLORS.white, borderRadius: RADIUS.lg, padding: 20, gap: 16, borderWidth: 1, borderColor: COLORS.border, marginBottom: 24 }}>
+              <Text style={{ fontSize: FONTS.md, fontWeight: "700", color: COLORS.text }}>What you get by joining</Text>
+              {benefits.map(({ icon, text }) => (
+                <View key={icon} style={{ flexDirection: "row", alignItems: "center", gap: 12 }}>
+                  <View style={{ width: 36, height: 36, borderRadius: 10, backgroundColor: COLORS.primaryPale, justifyContent: "center", alignItems: "center" }}>
+                    <Ionicons name={icon as any} size={18} color={COLORS.primary} />
+                  </View>
+                  <Text style={{ flex: 1, fontSize: FONTS.sm, color: COLORS.textSecondary, lineHeight: 18 }}>{text}</Text>
+                </View>
+              ))}
+            </View>
+            <TouchableOpacity
+              style={{ backgroundColor: COLORS.primary, padding: 16, borderRadius: RADIUS.md, alignItems: "center", opacity: joining ? 0.7 : 1 }}
+              onPress={handleJoin}
+              disabled={joining}
+            >
+              {joining
+                ? <ActivityIndicator color={COLORS.white} />
+                : <Text style={{ color: COLORS.white, fontWeight: "700", fontSize: FONTS.md }}>Request to Join</Text>
+              }
+            </TouchableOpacity>
+            <TouchableOpacity style={{ alignItems: "center", marginTop: 16, padding: 12 }} onPress={onBack}>
+              <Text style={{ fontSize: FONTS.sm, color: COLORS.textMuted, fontWeight: "600" }}>Not now</Text>
+            </TouchableOpacity>
+          </>
+        )}
+
+      </ScrollView>
     </SafeAreaView>
   );
 }
@@ -998,8 +1662,10 @@ const styles = StyleSheet.create({
     backgroundColor: COLORS.white, gap: 14,
   },
   rowText: { flex: 1 },
-  rowName: { fontSize: FONTS.md, fontWeight: "600", color: COLORS.text },
-  rowSub:  { fontSize: FONTS.sm, color: COLORS.textMuted, marginTop: 1 },
+  rowName:     { fontSize: FONTS.md, fontWeight: "600", color: COLORS.text },
+  rowSub:      { fontSize: FONTS.sm, color: COLORS.textMuted, marginTop: 1 },
+  onlineText:  { fontSize: 11, color: "#22C55E", fontWeight: "600", marginTop: 2 },
+  offlineText: { fontSize: 11, color: COLORS.textMuted, marginTop: 2 },
   rowTime: { fontSize: 11, color: COLORS.textMuted },
   divider: { height: 1, backgroundColor: COLORS.divider, marginLeft: 74 },
 
@@ -1135,3 +1801,101 @@ const editSheetStyles = StyleSheet.create({
   },
   toggleThumbOn: { alignSelf: "flex-end" },
 });
+
+// ── Overview tab styles ────────────────────────────────────────────────────
+const overviewStyles = StyleSheet.create({
+  wealthCard: {
+    backgroundColor: COLORS.primary,
+    borderRadius: RADIUS.xl,
+    padding: 24,
+    alignItems: "center",
+  },
+  wealthLabel:  { fontSize: 11, fontWeight: "700", color: "rgba(255,255,255,0.7)", letterSpacing: 1.2, marginBottom: 6 },
+  wealthAmount: { fontSize: 36, fontWeight: "800", color: COLORS.white, marginBottom: 6 },
+  wealthMeta:   { fontSize: FONTS.sm, color: "rgba(255,255,255,0.75)" },
+
+  quickRow: { flexDirection: "row", justifyContent: "space-around" },
+  quickBtn: { alignItems: "center", gap: 6 },
+  quickIcon: { width: 52, height: 52, borderRadius: 16, justifyContent: "center", alignItems: "center" },
+  quickLabel: { fontSize: 12, fontWeight: "600", color: COLORS.textSecondary },
+
+  sectionHead: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 10 },
+  sectionLabel: { fontSize: 11, fontWeight: "700", color: COLORS.textMuted, letterSpacing: 0.8 },
+  seeAll: { fontSize: FONTS.sm, fontWeight: "700", color: COLORS.primary },
+
+  poolCard: {
+    flexDirection: "row", alignItems: "center",
+    backgroundColor: COLORS.white, borderRadius: RADIUS.md,
+    padding: 14, marginBottom: 8,
+    borderWidth: 1, borderColor: COLORS.border,
+  },
+  poolTitle:   { fontSize: FONTS.md, fontWeight: "700", color: COLORS.text, marginBottom: 2 },
+  poolAmount:  { fontSize: FONTS.md, fontWeight: "600", color: COLORS.primary },
+  poolTarget:  { fontWeight: "400", color: COLORS.textMuted },
+  poolMeta:    { fontSize: FONTS.sm, color: COLORS.textMuted, marginTop: 4 },
+  progressBg:  { height: 4, backgroundColor: COLORS.border, borderRadius: 2, marginTop: 6, overflow: "hidden" },
+  progressFill:{ height: 4, backgroundColor: COLORS.primary, borderRadius: 2 },
+
+  convRow: { flexDirection: "row", alignItems: "center", paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: COLORS.divider },
+  convTopic:   { fontSize: FONTS.md, fontWeight: "600", color: COLORS.text, marginBottom: 2 },
+  convPreview: { fontSize: FONTS.sm, color: COLORS.textMuted },
+  unreadDot:   { backgroundColor: COLORS.primary, borderRadius: 10, minWidth: 20, height: 20, justifyContent: "center", alignItems: "center", paddingHorizontal: 5 },
+  unreadDotText: { color: COLORS.white, fontSize: 11, fontWeight: "700" },
+
+  emptyPool:      { alignItems: "center", gap: 10, paddingVertical: 24, backgroundColor: COLORS.white, borderRadius: RADIUS.md, borderWidth: 1, borderColor: COLORS.border },
+  emptyPoolText:  { fontSize: FONTS.sm, color: COLORS.textMuted },
+  emptyPoolBtn:     { backgroundColor: COLORS.primaryPale, paddingHorizontal: 20, paddingVertical: 8, borderRadius: RADIUS.full },
+  emptyPoolBtnText: { color: COLORS.primary, fontWeight: "700", fontSize: FONTS.sm },
+
+  // Members preview row
+  membersRow:          { flexDirection: "row", flexWrap: "wrap", gap: 12 },
+  memberAvatarWrap:    { alignItems: "center", width: 52 },
+  memberAvatarName:    { fontSize: 10, color: COLORS.textSecondary, fontWeight: "600", marginTop: 4, textAlign: "center" },
+  memberMore:          { width: 46, height: 46, borderRadius: 23, backgroundColor: COLORS.primaryPale, justifyContent: "center", alignItems: "center" },
+  memberMoreText:      { fontSize: FONTS.sm, fontWeight: "700", color: COLORS.primary },
+});
+
+// ── Reports tab styles ─────────────────────────────────────────────────────
+const reportStyles = StyleSheet.create({
+  summaryCard: {
+    backgroundColor: COLORS.primary,
+    borderRadius: RADIUS.xl,
+    padding: 24,
+    alignItems: "center",
+  },
+  summaryLabel:     { fontSize: 11, fontWeight: "700", color: "rgba(255,255,255,0.7)", letterSpacing: 1.2, marginBottom: 6 },
+  summaryAmount:    { fontSize: 32, fontWeight: "800", color: COLORS.white, marginBottom: 20 },
+  summaryRow:       { flexDirection: "row", alignItems: "center", gap: 0 },
+  summaryStat:      { alignItems: "center", flex: 1 },
+  summaryStatNum:   { fontSize: FONTS.xl, fontWeight: "800", color: COLORS.white },
+  summaryStatLbl:   { fontSize: 11, color: "rgba(255,255,255,0.7)", marginTop: 2 },
+  summaryDivider:   { width: 1, height: 32, backgroundColor: "rgba(255,255,255,0.25)" },
+
+  sectionLabel: { fontSize: 11, fontWeight: "700", color: COLORS.textMuted, letterSpacing: 0.8, marginBottom: 10 },
+
+  poolCard: {
+    backgroundColor: COLORS.white,
+    borderRadius: RADIUS.md,
+    padding: 14,
+    marginBottom: 10,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+  },
+  poolHead:    { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 8 },
+  poolName:    { fontSize: FONTS.md, fontWeight: "700", color: COLORS.text, flex: 1, marginRight: 8 },
+  poolBalance: { fontSize: FONTS.md, fontWeight: "700", color: COLORS.primary },
+  progressBg:  { height: 6, backgroundColor: COLORS.border, borderRadius: 3, overflow: "hidden", marginBottom: 4 },
+  progressFill:{ height: 6, backgroundColor: COLORS.primary, borderRadius: 3 },
+  poolPct:     { fontSize: 11, color: COLORS.textMuted, marginBottom: 8 },
+  poolMeta:    { flexDirection: "row", alignItems: "center", gap: 5, flexWrap: "wrap" },
+  poolMetaTxt: { fontSize: 12, color: COLORS.textMuted },
+  poolMetaDot: { fontSize: 12, color: COLORS.textMuted },
+
+  linkRow: {
+    flexDirection: "row", alignItems: "center", gap: 10,
+    backgroundColor: COLORS.primaryPale,
+    padding: 14, borderRadius: RADIUS.md,
+  },
+  linkText: { flex: 1, fontSize: FONTS.sm, fontWeight: "600", color: COLORS.primary },
+});
+

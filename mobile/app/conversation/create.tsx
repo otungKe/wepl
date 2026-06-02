@@ -5,7 +5,6 @@ import {
   TouchableOpacity,
   Text,
   StyleSheet,
-  ActivityIndicator,
   Alert,
   KeyboardAvoidingView,
   Platform,
@@ -63,13 +62,7 @@ export default function CreateConversationScreen() {
       </View>
       </KeyboardAvoidingView>
 
-      {saving ? (
-        <View style={styles.savingOverlay}>
-          <ActivityIndicator color={COLORS.white} />
-        </View>
-      ) : (
-        <FAB icon="check" onPress={handleSave} />
-      )}
+      <FAB icon="check" onPress={handleSave} disabled={saving} loading={saving} />
     </SafeAreaView>
   );
 }
@@ -97,12 +90,4 @@ const styles = StyleSheet.create({
     textAlign: "center",
   },
 
-  savingOverlay: {
-    position: "absolute",
-    right: 20, bottom: 24,
-    width: 60, height: 60,
-    borderRadius: RADIUS.full,
-    backgroundColor: COLORS.primary,
-    justifyContent: "center", alignItems: "center",
-  },
 });

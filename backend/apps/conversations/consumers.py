@@ -1,7 +1,9 @@
 import json
+import time
 
 from channels.generic.websocket import AsyncWebsocketConsumer
 from asgiref.sync import sync_to_async
+from urllib.parse import parse_qs
 
 from apps.communities.models import CommunityMembership
 from .models import Conversation, Message
@@ -38,6 +40,19 @@ class ConversationConsumer(AsyncWebsocketConsumer):
             await self.close()
             return
 
+        # Record when this token expires so we can close the socket cleanly.
+        # The JWT middleware already validated the token — extract exp from scope.
+        self._token_exp: int = 0
+        qs = parse_qs(self.scope.get("query_string", b"").decode())
+        raw_token = (qs.get("token") or [""])[0]
+        if raw_token:
+            try:
+                from rest_framework_simplejwt.tokens import AccessToken
+                tok = AccessToken(raw_token)
+                self._token_exp = tok.payload.get("exp", 0)
+            except Exception:
+                pass
+
         await self.channel_layer.group_add(self.room_group_name, self.channel_name)
         await self.accept()
 
@@ -45,9 +60,29 @@ class ConversationConsumer(AsyncWebsocketConsumer):
         await self.channel_layer.group_discard(self.room_group_name, self.channel_name)
 
     async def receive(self, text_data):
+        # ── Token expiry check ────────────────────────────────────────────────
+        # Close the socket if the access token has expired.
+        # The client must reconnect with a fresh token (obtained via the REST
+        # token-refresh endpoint) to continue.
+        if self._token_exp and time.time() > self._token_exp:
+            await self.send(text_data=json.dumps({
+                "type":    "session_expired",
+                "message": "Your session has expired. Please reconnect with a fresh token.",
+            }))
+            await self.close(code=4001)   # 4001 = custom "session expired" code
+            return
+
         data = json.loads(text_data)
         event_type = data.get("type", "message")
         user = self.scope["user"]
+
+        # ── Ping / keepalive ──────────────────────────────────────────────────
+        # Client sends {"type": "ping"} periodically. We reply with a pong so the
+        # client knows the connection is alive, and we re-validate the token above
+        # on every ping so a stale session is detected quickly.
+        if event_type == "ping":
+            await self.send(text_data=json.dumps({"type": "pong"}))
+            return
 
         # ── Typing indicator ──────────────────────────────────────────────────
         if event_type == "typing":

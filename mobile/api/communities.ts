@@ -1,5 +1,10 @@
 import API from "./client";
 
+export type JoinPolicy            = 'open' | 'request' | 'invite_only';
+export type InvitePermission      = 'admins' | 'members' | 'creator';
+export type ContributionPermission = 'admins' | 'members';
+export type MemberListVisibility  = 'all' | 'admins';
+
 export type Community = {
   id: number;
   name: string;
@@ -17,16 +22,22 @@ export type Community = {
   is_member: boolean;
   join_request_status: 'PENDING' | 'APPROVED' | 'REJECTED' | null;
   created_at: string;
+  // Section A governance
+  join_policy:             JoinPolicy;
+  invite_permission:       InvitePermission;
+  contribution_permission: ContributionPermission;
+  member_list_visibility:  MemberListVisibility;
+  max_members:             number | null;
 };
 
 export type CommunityMember = {
   id: number;
-  phone_number: string;
+  phone_number: string | null;
   name: string;
   profile_photo: string | null;
   role: 'admin' | 'member' | 'treasurer';
   is_active: boolean;
-  joined_at: string;
+  is_online: boolean | null;   // null = user has opted out of showing status
 };
 
 export const getMyCommunities = async (): Promise<Community[]> => {
@@ -96,6 +107,27 @@ export const getCommunityByInviteCode = async (code: string): Promise<Community>
 
 export const requestToJoinCommunity = async (code: string): Promise<{ id: number; status: string }> => {
   const r = await API.post(`communities/invite/${code}/request/`);
+  return r.data;
+};
+
+/** Request to join by community ID — used when invite_code is not available (non-members). */
+export const requestToJoinById = async (communityId: number): Promise<{ id: number; status: string }> => {
+  const r = await API.post(`communities/${communityId}/request/`);
+  return r.data;
+};
+
+export type PendingRequest = {
+  id: number;
+  community_id: number;
+  community_name: string;
+  community_photo: string | null;
+  member_count: number;
+  created_at: string;
+};
+
+/** Returns all of the current user's pending community join requests. */
+export const getMyJoinRequests = async (): Promise<PendingRequest[]> => {
+  const r = await API.get("communities/my-requests/");
   return r.data;
 };
 

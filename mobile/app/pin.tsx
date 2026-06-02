@@ -1,26 +1,50 @@
-import { useState } from "react";
-import {
-  View, Text, TextInput, TouchableOpacity, StyleSheet,
-  ActivityIndicator, KeyboardAvoidingView, Platform, ScrollView,
-} from "react-native";
-import { SafeAreaView } from "react-native-safe-area-context";
+import { useRef, useState } from "react";
 import * as storage from "../utils/secureStorage";
 import { router, useLocalSearchParams } from "expo-router";
 import { setPIN, resetPIN } from "../api/auth";
-import { COLORS, FONTS, RADIUS } from "../constants/theme";
+import PinPad from "../components/app/PinPad";
+
+type Step = "enter" | "confirm";
 
 export default function PINScreen() {
-  const { phone_number, mode } = useLocalSearchParams<{ phone_number: string; mode?: string }>();
+  const { phone_number, mode } = useLocalSearchParams<{
+    phone_number: string;
+    mode?: string;
+  }>();
   const isReset = mode === "reset";
 
-  const [pin,        setPin]        = useState("");
-  const [confirmPin, setConfirmPin] = useState("");
-  const [loading,    setLoading]    = useState(false);
-  const [error,      setError]      = useState("");
+  const [step,     setStep]     = useState<Step>("enter");
+  const [loading,  setLoading]  = useState(false);
+  const [error,    setError]    = useState("");
+  const [resetKey, setResetKey] = useState(0);
 
-  const handleSetPIN = async () => {
-    if (pin.length < 6)     { setError("PIN must be 6 digits"); return; }
-    if (pin !== confirmPin) { setError("PINs do not match"); return; }
+  // ── Use a ref for the first PIN so handleConfirm always reads the current
+  // value — useState updates are async and can cause stale closures across
+  // renders; useRef.current is always synchronous and up-to-date.
+  const firstPinRef = useRef("");
+
+  // ── Step 1: user has entered their new PIN ───────────────────────────────
+  function handleEnter(pin: string) {
+    firstPinRef.current = pin;   // always current — no stale closure risk
+    setError("");
+    setStep("confirm");          // PinPad delays onComplete by 80ms so the
+                                 // last dot fills before the screen swaps.
+  }
+
+  // ── Step 2: user confirms their PIN ─────────────────────────────────────
+  async function handleConfirm(pin: string) {
+    if (pin !== firstPinRef.current) {
+      setError("PINs don't match. Please try again.");
+      setResetKey(k => k + 1);
+      // Go back to step 1 after the error animation
+      setTimeout(() => {
+        firstPinRef.current = "";
+        setStep("enter");
+        setError("");
+      }, 1400);
+      return;
+    }
+
     setError("");
     setLoading(true);
     try {
@@ -28,96 +52,71 @@ export default function PINScreen() {
       await storage.setItem("access",  data.access);
       await storage.setItem("refresh", data.refresh);
       if (phone_number) await storage.setItem("phone", phone_number);
-      // New users go to KYC; PIN-reset users go straight to the app.
-      router.replace(isReset ? "/(drawer)/index" : "/kyc");
+      // New users → display name screen before entering the app.
+      // Reset users → straight into the app (they already have a profile).
+      if (isReset) {
+        // PIN reset for existing user — go to drawer root.
+        // Tab layout resolves to Communities (verified) or Profile (unverified).
+        router.replace("/(drawer)" as any);
+      } else {
+        // New user — display name screen first, then into the app.
+        router.replace("/display-name");
+      }
     } catch (e: any) {
-      setError(e?.response?.data?.error || "Failed to set PIN. Try again.");
+      const msg = e?.response?.data?.error || "Something went wrong. Please try again.";
+      setError(msg);
+      setResetKey(k => k + 1);
+      setTimeout(() => {
+        firstPinRef.current = "";
+        setStep("enter");
+        setError("");
+      }, 1600);
     } finally {
       setLoading(false);
     }
-  };
+  }
 
+  // ── Confirm step ─────────────────────────────────────────────────────────
+  // key="confirm" ensures React unmounts the enter PinPad and mounts a fresh
+  // one — without this, React reuses the same instance and the internal `pin`
+  // state (filled with digits from step 1) persists into the confirm step.
+  if (step === "confirm") {
+    return (
+      <PinPad
+        key="pin-confirm"
+        icon="shield-checkmark"
+        title="Confirm your PIN"
+        subtitle="Enter the same PIN again"
+        onComplete={handleConfirm}
+        error={error}
+        loading={loading}
+        resetKey={resetKey}
+        onBack={() => {
+          firstPinRef.current = "";
+          setStep("enter");
+          setError("");
+          setResetKey(k => k + 1);
+        }}
+      />
+    );
+  }
+
+  // ── Enter step ───────────────────────────────────────────────────────────
   return (
-    <SafeAreaView style={styles.safe}>
-    <KeyboardAvoidingView style={styles.flex} behavior={Platform.OS === "ios" ? "padding" : undefined}>
-      <ScrollView contentContainerStyle={styles.container} keyboardShouldPersistTaps="handled">
-
-        <Text style={styles.title}>
-          {isReset ? "Reset your PIN" : "Create your PIN"}
-        </Text>
-        <Text style={styles.subtitle}>
-          {isReset
-            ? "Choose a new 6-digit PIN for your account."
-            : "You'll use this 6-digit PIN every time you log in."}
-        </Text>
-
-        <Text style={styles.label}>New PIN</Text>
-        <TextInput
-          placeholder="• • • • • •"
-          placeholderTextColor={COLORS.textMuted}
-          keyboardType="numeric"
-          secureTextEntry
-          maxLength={6}
-          value={pin}
-          onChangeText={t => { setPin(t); setError(""); }}
-          style={[styles.input, styles.pinInput]}
-          autoFocus
-        />
-
-        <Text style={[styles.label, { marginTop: 12 }]}>Confirm PIN</Text>
-        <TextInput
-          placeholder="• • • • • •"
-          placeholderTextColor={COLORS.textMuted}
-          keyboardType="numeric"
-          secureTextEntry
-          maxLength={6}
-          value={confirmPin}
-          onChangeText={t => { setConfirmPin(t); setError(""); }}
-          style={[styles.input, styles.pinInput]}
-        />
-
-        {error ? <Text style={styles.error}>{error}</Text> : null}
-
-        <TouchableOpacity
-          style={[styles.button, loading && styles.buttonDisabled]}
-          onPress={handleSetPIN}
-          disabled={loading}
-        >
-          {loading
-            ? <ActivityIndicator color={COLORS.white} />
-            : <Text style={styles.buttonText}>
-                {isReset ? "Reset PIN" : "Create Account"}
-              </Text>}
-        </TouchableOpacity>
-
-      </ScrollView>
-    </KeyboardAvoidingView>
-    </SafeAreaView>
+    <PinPad
+      key="pin-enter"
+      icon="lock-closed"
+      title={isReset ? "New PIN" : "Create your PIN"}
+      subtitle={
+        isReset
+          ? "Choose a new 6-digit PIN"
+          : "Choose a secure 6-digit PIN"
+      }
+      onComplete={handleEnter}
+      error={error}
+      loading={false}
+      resetKey={resetKey}
+      onBack={() => router.back()}
+    />
   );
 }
-
-const styles = StyleSheet.create({
-  safe:      { flex: 1, backgroundColor: COLORS.background },
-  flex:      { flex: 1 },
-  container: { flexGrow: 1, padding: 28, justifyContent: "center" },
-
-  title:    { fontSize: FONTS.xxl, fontWeight: "700", color: COLORS.text, marginBottom: 8 },
-  subtitle: { fontSize: FONTS.md, color: COLORS.textSecondary, marginBottom: 32, lineHeight: 22 },
-
-  label: {
-    fontSize: FONTS.sm, fontWeight: "600", color: COLORS.textSecondary,
-    marginBottom: 8, textTransform: "uppercase", letterSpacing: 0.5,
-  },
-  input: {
-    borderWidth: 1.5, borderColor: COLORS.border, borderRadius: RADIUS.md,
-    padding: 14, fontSize: FONTS.md, color: COLORS.text,
-    backgroundColor: COLORS.white, marginBottom: 6,
-  },
-  pinInput: { fontSize: FONTS.xxl, textAlign: "center", letterSpacing: 10 },
-
-  error: { color: COLORS.error, fontSize: FONTS.sm, marginBottom: 12, marginTop: 4 },
-
-  button:         { backgroundColor: COLORS.primary, padding: 16, borderRadius: RADIUS.md, alignItems: "center", marginTop: 24 },
-  buttonDisabled: { opacity: 0.6 },
-  buttonText:     { color: COLORS.white, fontWeight: "700", fontSize: FONTS.md },
-});

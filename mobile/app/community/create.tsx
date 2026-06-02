@@ -5,7 +5,6 @@ import {
   TextInput,
   TouchableOpacity,
   StyleSheet,
-  ActivityIndicator,
   Alert,
   Switch,
   ScrollView,
@@ -17,7 +16,7 @@ import {
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { router } from "expo-router";
-import { createCommunity } from "../../api/communities";
+import { createCommunity, type JoinPolicy, type InvitePermission, type ContributionPermission, type MemberListVisibility } from "../../api/communities";
 import { COLORS, FONTS, RADIUS } from "../../constants/theme";
 import AppHeader from "../../components/app/AppHeader";
 import FAB from "../../components/app/FAB";
@@ -38,11 +37,25 @@ export default function CreateCommunityScreen() {
   const [hasWelfare, setHasWelfare]   = useState(false);
   const [hasShares, setHasShares]     = useState(false);
   const [sharePrice, setSharePrice]   = useState("100");
-  const [isPublic, setIsPublic]       = useState(false);
+  // Single access-level selector — replaces the old isPublic + joinPolicy pair.
+  // 'private'        → is_private=true,  join_policy='invite_only'
+  // 'public_request' → is_private=false, join_policy='request'
+  // 'public_open'    → is_private=false, join_policy='open'
+  type AccessLevel = 'private' | 'public_request' | 'public_open';
+  const [accessLevel,  setAccessLevel]  = useState<AccessLevel>("private");
+
   const [category, setCategory]       = useState("general");
   const [location, setLocation]       = useState("");
   const [showCatPicker, setShowCatPicker] = useState(false);
   const [saving, setSaving]           = useState(false);
+
+  // Section A governance settings (other 4 — access is handled by accessLevel)
+  const [invitePermission,       setInvitePermission]       = useState<InvitePermission>("admins");
+  const [contributionPermission, setContributionPermission] = useState<ContributionPermission>("admins");
+  const [memberListVisibility,   setMemberListVisibility]   = useState<MemberListVisibility>("all");
+  const [maxMembers,             setMaxMembers]             = useState("");
+
+  const isPublic = accessLevel !== 'private';
 
   const categoryLabel = CATEGORIES.find((c) => c.key === category)?.label ?? "General";
 
@@ -54,15 +67,22 @@ export default function CreateCommunityScreen() {
     setSaving(true);
     try {
       const c = await createCommunity({
-        name:             name.trim(),
-        description:      description.trim() || undefined,
-        has_welfare_fund: hasWelfare,
-        has_shares_fund:  hasShares,
-        share_price:      hasShares ? Number(sharePrice) : undefined,
-        is_private:       !isPublic,
+        name:                    name.trim(),
+        description:             description.trim() || undefined,
+        has_welfare_fund:        hasWelfare,
+        has_shares_fund:         hasShares,
+        share_price:             hasShares ? Number(sharePrice) : undefined,
+        is_private:  accessLevel === 'private',
+        join_policy: accessLevel === 'private'        ? 'invite_only'
+                   : accessLevel === 'public_request' ? 'request'
+                   : 'open',
         category,
-        location:         location.trim() || undefined,
-      });
+        location: location.trim() || undefined,
+        invite_permission:       invitePermission,
+        contribution_permission: contributionPermission,
+        member_list_visibility:  memberListVisibility,
+        max_members:             maxMembers ? Number(maxMembers) : undefined,
+      } as any);
       router.replace({ pathname: `/community/${c.id}`, params: { name: c.name } });
     } catch (e: any) {
       Alert.alert("Error", e?.response?.data?.name?.[0] || "Failed to create community.");
@@ -100,40 +120,59 @@ export default function CreateCommunityScreen() {
           multiline
         />
 
-        {/* Discoverability */}
-        <Text style={styles.sectionTitle}>Discoverability</Text>
+        {/* ── Community Access (single selector) ──────────────────── */}
+        <Text style={styles.sectionTitle}>Community Access</Text>
 
-        <View style={styles.toggleRow}>
-          <View style={styles.toggleIcon}>
-            <Ionicons name="compass-outline" size={20} color={COLORS.primary} />
-          </View>
-          <View style={{ flex: 1 }}>
-            <Text style={styles.toggleLabel}>Make publicly discoverable</Text>
-            <Text style={styles.toggleDesc}>
-              Anyone can find and request to join this community from the Discover screen.
-            </Text>
-          </View>
-          <Switch
-            value={isPublic}
-            onValueChange={setIsPublic}
-            trackColor={{ true: COLORS.primary }}
-            thumbColor={COLORS.white}
-          />
-        </View>
+        {([
+          {
+            value:   'private' as AccessLevel,
+            icon:    'lock-closed-outline',
+            label:   'Private',
+            desc:    'Not discoverable. Members join via invite link only.',
+          },
+          {
+            value:   'public_request' as AccessLevel,
+            icon:    'people-outline',
+            label:   'Public — approval required',
+            desc:    'Appears in Discover. Anyone can request to join; an admin must approve.',
+          },
+          {
+            value:   'public_open' as AccessLevel,
+            icon:    'earth-outline',
+            label:   'Public — open',
+            desc:    'Appears in Discover. Any WEPL user can join immediately.',
+          },
+        ]).map(opt => (
+          <TouchableOpacity
+            key={opt.value}
+            style={[styles.optRow, accessLevel === opt.value && styles.optRowActive]}
+            onPress={() => setAccessLevel(opt.value)}
+            activeOpacity={0.7}
+          >
+            <View style={[styles.radio, accessLevel === opt.value && styles.radioActive]}>
+              {accessLevel === opt.value && <View style={styles.radioDot} />}
+            </View>
+            <View style={[styles.toggleIcon, { backgroundColor: COLORS.primary + "18" }]}>
+              <Ionicons name={opt.icon as any} size={18} color={COLORS.primary} />
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={[styles.optLabel, accessLevel === opt.value && { color: COLORS.primary }]}>
+                {opt.label}
+              </Text>
+              <Text style={styles.optDesc}>{opt.desc}</Text>
+            </View>
+          </TouchableOpacity>
+        ))}
 
+        {/* Category & Location — only relevant when public (helps Discover filtering) */}
         {isPublic && (
           <>
-            {/* Category */}
             <Text style={styles.label}>Category</Text>
-            <TouchableOpacity
-              style={styles.picker}
-              onPress={() => setShowCatPicker(true)}
-            >
+            <TouchableOpacity style={styles.picker} onPress={() => setShowCatPicker(true)}>
               <Text style={styles.pickerText}>{categoryLabel}</Text>
               <Ionicons name="chevron-down" size={16} color={COLORS.textMuted} />
             </TouchableOpacity>
 
-            {/* Location */}
             <Text style={styles.label}>Location (optional)</Text>
             <TextInput
               placeholder="e.g. Nairobi, Westlands"
@@ -142,9 +181,7 @@ export default function CreateCommunityScreen() {
               onChangeText={setLocation}
               style={styles.input}
             />
-            <Text style={styles.hint}>
-              Helps members nearby find your community.
-            </Text>
+            <Text style={styles.hint}>Helps members nearby find your community.</Text>
           </>
         )}
 
@@ -198,17 +235,93 @@ export default function CreateCommunityScreen() {
           </>
         )}
 
+        {/* ── Section A: Governance Settings ──────────────────────── */}
+        <Text style={styles.sectionTitle}>Access & Governance</Text>
+
+        {/* 1. Who can invite members */}
+        <Text style={[styles.label, { marginTop: 16 }]}>Who can invite members?</Text>
+        {([
+          { value: 'admins',  label: 'Admins & Treasurers', desc: 'Only privileged roles can share the invite link.' },
+          { value: 'members', label: 'Any member',          desc: 'Every member can share the invite link.' },
+          { value: 'creator', label: 'Creator only',        desc: 'Only the group creator can invite.' },
+        ] as { value: InvitePermission; label: string; desc: string }[]).map(opt => (
+          <TouchableOpacity
+            key={opt.value}
+            style={[styles.optRow, invitePermission === opt.value && styles.optRowActive]}
+            onPress={() => setInvitePermission(opt.value)}
+            activeOpacity={0.7}
+          >
+            <View style={[styles.radio, invitePermission === opt.value && styles.radioActive]}>
+              {invitePermission === opt.value && <View style={styles.radioDot} />}
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={[styles.optLabel, invitePermission === opt.value && { color: COLORS.primary }]}>{opt.label}</Text>
+              <Text style={styles.optDesc}>{opt.desc}</Text>
+            </View>
+          </TouchableOpacity>
+        ))}
+
+        {/* 3. Who can create contributions */}
+        <Text style={[styles.label, { marginTop: 16 }]}>Who can create contributions?</Text>
+        {([
+          { value: 'admins',  label: 'Admins & Treasurers', desc: 'Keeps tight control over what pools are created.' },
+          { value: 'members', label: 'Any member',          desc: 'Any member can propose a contribution.' },
+        ] as { value: ContributionPermission; label: string; desc: string }[]).map(opt => (
+          <TouchableOpacity
+            key={opt.value}
+            style={[styles.optRow, contributionPermission === opt.value && styles.optRowActive]}
+            onPress={() => setContributionPermission(opt.value)}
+            activeOpacity={0.7}
+          >
+            <View style={[styles.radio, contributionPermission === opt.value && styles.radioActive]}>
+              {contributionPermission === opt.value && <View style={styles.radioDot} />}
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={[styles.optLabel, contributionPermission === opt.value && { color: COLORS.primary }]}>{opt.label}</Text>
+              <Text style={styles.optDesc}>{opt.desc}</Text>
+            </View>
+          </TouchableOpacity>
+        ))}
+
+        {/* 4. Member list visibility */}
+        <Text style={[styles.label, { marginTop: 16 }]}>Who can see the member list?</Text>
+        {([
+          { value: 'all',    label: 'All members', desc: 'Every member can see who else is in the group.' },
+          { value: 'admins', label: 'Admins only', desc: 'Only admins see the full list; others see only themselves.' },
+        ] as { value: MemberListVisibility; label: string; desc: string }[]).map(opt => (
+          <TouchableOpacity
+            key={opt.value}
+            style={[styles.optRow, memberListVisibility === opt.value && styles.optRowActive]}
+            onPress={() => setMemberListVisibility(opt.value)}
+            activeOpacity={0.7}
+          >
+            <View style={[styles.radio, memberListVisibility === opt.value && styles.radioActive]}>
+              {memberListVisibility === opt.value && <View style={styles.radioDot} />}
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={[styles.optLabel, memberListVisibility === opt.value && { color: COLORS.primary }]}>{opt.label}</Text>
+              <Text style={styles.optDesc}>{opt.desc}</Text>
+            </View>
+          </TouchableOpacity>
+        ))}
+
+        {/* 5. Maximum members cap */}
+        <Text style={[styles.label, { marginTop: 16 }]}>Maximum members (optional)</Text>
+        <TextInput
+          placeholder="No limit"
+          placeholderTextColor={COLORS.textMuted}
+          value={maxMembers}
+          onChangeText={setMaxMembers}
+          style={styles.input}
+          keyboardType="numeric"
+        />
+        <Text style={styles.hint}>Leave blank for unlimited. You can adjust this later.</Text>
+
         <View style={{ height: 100 }} />
       </ScrollView>
       </KeyboardAvoidingView>
 
-      {saving ? (
-        <View style={styles.savingOverlay}>
-          <ActivityIndicator size="large" color={COLORS.white} />
-        </View>
-      ) : (
-        <FAB icon="check" onPress={handleSave} disabled={saving} />
-      )}
+      <FAB icon="check" onPress={handleSave} disabled={saving} loading={saving} />
 
       {/* Category picker modal */}
       <Modal
@@ -276,6 +389,20 @@ const styles = StyleSheet.create({
     marginBottom: 4,
   },
 
+  // Governance option rows
+  optRow: {
+    flexDirection: "row", alignItems: "flex-start", gap: 12,
+    borderWidth: 1.5, borderColor: COLORS.border,
+    borderRadius: RADIUS.md, padding: 12,
+    backgroundColor: COLORS.white, marginBottom: 8,
+  },
+  optRowActive: { borderColor: COLORS.primary, backgroundColor: COLORS.primaryPale },
+  optLabel:     { fontSize: FONTS.md, fontWeight: "600", color: COLORS.text, marginBottom: 2 },
+  optDesc:      { fontSize: FONTS.sm, color: COLORS.textMuted, lineHeight: 18 },
+  radio:        { width: 20, height: 20, borderRadius: 10, borderWidth: 2, borderColor: COLORS.border, justifyContent: "center", alignItems: "center", marginTop: 2, flexShrink: 0 },
+  radioActive:  { borderColor: COLORS.primary },
+  radioDot:     { width: 10, height: 10, borderRadius: 5, backgroundColor: COLORS.primary },
+
   toggleRow: {
     flexDirection: "row",
     alignItems: "center",
@@ -303,14 +430,6 @@ const styles = StyleSheet.create({
   },
   hint: { alignSelf: "flex-start", fontSize: FONTS.sm, color: COLORS.textMuted, marginTop: 4, lineHeight: 18 },
 
-  savingOverlay: {
-    position: "absolute",
-    right: 20, bottom: 24,
-    width: 60, height: 60,
-    borderRadius: RADIUS.full,
-    backgroundColor: COLORS.primary,
-    justifyContent: "center", alignItems: "center",
-  },
 
   // Picker
   picker: {

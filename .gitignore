@@ -22,6 +22,10 @@ static_root/
 .env.*
 !.env.example
 
+# Firebase service-account credentials (private key — never commit)
+firebase-service-account.json
+*-firebase-adminsdk-*.json
+
 # IDE
 .vscode/
 .idea/

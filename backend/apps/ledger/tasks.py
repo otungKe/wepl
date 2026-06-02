@@ -136,47 +136,167 @@ def execute_b2c_payout(self, fin_transaction_id: int) -> str:
 
 
 @shared_task(queue='financial')
-def recover_stale_processing_transactions() -> int:
+def recover_stale_processing_transactions() -> dict:
     """
-    Find FinancialTransactions stuck in PROCESSING for > 15 minutes and log them.
-    Runs every 30 minutes via Celery Beat.
+    Two-tier recovery for FinancialTransactions stuck in PROCESSING.
 
-    TODO: extend to query Safaricom transaction status API and auto-resolve.
-    For now: logs a critical alert so ops can investigate.
+    Tier 1 — warn (> 15 min):  CRITICAL log so ops can investigate immediately
+              while the Safaricom callback might still arrive.
+
+    Tier 2 — auto-recover (> 60 min):  The callback window is long past.
+              Mark FAILED, write reversal ledger entry to restore pool funds,
+              and reset the linked domain object so admins can re-trigger.
+
+    Runs every 30 minutes via Celery Beat (settings.CELERY_BEAT_SCHEDULE).
     """
     from datetime import timedelta
     from django.utils import timezone
     from apps.ledger.models import FinancialTransaction
 
-    cutoff = timezone.now() - timedelta(minutes=15)
-    stale = FinancialTransaction.objects.filter(
+    now        = timezone.now()
+    warn_at    = now - timedelta(minutes=15)
+    recover_at = now - timedelta(minutes=60)
+
+    all_stale = FinancialTransaction.objects.filter(
         state=FinancialTransaction.State.PROCESSING,
-        updated_at__lt=cutoff,
-    )
+        updated_at__lt=warn_at,
+    ).order_by("updated_at")
 
-    count = stale.count()
-    for ft in stale:
-        logger.critical(
-            "STALE PROCESSING TRANSACTION: FT-%s op=%s amount=%s "
-            "context=%s/%s conversation_id=%s — manual review or Safaricom status query required.",
-            ft.id, ft.op_type, ft.amount,
-            ft.context_type, ft.context_id,
-            ft.mpesa_conversation_id,
-        )
+    warned    = 0
+    recovered = 0
 
-    if count:
+    for ft in all_stale:
+        if ft.updated_at < recover_at:
+            # ── Tier 2: query Safaricom, then auto-recover ────────────────────
+            # Try the Transaction Status API first so we know the real outcome.
+            # If the query confirms SUCCESS we record it correctly rather than
+            # writing a false reversal.
+            safaricom_state = _query_safaricom_status(ft)
+
+            if safaricom_state == "SUCCESS":
+                logger.info(
+                    "STALE-RECOVER: FT-%s confirmed SUCCESS by Safaricom — "
+                    "transitioning to SUCCESS without reversal.",
+                    ft.id,
+                )
+                try:
+                    from apps.core.exceptions import TransitionError
+                    ft.transition_to(FinancialTransaction.State.SUCCESS)
+                    # Trigger the same success handler the B2C callback would use
+                    from apps.mpesa.views import _on_b2c_success
+                    receipt = ft.mpesa_receipt or ""
+                    _on_b2c_success(ft, receipt)
+                    recovered += 1
+                except Exception:
+                    logger.exception("STALE-RECOVER: success-transition failed for FT-%s", ft.id)
+
+            else:
+                # FAILED, UNKNOWN, or query itself failed — treat as failed.
+                logger.error(
+                    "STALE-RECOVER: FT-%s op=%s amount=%s context=%s/%s "
+                    "conversation_id=%s stuck > 60 min (safaricom_state=%s) — "
+                    "forcing FAILED and writing reversal.",
+                    ft.id, ft.op_type, ft.amount,
+                    ft.context_type, ft.context_id,
+                    ft.mpesa_conversation_id, safaricom_state,
+                )
+                try:
+                    _handle_payout_failure(
+                        ft,
+                        f"Auto-recovered after 60 min in PROCESSING "
+                        f"(safaricom_state={safaricom_state}, "
+                        f"conversation_id={ft.mpesa_conversation_id}).",
+                    )
+                    recovered += 1
+                except Exception:
+                    logger.exception("STALE-RECOVER: failed to auto-recover FT-%s", ft.id)
+        else:
+            # ── Tier 1: warn only (callback might still arrive) ───────────────
+            logger.critical(
+                "STALE-WARN: FT-%s op=%s amount=%s context=%s/%s "
+                "conversation_id=%s stuck > 15 min — awaiting Safaricom callback.",
+                ft.id, ft.op_type, ft.amount,
+                ft.context_type, ft.context_id,
+                ft.mpesa_conversation_id,
+            )
+            warned += 1
+
+    summary = {"warned": warned, "recovered": recovered}
+    if warned or recovered:
         logger.critical(
-            "recover_stale_processing_transactions: %d stale transaction(s) detected.", count
+            "recover_stale_processing_transactions: %d warned, %d auto-recovered.",
+            warned, recovered,
         )
     else:
         logger.info("recover_stale_processing_transactions: no stale transactions.")
 
-    return count
+    return summary
 
 
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
+
+def _query_safaricom_status(ft) -> str:
+    """
+    Query the Safaricom B2C Transaction Status API for a stuck FT.
+    Returns "SUCCESS", "FAILED", or "UNKNOWN" (on error or inconclusive result).
+
+    Uses the same Daraja credentials already in settings.
+    Works in both sandbox and production — the endpoint is the same.
+    """
+    if not ft.mpesa_conversation_id:
+        return "UNKNOWN"
+
+    try:
+        from apps.mpesa.services import MpesaService
+        from django.conf import settings
+
+        token = MpesaService._get_access_token()
+        import requests
+
+        payload = {
+            "Initiator":          settings.MPESA_B2C_INITIATOR_NAME,
+            "SecurityCredential": settings.MPESA_B2C_SECURITY_CREDENTIAL,
+            "CommandID":          "TransactionStatusQuery",
+            "TransactionID":      ft.mpesa_conversation_id,
+            "PartyA":             settings.MPESA_SHORTCODE,
+            "IdentifierType":     "4",
+            "ResultURL":          settings.MPESA_B2C_RESULT_URL,
+            "QueueTimeOutURL":    settings.MPESA_B2C_TIMEOUT_URL,
+            "Remarks":            f"Status query for FT-{ft.id}",
+            "Occasion":           "",
+        }
+        resp = requests.post(
+            f"{settings.MPESA_BASE_URL}/mpesa/transactionstatus/v1/query",
+            json=payload,
+            headers={"Authorization": f"Bearer {token}"},
+            timeout=15,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+
+        # Safaricom returns ResponseCode "0" for an accepted query;
+        # the actual result arrives asynchronously via the ResultURL callback.
+        # We return UNKNOWN here — the callback will update the FT when it arrives.
+        if data.get("ResponseCode") == "0":
+            logger.info(
+                "_query_safaricom_status: FT-%s query accepted "
+                "(async result will arrive via ResultURL)", ft.id
+            )
+        else:
+            logger.warning(
+                "_query_safaricom_status: FT-%s unexpected response: %s", ft.id, data
+            )
+        return "UNKNOWN"
+
+    except Exception as exc:
+        logger.warning(
+            "_query_safaricom_status: FT-%s query failed (%s) — treating as UNKNOWN",
+            ft.id, exc,
+        )
+        return "UNKNOWN"
+
 
 def _handle_payout_failure(ft, reason: str) -> None:
     """

@@ -37,6 +37,7 @@ class User(AbstractUser):
 
     is_phone_verified = models.BooleanField(default=False)
     is_pin_set        = models.BooleanField(default=False)
+    last_seen         = models.DateTimeField(null=True, blank=True, db_index=True)
 
     profile_photo = models.ImageField(upload_to='profile/', blank=True, null=True)
     bio           = models.TextField(blank=True, default="")
@@ -124,13 +125,14 @@ class KYCProfile(models.Model):
     date_of_birth = models.DateField()
     email       = models.EmailField(blank=True, default='')
 
-    # ID documents
+    # ID documents + selfie
     id_front = models.ImageField(upload_to='kyc/ids/')
     id_back  = models.ImageField(upload_to='kyc/ids/', blank=True, null=True)
+    selfie   = models.ImageField(upload_to='kyc/selfies/', blank=True, null=True)
 
     # Location & financials
     county                  = models.CharField(max_length=50, choices=KENYA_COUNTIES)
-    sub_county              = models.CharField(max_length=100, blank=True, default='')
+    physical_address        = models.CharField(max_length=255, blank=False, default='')
     occupation              = models.CharField(max_length=255)
     source_of_income        = models.CharField(max_length=20, choices=SOURCE_CHOICES)
     expected_monthly_income = models.CharField(max_length=20, choices=INCOME_BAND_CHOICES)
@@ -149,6 +151,11 @@ class KYCProfile(models.Model):
         related_name='kyc_reviews',
     )
 
+    # Email verification
+    email_verified              = models.BooleanField(default=False)
+    email_verification_token    = models.CharField(max_length=64, blank=True, default='')
+    email_verification_sent_at  = models.DateTimeField(null=True, blank=True)
+
     submitted_at = models.DateTimeField(auto_now_add=True)
     updated_at   = models.DateTimeField(auto_now=True)
 
@@ -163,3 +170,43 @@ class KYCProfile(models.Model):
     @property
     def full_name(self):
         return f"{self.given_names} {self.surname}".strip()
+
+
+# ─────────────────────────────────────────────────────────────
+# PRIVACY PREFERENCES
+# ─────────────────────────────────────────────────────────────
+
+class PrivacyPreferences(models.Model):
+    """
+    Per-user privacy settings.
+
+    One row per user, auto-created on first access with sensible defaults.
+    Enforced in serializers and service-layer lookups — not just stored client-side.
+    """
+
+    VISIBILITY_CHOICES = [
+        ('everyone', 'Everyone'),
+        ('members',  'My communities only'),
+        ('nobody',   'Only me'),
+    ]
+
+    user = models.OneToOneField(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name='privacy_prefs',
+    )
+
+    # Profile visibility
+    phone_visibility        = models.CharField(max_length=10, choices=VISIBILITY_CHOICES, default='members')
+    photo_visibility        = models.CharField(max_length=10, choices=VISIBILITY_CHOICES, default='everyone')
+    # Financial
+    contribution_visibility = models.CharField(max_length=10, choices=VISIBILITY_CHOICES, default='members')
+    # Discovery
+    discoverable            = models.BooleanField(default=True)
+    # Chat
+    show_online_status      = models.BooleanField(default=True)
+
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return f"Privacy({self.user.phone_number})"
