@@ -6,6 +6,10 @@ BASE_DIR = Path(__file__).resolve().parent.parent.parent
 
 SECRET_KEY = config('SECRET_KEY')
 
+# Staging only — allows OTP "000000" to pass without a real SMS gateway.
+# Set STAGING_OTP_BYPASS=true in env. Must never be true in production.
+STAGING_OTP_BYPASS = config('STAGING_OTP_BYPASS', default=False, cast=bool)
+
 # ─── Firebase (FCM push notifications) ───────────────────────────────────────
 # Path to a Firebase service-account JSON file (download from Firebase Console
 # → Project Settings → Service Accounts → Generate new private key).

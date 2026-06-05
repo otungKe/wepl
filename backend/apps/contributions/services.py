@@ -294,6 +294,12 @@ class ContributionService:
         if amount <= 0:
             raise ValidationError("Amount must be greater than 0")
 
+        try:
+            if user.kyc.status != 'approved':
+                raise ValidationError("Your identity verification must be approved before you can contribute.")
+        except user.__class__.kyc.RelatedObjectDoesNotExist:
+            raise ValidationError("Please complete identity verification before contributing.")
+
         contribution = Contribution.objects.select_for_update().get(id=contribution_id)
 
         if contribution.status != 'active':
@@ -988,6 +994,12 @@ class EmergencyAdvanceService:
 
     @staticmethod
     def request_advance(contribution_id, user, amount, interest_rate, repayment_due):
+        try:
+            if user.kyc.status != 'approved':
+                raise ValidationError("Your identity verification must be approved before requesting an advance.")
+        except user.__class__.kyc.RelatedObjectDoesNotExist:
+            raise ValidationError("Please complete identity verification before requesting an advance.")
+
         contribution = Contribution.objects.get(id=contribution_id)
 
         if not FinancialPermissions.is_active_participant(contribution, user):
