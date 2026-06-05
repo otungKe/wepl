@@ -21,9 +21,9 @@
         "buildType": "apk"
       },
       "env": {
-        "EXPO_PUBLIC_ENV": "development",
-        "EXPO_PUBLIC_API_URL": "http://192.168.100.20:8000/api/",
-        "EXPO_PUBLIC_WS_URL": "ws://192.168.100.20:8000"
+        "EXPO_PUBLIC_ENV": "staging",
+        "EXPO_PUBLIC_API_URL": "https://wepl-api.onrender.com/api/",
+        "EXPO_PUBLIC_WS_URL": "wss://wepl-api.onrender.com"
       }
     },
     "production": {

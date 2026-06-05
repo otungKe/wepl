@@ -97,12 +97,16 @@ class OTPService:
 
         message = f"Your WEPL OTP is {otp}. It expires in 5 minutes. Do not share it."
 
-        try:
-            get_sms_gateway().send(message, phone)
-            logger.info("OTP SMS sent to %s", phone)
-        except Exception as exc:
-            logger.error("Failed to send OTP SMS to %s: %s", phone, exc)
-            raise RuntimeError("Failed to send OTP. Please try again.") from exc
+        from django.conf import settings
+        if getattr(settings, 'STAGING_OTP_BYPASS', False):
+            logger.info("[STAGING] OTP for %s is %s (SMS not sent)", phone, otp)
+        else:
+            try:
+                get_sms_gateway().send(message, phone)
+                logger.info("OTP SMS sent to %s", phone)
+            except Exception as exc:
+                logger.error("Failed to send OTP SMS to %s: %s", phone, exc)
+                raise RuntimeError("Failed to send OTP. Please try again.") from exc
 
         return otp
 
@@ -111,6 +115,13 @@ class OTPService:
     @classmethod
     def verify_otp(cls, phone: str, otp: str) -> bool:
         from django.contrib.auth.hashers import check_password
+        from django.conf import settings
+
+        # Staging bypass: fixed OTP for testing — never active in production.
+        if getattr(settings, 'STAGING_OTP_BYPASS', False) and otp == '000000':
+            logger.info("Staging OTP bypass used for %s", phone)
+            cache.delete(cls._otp_key(phone))
+            return True
 
         verify_key = cls._verify_key(phone)
         attempts   = cache.get(verify_key, 0)
