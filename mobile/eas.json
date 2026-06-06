@@ -20,7 +20,6 @@
       "android": {
         "buildType": "apk"
       },
-      "prebuildCommand": "npx expo prebuild --clean && sed -i 's/newArchEnabled=false/newArchEnabled=true/g' android/gradle.properties",
       "env": {
         "EXPO_PUBLIC_ENV": "staging",
         "EXPO_PUBLIC_API_URL": "https://wepl-api.onrender.com/api/",
