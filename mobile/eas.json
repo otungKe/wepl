@@ -18,14 +18,13 @@
     "preview": {
       "distribution": "internal",
       "android": {
-        "buildType": "apk",
-        "gradleCommand": ":app:assembleRelease"
+        "buildType": "apk"
       },
+      "prebuildCommand": "npx expo prebuild --clean && sed -i 's/newArchEnabled=false/newArchEnabled=true/g' android/gradle.properties",
       "env": {
         "EXPO_PUBLIC_ENV": "staging",
         "EXPO_PUBLIC_API_URL": "https://wepl-api.onrender.com/api/",
-        "EXPO_PUBLIC_WS_URL": "wss://wepl-api.onrender.com",
-        "EXPO_ANDROID_GRADLE_NEW_ARCH_ENABLED": "true"
+        "EXPO_PUBLIC_WS_URL": "wss://wepl-api.onrender.com"
       }
     },
     "production": {
