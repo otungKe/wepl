@@ -5,20 +5,18 @@ databases:
     plan: free
 
 services:
-  # ── Redis ──────────────────────────────────────────────────────────────────
   - type: redis
     name: wepl-redis
     plan: free
     ipAllowList: []
 
-  # ── Django / Daphne (ASGI — handles HTTP + WebSockets) ────────────────────
   - type: web
     name: wepl-api
     runtime: python
     rootDir: backend
     plan: free
     buildCommand: pip install -r requirements.txt && python manage.py collectstatic --noinput
-    startCommand: python manage.py migrate --noinput && daphne -b 0.0.0.0 -p $PORT config.asgi:application
+    startCommand: bash start.sh
     healthCheckPath: /health/
     envVars:
       - key: DJANGO_SETTINGS_MODULE
@@ -29,10 +27,10 @@ services:
         value: wepl-api.onrender.com
       - key: CORS_ALLOWED_ORIGINS
         value: https://wepl-api.onrender.com
-      - key: DATABASE_URL
-        fromDatabase:
-          name: wepl-db
-          property: connectionString
+      - key: STAGING_OTP_BYPASS
+        value: "true"
+      - key: SMS_BACKEND
+        value: console
       - key: DB_NAME
         fromDatabase:
           name: wepl-db
@@ -63,11 +61,6 @@ services:
           type: redis
           name: wepl-redis
           property: connectionString
-      - key: STAGING_OTP_BYPASS
-        value: "true"
-      - key: SMS_BACKEND
-        value: console
-      # ── M-Pesa (fill in Render dashboard) ───────────────────────────────
       - key: MPESA_CONSUMER_KEY
         sync: false
       - key: MPESA_CONSUMER_SECRET
@@ -80,147 +73,13 @@ services:
         value: https://sandbox.safaricom.co.ke
       - key: MPESA_CALLBACK_URL
         value: https://wepl-api.onrender.com/api/mpesa/
-      # ── Africa's Talking SMS ─────────────────────────────────────────────
       - key: AT_API_KEY
         sync: false
       - key: AT_USERNAME
         sync: false
       - key: AT_SENDER_ID
         sync: false
-      - key: SMS_BACKEND
-        value: at
-      # ── Sentry ───────────────────────────────────────────────────────────
       - key: SENTRY_DSN
         sync: false
-      # ── Firebase push notifications ───────────────────────────────────────
       - key: FIREBASE_CREDENTIALS_JSON
         sync: false
-
-  # ── Celery Worker ─────────────────────────────────────────────────────────
-  - type: worker
-    name: wepl-worker
-    runtime: python
-    rootDir: backend
-    plan: free
-    buildCommand: pip install -r requirements.txt
-    startCommand: celery -A config worker -l info -Q default,notifications,payments,financial --concurrency 2
-    envVars:
-      - key: DJANGO_SETTINGS_MODULE
-        value: config.settings.production
-      - key: SECRET_KEY
-        fromService:
-          type: web
-          name: wepl-api
-          envVarKey: SECRET_KEY
-      - key: DB_NAME
-        fromDatabase:
-          name: wepl-db
-          property: database
-      - key: DB_USER
-        fromDatabase:
-          name: wepl-db
-          property: user
-      - key: DB_PASSWORD
-        fromDatabase:
-          name: wepl-db
-          property: password
-      - key: DB_HOST
-        fromDatabase:
-          name: wepl-db
-          property: host
-      - key: DB_PORT
-        fromDatabase:
-          name: wepl-db
-          property: port
-      - key: REDIS_URL
-        fromService:
-          type: redis
-          name: wepl-redis
-          property: connectionString
-      - key: REDIS_CACHE_URL
-        fromService:
-          type: redis
-          name: wepl-redis
-          property: connectionString
-      - key: MPESA_CONSUMER_KEY
-        fromService:
-          type: web
-          name: wepl-api
-          envVarKey: MPESA_CONSUMER_KEY
-      - key: MPESA_CONSUMER_SECRET
-        fromService:
-          type: web
-          name: wepl-api
-          envVarKey: MPESA_CONSUMER_SECRET
-      - key: MPESA_SHORTCODE
-        fromService:
-          type: web
-          name: wepl-api
-          envVarKey: MPESA_SHORTCODE
-      - key: MPESA_PASSKEY
-        fromService:
-          type: web
-          name: wepl-api
-          envVarKey: MPESA_PASSKEY
-      - key: MPESA_BASE_URL
-        fromService:
-          type: web
-          name: wepl-api
-          envVarKey: MPESA_BASE_URL
-      - key: AT_API_KEY
-        fromService:
-          type: web
-          name: wepl-api
-          envVarKey: AT_API_KEY
-      - key: AT_USERNAME
-        fromService:
-          type: web
-          name: wepl-api
-          envVarKey: AT_USERNAME
-      - key: FIREBASE_CREDENTIALS_JSON
-        fromService:
-          type: web
-          name: wepl-api
-          envVarKey: FIREBASE_CREDENTIALS_JSON
-
-  # ── Celery Beat (scheduler) ───────────────────────────────────────────────
-  - type: worker
-    name: wepl-beat
-    runtime: python
-    rootDir: backend
-    plan: free
-    buildCommand: pip install -r requirements.txt
-    startCommand: celery -A config beat -l info --scheduler django_celery_beat.schedulers:DatabaseScheduler
-    envVars:
-      - key: DJANGO_SETTINGS_MODULE
-        value: config.settings.production
-      - key: SECRET_KEY
-        fromService:
-          type: web
-          name: wepl-api
-          envVarKey: SECRET_KEY
-      - key: DB_NAME
-        fromDatabase:
-          name: wepl-db
-          property: database
-      - key: DB_USER
-        fromDatabase:
-          name: wepl-db
-          property: user
-      - key: DB_PASSWORD
-        fromDatabase:
-          name: wepl-db
-          property: password
-      - key: DB_HOST
-        fromDatabase:
-          name: wepl-db
-          property: host
-      - key: DB_PORT
-        fromDatabase:
-          name: wepl-db
-          property: port
-      - key: REDIS_URL
-        fromService:
-          type: redis
-          name: wepl-redis
-          property: connectionString
