@@ -1,8 +1,8 @@
 africastalking>=1.5.5
 sentry-sdk[django]==2.29.1
-celery==5.5.2
-django-celery-beat==2.8.1
-kombu==5.5.2
+celery==5.6.3
+django-celery-beat==2.9.0
+kombu==5.6.2
 asgiref==3.11.1
 requests==2.32.3
 attrs==26.1.0
