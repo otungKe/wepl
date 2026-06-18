@@ -41,6 +41,11 @@ CACHES = {
 }
 
 # ─── Security headers ──────────────────────────────────────────────────────────
+# Render (and most PaaS) terminate TLS at a proxy and forward the request to the
+# app over HTTP with X-Forwarded-Proto: https. Trust that header so Django knows
+# the original request was secure — otherwise SECURE_SSL_REDIRECT below would 301
+# every request (including the /health/ check) into a redirect loop.
+SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
 SECURE_SSL_REDIRECT = True
 SECURE_HSTS_SECONDS = 31536000
 SECURE_HSTS_INCLUDE_SUBDOMAINS = True
