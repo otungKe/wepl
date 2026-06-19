@@ -8,14 +8,17 @@ logical account always maps to the same row.
 GL accounts (seeded once):
     1000  ASSET      M-Pesa Float / Settlement
     1100  ASSET      Suspense
+    1200  ASSET      Advances Receivable            (parent of advance sub-ledgers)
     2000  LIABILITY  Member Contributions Payable   (parent of contribution sub-ledgers)
     2100  LIABILITY  Welfare Payable                (parent of welfare sub-ledgers)
     2200  LIABILITY  Shares Payable                 (parent of shares sub-ledgers)
     3000  EQUITY     Opening Balance Equity
     4000  INCOME     Fee Revenue
+    4100  INCOME     Interest Income                (emergency-advance interest)
 
 Sub-ledger accounts (created lazily on first use):
-    code = "SL-<FUND_TYPE>-<fund_id>-U<user_id>"
+    member liability — code = "SL-<FUND_TYPE>-<fund_id>-U<user_id>"
+    member advance   — code = "AR-<fund_id>-U<user_id>"  (ASSET, under 1200)
 """
 from django.db import transaction
 
@@ -24,21 +27,25 @@ from .models import Account
 # ── Canonical GL account codes ──────────────────────────────────────────────
 MPESA_FLOAT          = '1000'
 SUSPENSE             = '1100'
+ADVANCES_RECEIVABLE  = '1200'
 MEMBER_CONTRIB_PAYABLE = '2000'
 WELFARE_PAYABLE      = '2100'
 SHARES_PAYABLE       = '2200'
 OPENING_BALANCE_EQUITY = '3000'
 FEE_REVENUE          = '4000'
+INTEREST_INCOME      = '4100'
 
 # Each GL account: code → (name, type)
 _GL_ACCOUNTS = {
     MPESA_FLOAT:            ('M-Pesa Float / Settlement',   Account.Type.ASSET),
     SUSPENSE:               ('Suspense',                    Account.Type.ASSET),
+    ADVANCES_RECEIVABLE:    ('Advances Receivable',         Account.Type.ASSET),
     MEMBER_CONTRIB_PAYABLE: ('Member Contributions Payable', Account.Type.LIABILITY),
     WELFARE_PAYABLE:        ('Welfare Payable',             Account.Type.LIABILITY),
     SHARES_PAYABLE:         ('Shares Payable',              Account.Type.LIABILITY),
     OPENING_BALANCE_EQUITY: ('Opening Balance Equity',      Account.Type.EQUITY),
     FEE_REVENUE:            ('Fee Revenue',                 Account.Type.INCOME),
+    INTEREST_INCOME:        ('Interest Income',             Account.Type.INCOME),
 }
 
 # Which GL liability account each fund_type's member sub-ledgers roll up into.
@@ -79,6 +86,29 @@ def fee_revenue_account() -> Account:
 
 def suspense_account() -> Account:
     return gl_account(SUSPENSE)
+
+
+def interest_income_account() -> Account:
+    return gl_account(INTEREST_INCOME)
+
+
+def member_receivable_account(*, user, fund_id: int) -> Account:
+    """Resolve (get-or-create) the member's ASSET sub-ledger for emergency
+    advances, rolling up into 1200 Advances Receivable. The member owes the
+    advance back, so this is an asset of the platform/pool."""
+    code = f"AR-{fund_id}-U{user.pk}"
+    acct, _ = Account.objects.get_or_create(
+        code=code,
+        defaults={
+            'name':      f"{getattr(user, 'phone_number', user.pk)} · advance #{fund_id}",
+            'type':      Account.Type.ASSET,
+            'parent':    gl_account(ADVANCES_RECEIVABLE),
+            'owner':     user,
+            'fund_type': 'advance',
+            'fund_id':   fund_id,
+        },
+    )
+    return acct
 
 
 def member_fund_account(*, user, fund_type: str, fund_id: int) -> Account:

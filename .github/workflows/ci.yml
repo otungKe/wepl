@@ -82,7 +82,7 @@ jobs:
       - name: Enforce ledger-core coverage (>=90%)
         run: >-
           coverage report
-          --include="apps/ledger/posting.py,apps/ledger/balances.py,apps/ledger/coa.py,apps/ledger/money.py"
+          --include="apps/ledger/posting.py,apps/ledger/balances.py,apps/ledger/coa.py,apps/ledger/money.py,apps/ledger/posting_map.py"
           --fail-under=90
 
       - name: Full coverage report (informational)

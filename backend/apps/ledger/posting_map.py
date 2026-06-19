@@ -1,0 +1,111 @@
+"""
+Posting Map — the canonical debit/credit recipe for every money operation.
+
+Each builder returns a *balanced* ``list[Line]`` ready for ``post_journal()``.
+Amounts are ``Money``; accounts are resolved through ``coa``. This is the single
+place that encodes which accounts each business operation touches, so the P0-05
+service rewrite calls these builders instead of hand-rolling journals (and the
+recipes are proven balanced by tests_posting_map.py).
+
+Recipe summary (DR / CR):
+    contribution            DR 1000 Float          / CR member SL (+ CR 4000 Fee)
+    disbursement            DR member SL            / CR 1000 Float
+    welfare contribution    DR 1000 Float          / CR member welfare SL
+    welfare claim           DR member welfare SL    / CR 1000 Float
+    advance disbursement    DR member AR (1200)     / CR 1000 Float
+    advance repayment       DR 1000 Float           / CR member AR (+ CR 4100 Interest)
+    standing order          (uses the contribution recipe, op_type=STANDING_ORDER)
+"""
+from __future__ import annotations
+
+from . import coa
+from .money import Money
+from .models import JournalLine
+from .posting import Line
+
+DEBIT = JournalLine.Direction.DEBIT
+CREDIT = JournalLine.Direction.CREDIT
+
+
+class Op:
+    """Canonical ``JournalEntry.op_type`` values."""
+    CONTRIBUTION         = 'CONTRIBUTION'
+    DISBURSEMENT         = 'DISBURSEMENT'
+    WELFARE_CONTRIBUTION = 'WELFARE_CONTRIBUTION'
+    WELFARE_CLAIM        = 'WELFARE_CLAIM'
+    ADVANCE_DISBURSEMENT = 'ADVANCE_DISBURSEMENT'
+    ADVANCE_REPAYMENT    = 'ADVANCE_REPAYMENT'
+    STANDING_ORDER       = 'STANDING_ORDER'
+    FEE                  = 'FEE'
+    ADJUSTMENT           = 'ADJUSTMENT'
+
+
+def _require_positive(m: Money, what: str) -> None:
+    if not isinstance(m, Money):
+        raise TypeError(f"{what} must be a Money, got {type(m).__name__}")
+    if not m.is_positive:
+        raise ValueError(f"{what} must be positive, got {m}")
+
+
+def contribution_lines(*, member, fund_type, fund_id, gross: Money,
+                       fee: Money | None = None) -> list[Line]:
+    """Member pays ``gross`` in (cash arrives in float). ``fee`` (optional) is
+    platform revenue; the remainder increases the member's liability balance."""
+    _require_positive(gross, "contribution amount")
+    fee = fee or Money.zero(gross.currency)
+    net = gross - fee
+    _require_positive(net, "net contribution (gross minus fee)")
+    member_acct = coa.member_fund_account(user=member, fund_type=fund_type, fund_id=fund_id)
+    lines = [
+        Line(coa.mpesa_float_account(), DEBIT, gross.amount, note="contribution in"),
+        Line(member_acct, CREDIT, net.amount, note="member contribution"),
+    ]
+    if fee.is_positive:
+        lines.append(Line(coa.fee_revenue_account(), CREDIT, fee.amount, note="platform fee"))
+    return lines
+
+
+def disbursement_lines(*, member, fund_type, fund_id, amount: Money) -> list[Line]:
+    """Pay ``amount`` out to a member, drawing down their liability balance."""
+    _require_positive(amount, "disbursement amount")
+    member_acct = coa.member_fund_account(user=member, fund_type=fund_type, fund_id=fund_id)
+    return [
+        Line(member_acct, DEBIT, amount.amount, note="disbursement"),
+        Line(coa.mpesa_float_account(), CREDIT, amount.amount, note="cash out"),
+    ]
+
+
+def welfare_contribution_lines(*, member, fund_id, amount: Money) -> list[Line]:
+    return contribution_lines(member=member, fund_type='welfare', fund_id=fund_id, gross=amount)
+
+
+def welfare_claim_lines(*, member, fund_id, amount: Money) -> list[Line]:
+    return disbursement_lines(member=member, fund_type='welfare', fund_id=fund_id, amount=amount)
+
+
+def advance_disbursement_lines(*, member, advance_id, principal: Money) -> list[Line]:
+    """Disburse an emergency advance: the member now owes ``principal`` back, so a
+    receivable (asset) is recognised against the cash that leaves the float."""
+    _require_positive(principal, "advance principal")
+    ar = coa.member_receivable_account(user=member, fund_id=advance_id)
+    return [
+        Line(ar, DEBIT, principal.amount, note="advance receivable"),
+        Line(coa.mpesa_float_account(), CREDIT, principal.amount, note="advance paid out"),
+    ]
+
+
+def advance_repayment_lines(*, member, advance_id, principal: Money,
+                            interest: Money | None = None) -> list[Line]:
+    """Member repays an advance: cash in, clear the receivable, recognise any
+    interest as income."""
+    _require_positive(principal, "repayment principal")
+    interest = interest or Money.zero(principal.currency)
+    total = principal + interest
+    ar = coa.member_receivable_account(user=member, fund_id=advance_id)
+    lines = [
+        Line(coa.mpesa_float_account(), DEBIT, total.amount, note="repayment in"),
+        Line(ar, CREDIT, principal.amount, note="clear receivable"),
+    ]
+    if interest.is_positive:
+        lines.append(Line(coa.interest_income_account(), CREDIT, interest.amount, note="interest"))
+    return lines

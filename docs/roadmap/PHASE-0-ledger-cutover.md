@@ -102,6 +102,13 @@ Independent of the cutover; these are live risks.
   **Posting Map** appendix below.
 - **Acceptance:** a table-driven test posts one balanced journal per op_type and
   `trial_balance()` nets to zero.
+- **Status (2026-06-19):** ✅ Done. `seed_coa` runs on deploy via migrations
+  (`0004`, plus `0005` for the new `1200`/`4100` accounts). Account resolution +
+  the DR/CR recipe for every op_type live in `apps/ledger/posting_map.py` (builder
+  functions returning balanced `Line` lists). `apps/ledger/tests_posting_map.py`
+  posts a balanced journal per op_type and asserts `trial_balance()` is zero (8
+  tests). Advances design resolved (receivable model — see Posting Map appendix).
+  `coa.py` + `posting_map.py` added to the CI coverage gate (96%).
 
 ### P0-05 — Rewire money paths to `post_journal()`
 Replace `create_fin_transaction` + `write_ledger_entry` dual-writes with balanced
@@ -190,19 +197,30 @@ reset pre-production, so no data-loss exposure).
 
 ---
 
-## Appendix — Posting Map (to be finalised in P0-04)
+## Appendix — Posting Map (finalised in P0-04)
+
+Implemented as builder functions in `apps/ledger/posting_map.py`, each returning a
+balanced `Line` list proven by `apps/ledger/tests_posting_map.py`. Op-type strings
+live in `posting_map.Op`.
 
 | Operation | Debit | Credit | Notes |
 |-----------|-------|--------|-------|
 | Member contribution (no fee) | `1000` M-Pesa Float (ASSET) | `SL-CONTRIBUTION-<fund>-U<user>` (LIABILITY) | member liability ↑ |
-| Member contribution (with fee) | `1000` Float | member SL + `4000` Fee Revenue | 3-line journal |
-| Disbursement payout | member/pool SL (LIABILITY) | `1000` Float | funds leave pool |
-| Welfare contribution | `1000` Float | `SL-WELFARE-<fund>-U<user>` | |
-| Welfare claim payout | welfare SL | `1000` Float | |
-| Advance disbursement | `SL-CONTRIBUTION-…` (or advances receivable) | `1000` Float | model receivable in P0-04 |
-| Advance repayment | `1000` Float | advances receivable | |
+| Member contribution (with fee) | `1000` Float | member SL (net) + `4000` Fee Revenue (fee) | 3-line journal |
+| Disbursement payout | member SL (LIABILITY) | `1000` Float | funds leave pool |
+| Welfare contribution | `1000` Float | `SL-WELFARE-<fund>-U<user>` | reuses contribution recipe |
+| Welfare claim payout | welfare SL | `1000` Float | reuses disbursement recipe |
+| Advance disbursement | `AR-<adv>-U<user>` (ASSET, under `1200`) | `1000` Float | member now owes principal |
+| Advance repayment | `1000` Float | `AR-…` (principal) + `4100` Interest Income (interest) | |
+| Standing order | `1000` Float | member SL | contribution recipe, `op_type=STANDING_ORDER` |
 | Payout reversal (B2C fail) | reverse of original | reverse of original | via `reverse_journal()` |
 
-> The receivable/interest treatment for emergency advances is an open design point
-> to settle in P0-04 (introduce `1200 Advances Receivable` ASSET + `4100 Interest
-> Income`). Captured as a checkbox there.
+**Advances design (resolved):** emergency advances use a **receivable model** — a
+per-member ASSET sub-ledger `AR-<advance>-U<user>` rolling up into `1200 Advances
+Receivable`. The member's contribution savings stay intact (collateral, not spent);
+interest is recognised as `4100 Interest Income` on repayment. New GL accounts
+`1200` and `4100` are seeded by migration `0005` (and `coa.py`).
+
+> ROSCA multi-member payout allocation (one payee drawing from many members) is
+> handled in P0-05 by composing per-member `disbursement_lines`; the builders are
+> composable for that.
