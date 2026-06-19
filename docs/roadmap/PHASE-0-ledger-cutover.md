@@ -1,6 +1,6 @@
 # Phase 0 — Ledger-First Cutover (Legacy Wipe)
 
-**Status:** 🔴 Not started
+**Status:** 🟡 In progress (P0-01 shipped — commit `cc60527`)
 **Owner:** _unassigned_
 **Related ADRs:** [0001](../adr/0001-ledger-first-double-entry.md),
 [0002](../adr/0002-remove-legacy-ledger-and-mutable-balances.md),
@@ -149,7 +149,8 @@ Only after P0-05/06 are merged and green:
 - [ ] Every decision gate reads ledger-derived balances.
 - [ ] Full test suite green in CI; ledger coverage ≥90%.
 - [ ] Reconciliation proves projection==replay and a zero global trial balance.
-- [ ] Safety fixes (P0-01) shipped.
+- [x] Safety fixes (P0-01) shipped — commit `cc60527` (OTP-bypass guard + S3/R2
+      media + Celery split; the split needs a paid Render worker plan to activate).
 
 ## Risks & mitigations
 
