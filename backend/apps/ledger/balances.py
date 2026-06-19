@@ -47,11 +47,17 @@ def replay_account_balance(account: Account) -> Decimal:
 
 
 def account_balance(account: Account) -> Decimal:
-    """Fast normal-balance figure from the AccountBalance projection."""
-    try:
-        return account.balance.balance  # AccountBalance.balance property
-    except AccountBalance.DoesNotExist:
+    """Fast normal-balance figure from the AccountBalance projection.
+
+    Reads the projection row fresh rather than through ``account.balance`` (the
+    reverse one-to-one accessor): the posting writer updates the row via a
+    queryset ``F()`` UPDATE, which does not refresh any cached reverse relation
+    already attached to the passed-in ``account`` instance.
+    """
+    ab = AccountBalance.objects.filter(account=account).first()
+    if ab is None:
         return Decimal('0')
+    return account.signed(ab.debit_total, ab.credit_total)
 
 
 @transaction.atomic
@@ -74,11 +80,10 @@ def reconcile_account(account: Account) -> dict:
     Used by a scheduled reconciliation job and by tests.
     """
     replay_debit, replay_credit = _replay_totals(account)
-    try:
-        ab = account.balance
-        cached = (ab.debit_total, ab.credit_total)
-    except AccountBalance.DoesNotExist:
-        cached = (Decimal('0'), Decimal('0'))
+    # Read the projection fresh (not via the cached reverse accessor) so a row
+    # mutated by the posting writer's F() UPDATE is reflected here.
+    ab = AccountBalance.objects.filter(account=account).first()
+    cached = (ab.debit_total, ab.credit_total) if ab else (Decimal('0'), Decimal('0'))
 
     ok = cached == (replay_debit, replay_credit)
     return {

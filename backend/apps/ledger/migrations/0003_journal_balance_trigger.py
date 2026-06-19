@@ -40,12 +40,14 @@ BEGIN
         IF v_count < 2 THEN
             RAISE EXCEPTION
                 'Journal % must have at least two lines (found %)',
-                v_journal_id, v_count;
+                v_journal_id, v_count
+                USING ERRCODE = 'check_violation';
         END IF;
         IF v_debit <> v_credit THEN
             RAISE EXCEPTION
                 'Journal % is unbalanced: debit=% credit=%',
-                v_journal_id, v_debit, v_credit;
+                v_journal_id, v_debit, v_credit
+                USING ERRCODE = 'check_violation';
         END IF;
     END IF;
 

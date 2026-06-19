@@ -92,16 +92,22 @@ def post_journal(
         )
 
     # ── Create the entry (idempotency_key unique → safe under races) ─────────
+    defaults = dict(
+        op_type=op_type,
+        narration=narration,
+        financial_transaction=financial_transaction,
+        reverses=reverses,
+        created_by=created_by,
+    )
+    # Only override the model's default=timezone.now when a value is supplied;
+    # passing posted_at=None into defaults would write NULL into a NOT NULL
+    # column rather than falling back to the field default.
+    if posted_at is not None:
+        defaults['posted_at'] = posted_at
+
     journal, created = JournalEntry.objects.get_or_create(
         idempotency_key=idempotency_key,
-        defaults=dict(
-            op_type=op_type,
-            narration=narration,
-            financial_transaction=financial_transaction,
-            reverses=reverses,
-            created_by=created_by,
-            posted_at=posted_at,
-        ),
+        defaults=defaults,
     )
     if not created:
         # A concurrent worker won the race between our SELECT and INSERT.
