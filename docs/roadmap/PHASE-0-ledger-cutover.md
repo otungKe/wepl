@@ -145,6 +145,17 @@ Paths (file references are current call sites):
   payout checks.
 - **Acceptance:** no business logic reads `current_amount` / `WelfareFund.balance` /
   `total_pool`; gates pass equivalent tests against ledger-derived figures.
+- **Status (2026-06-19):** ✅ Done for decision gates. New `balances.fund_balance()`
+  (sum of member sub-ledgers) backs every gate: disbursement (request+execution),
+  advance approve, standing order, ROSCA payout, welfare submit/disburse, advance
+  eligibility (→ member sub-ledger), close guard, amendment guard, milestone
+  notifications. Advance repayment now splits principal/interest off the AR ledger
+  balance (interest → `4100`). Tests: `fund_balance` aggregation, interest-split
+  edge cases, ledger==legacy equivalence. Suite green (112), gate 96%.
+  **Remaining (carried into P0-07):** presentation reads of the mutable fields
+  (serializers / admin / `views.py` / `ShareHolding.percentage`) still read the
+  columns — they're replaced with ledger-derived values when the columns are
+  dropped. Rewriting the quarantined #14 tests is also remaining test-debt.
 
 ### P0-07 — Delete legacy *(the wipe)*
 Only after P0-05/06 are merged and green:
