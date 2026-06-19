@@ -83,6 +83,14 @@ Independent of the cutover; these are live risks.
   no mixed-precision arithmetic remains (`grep` for `decimal_places=2` on money cols
   is empty).
 - **ADR:** [0003](../adr/0003-money-representation.md).
+- **Status (2026-06-19):** ✅ `Money` value object shipped (`apps/ledger/money.py`)
+  — `Decimal(20,4)` storage precision, banker's rounding (`ROUND_HALF_EVEN`),
+  3-char currency (default KES), currency-safe arithmetic/ordering, and
+  unit-loss-free `allocate`/`split`. 24 unit tests; added to the CI coverage gate
+  (95%). The core (`JournalLine`/`AccountBalance`) was already `Decimal(20,4)`;
+  legacy `14,2` columns are intentionally **not** migrated — they're deleted in
+  P0-07. `Money` is adopted by money paths in **P0-05**; surviving config columns
+  (e.g. `target_amount`) are widened to `20,4` in P0-05/07 alongside that work.
 
 ### P0-04 — Chart of Accounts wiring & account resolution
 - Ensure `seed_coa` runs as part of deploy/migrate (idempotent).

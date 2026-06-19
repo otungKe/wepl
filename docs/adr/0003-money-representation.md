@@ -26,3 +26,12 @@ boundary is a latent rounding/drift hazard. Amounts are also passed around as ba
 ## Alternatives considered
 - *Integer minor units (cents):* viable and common, but `Decimal(20,4)` already
   used by the core and supports sub-cent rail fees; revisit if perf demands.
+
+## Implementation status (2026-06-19)
+`apps/ledger/money.py` implements the `Money` value object: `Decimal(20,4)`
+normalisation, `ROUND_HALF_EVEN` via a single `quantize()` entry point, 3-char
+currency (default `KES`), currency-safe arithmetic/ordering (cross-currency
+raises `CurrencyMismatch`), and `allocate`/`split` that lose no minor units.
+Covered by 24 tests and gated in CI. Column-precision alignment for surviving
+config columns lands with the money-path rewrite (P0-05); legacy balance columns
+are deleted rather than migrated (ADR-0002).
