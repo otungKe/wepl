@@ -1,7 +1,18 @@
 from .base import *  # noqa: F403
 from decouple import config, Csv
+from django.core.exceptions import ImproperlyConfigured
 
 DEBUG = False
+
+# ─── Hard safety guard ──────────────────────────────────────────────────────────
+# The staging OTP bypass accepts a fixed '000000' code for ANY phone number. It
+# must never be active in production. Fail fast at boot rather than silently
+# shipping a universal OTP. (STAGING_OTP_BYPASS is loaded in base.py.)
+if STAGING_OTP_BYPASS:  # noqa: F405
+    raise ImproperlyConfigured(
+        "STAGING_OTP_BYPASS must not be enabled when DEBUG=False — remove it "
+        "from the production environment."
+    )
 
 ALLOWED_HOSTS = config('ALLOWED_HOSTS', cast=Csv())
 
@@ -56,7 +67,33 @@ X_FRAME_OPTIONS = 'DENY'
 SESSION_COOKIE_SECURE = True
 CSRF_COOKIE_SECURE = True
 
-# ─── Static / Media ───────────────────────────────────────────────────────────
-# In production use S3 or Cloudflare R2 via django-storages.
-# STATICFILES_STORAGE = 'storages.backends.s3boto3.S3StaticStorage'
-# DEFAULT_FILE_STORAGE = 'storages.backends.s3boto3.S3Boto3Storage'
+# ─── Media storage (S3 / Cloudflare R2) ─────────────────────────────────────────
+# User-uploaded media — KYC IDs/selfies and profile photos — MUST persist across
+# deploys. Render's dyno filesystem is ephemeral, so the default local MEDIA
+# storage silently loses every uploaded file on each redeploy (a data-loss and
+# regulatory risk for KYC documents).
+#
+# Enable durable object storage by setting USE_S3=true plus the credentials below.
+# Cloudflare R2 is S3-compatible: point AWS_S3_ENDPOINT_URL at the R2 endpoint.
+# When USE_S3 is false, Django's default (local FileSystemStorage) is used, so
+# this is fully opt-in and dev/CI are unaffected.
+USE_S3 = config('USE_S3', default=False, cast=bool)
+if USE_S3:
+    AWS_STORAGE_BUCKET_NAME = config('AWS_STORAGE_BUCKET_NAME')
+    AWS_S3_REGION_NAME      = config('AWS_S3_REGION_NAME', default='auto')
+    AWS_S3_ENDPOINT_URL     = config('AWS_S3_ENDPOINT_URL', default='') or None
+    AWS_ACCESS_KEY_ID       = config('AWS_ACCESS_KEY_ID')
+    AWS_SECRET_ACCESS_KEY   = config('AWS_SECRET_ACCESS_KEY')
+    # KYC documents are sensitive: keep objects private and serve via signed URLs.
+    AWS_DEFAULT_ACL       = None
+    AWS_QUERYSTRING_AUTH  = True
+    AWS_S3_FILE_OVERWRITE = False
+
+    STORAGES = {
+        "default": {
+            "BACKEND": "storages.backends.s3.S3Storage",
+        },
+        "staticfiles": {
+            "BACKEND": "django.contrib.staticfiles.storage.StaticFilesStorage",
+        },
+    }

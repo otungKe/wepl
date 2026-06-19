@@ -210,6 +210,13 @@ CELERY_BEAT_SCHEDULE = {
     },
 }
 
+# ─── SMS / OTP delivery ───────────────────────────────────────────────────────
+# Gateway selection consumed by apps.users.sms.get_sms_gateway():
+#   'at'      → Africa's Talking (real SMS)
+#   'console' → log the message only (dev / staging / CI)
+#   ''        → auto: 'console' under DEBUG, 'at' otherwise
+SMS_BACKEND = config('SMS_BACKEND', default='')
+
 # ─── Africa's Talking (SMS / OTP) ─────────────────────────────────────────────
 AT_API_KEY   = config('AT_API_KEY',   default='')
 AT_USERNAME  = config('AT_USERNAME',  default='sandbox')

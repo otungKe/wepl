@@ -4,20 +4,11 @@ databases:
     user: wepl
     plan: free
 
-services:
-  - type: redis
-    name: wepl-redis
-    plan: free
-    ipAllowList: []
-
-  - type: web
-    name: wepl-api
-    runtime: python
-    rootDir: backend
-    plan: free
-    buildCommand: pip install -r requirements.txt && python manage.py collectstatic --noinput
-    startCommand: bash start.sh
-    healthCheckPath: /health/
+# Shared environment, defined once and attached to web/worker/beat via `fromGroup`.
+# Keeping SECRET_KEY here (generated once) means all three processes sign/verify
+# JWTs with the same key.
+envVarGroups:
+  - name: wepl-shared
     envVars:
       - key: DJANGO_SETTINGS_MODULE
         value: config.settings.production
@@ -27,10 +18,66 @@ services:
         value: wepl-api.onrender.com
       - key: CORS_ALLOWED_ORIGINS
         value: https://wepl-api.onrender.com
-      - key: STAGING_OTP_BYPASS
-        value: "true"
+      # OTP delivery: 'console' logs the code (visible in Render logs) instead of
+      # sending real SMS. STAGING_OTP_BYPASS is intentionally absent — production
+      # refuses to boot with it enabled (see config/settings/production.py).
       - key: SMS_BACKEND
         value: console
+      - key: MPESA_CONSUMER_KEY
+        sync: false
+      - key: MPESA_CONSUMER_SECRET
+        sync: false
+      - key: MPESA_SHORTCODE
+        sync: false
+      - key: MPESA_PASSKEY
+        sync: false
+      - key: MPESA_BASE_URL
+        value: https://sandbox.safaricom.co.ke
+      - key: MPESA_CALLBACK_URL
+        value: https://wepl-api.onrender.com/api/mpesa/
+      - key: AT_API_KEY
+        sync: false
+      - key: AT_USERNAME
+        sync: false
+      - key: AT_SENDER_ID
+        sync: false
+      - key: SENTRY_DSN
+        sync: false
+      - key: FIREBASE_CREDENTIALS_JSON
+        sync: false
+      # ── Durable media storage (S3 / Cloudflare R2) ──────────────────────────
+      # Flip USE_S3 to "true" and populate the creds below so KYC/profile uploads
+      # survive redeploys (the dyno disk is ephemeral). See production.py.
+      - key: USE_S3
+        value: "false"
+      - key: AWS_STORAGE_BUCKET_NAME
+        sync: false
+      - key: AWS_S3_REGION_NAME
+        value: auto
+      - key: AWS_S3_ENDPOINT_URL
+        sync: false
+      - key: AWS_ACCESS_KEY_ID
+        sync: false
+      - key: AWS_SECRET_ACCESS_KEY
+        sync: false
+
+services:
+  - type: redis
+    name: wepl-redis
+    plan: free
+    ipAllowList: []
+
+  # ── Web (ASGI only — Celery runs in its own services below) ────────────────
+  - type: web
+    name: wepl-api
+    runtime: python
+    rootDir: backend
+    plan: free
+    buildCommand: pip install -r requirements.txt && python manage.py collectstatic --noinput
+    startCommand: bash start.sh
+    healthCheckPath: /health/
+    envVars:
+      - fromGroup: wepl-shared
       - key: DB_NAME
         fromDatabase:
           name: wepl-db
@@ -61,25 +108,88 @@ services:
           type: redis
           name: wepl-redis
           property: connectionString
-      - key: MPESA_CONSUMER_KEY
-        sync: false
-      - key: MPESA_CONSUMER_SECRET
-        sync: false
-      - key: MPESA_SHORTCODE
-        sync: false
-      - key: MPESA_PASSKEY
-        sync: false
-      - key: MPESA_BASE_URL
-        value: https://sandbox.safaricom.co.ke
-      - key: MPESA_CALLBACK_URL
-        value: https://wepl-api.onrender.com/api/mpesa/
-      - key: AT_API_KEY
-        sync: false
-      - key: AT_USERNAME
-        sync: false
-      - key: AT_SENDER_ID
-        sync: false
-      - key: SENTRY_DSN
-        sync: false
-      - key: FIREBASE_CREDENTIALS_JSON
-        sync: false
+
+  # ── Celery worker ──────────────────────────────────────────────────────────
+  # NOTE: Render background workers require a paid instance type (no free tier).
+  # Until upgraded, async money tasks (B2C payouts, standing orders, reminders,
+  # stale-transaction recovery) will not run. See docs/roadmap/PHASE-0 P0-01.
+  - type: worker
+    name: wepl-worker
+    runtime: python
+    rootDir: backend
+    plan: starter
+    buildCommand: pip install -r requirements.txt
+    startCommand: celery -A config worker -l info -Q default,notifications,payments,financial --concurrency 2
+    envVars:
+      - fromGroup: wepl-shared
+      - key: DB_NAME
+        fromDatabase:
+          name: wepl-db
+          property: database
+      - key: DB_USER
+        fromDatabase:
+          name: wepl-db
+          property: user
+      - key: DB_PASSWORD
+        fromDatabase:
+          name: wepl-db
+          property: password
+      - key: DB_HOST
+        fromDatabase:
+          name: wepl-db
+          property: host
+      - key: DB_PORT
+        fromDatabase:
+          name: wepl-db
+          property: port
+      - key: REDIS_URL
+        fromService:
+          type: redis
+          name: wepl-redis
+          property: connectionString
+      - key: REDIS_CACHE_URL
+        fromService:
+          type: redis
+          name: wepl-redis
+          property: connectionString
+
+  # ── Celery beat (scheduler) ────────────────────────────────────────────────
+  - type: worker
+    name: wepl-beat
+    runtime: python
+    rootDir: backend
+    plan: starter
+    buildCommand: pip install -r requirements.txt
+    startCommand: celery -A config beat -l info --scheduler django_celery_beat.schedulers:DatabaseScheduler
+    envVars:
+      - fromGroup: wepl-shared
+      - key: DB_NAME
+        fromDatabase:
+          name: wepl-db
+          property: database
+      - key: DB_USER
+        fromDatabase:
+          name: wepl-db
+          property: user
+      - key: DB_PASSWORD
+        fromDatabase:
+          name: wepl-db
+          property: password
+      - key: DB_HOST
+        fromDatabase:
+          name: wepl-db
+          property: host
+      - key: DB_PORT
+        fromDatabase:
+          name: wepl-db
+          property: port
+      - key: REDIS_URL
+        fromService:
+          type: redis
+          name: wepl-redis
+          property: connectionString
+      - key: REDIS_CACHE_URL
+        fromService:
+          type: redis
+          name: wepl-redis
+          property: connectionString
