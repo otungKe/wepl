@@ -125,6 +125,16 @@ Paths (file references are current call sites):
 - **Acceptance:** every path posts a balanced journal; idempotency preserved
   (re-delivery of an M-Pesa callback posts nothing new); integration tests assert
   resulting account balances.
+- **Status (2026-06-19):** ✅ Done (strangler/additive). Every money path now posts
+  a balanced journal via `post_journal` + `posting_map`, linked to the
+  `FinancialTransaction`: contribute, ROSCA payout, disbursement, welfare
+  contribute/claim, advance disburse/repay, standing order, shares purchase; B2C
+  failure posts `reverse_financial_transaction()`. STK credit flows through
+  `contribute()`. **Legacy writes intentionally remain** (additive) because
+  `member_contribution_total` still feeds the advance-eligibility gate — reads flip
+  in P0-06, legacy is deleted in P0-07. Advance interest-income split deferred to
+  P0-06. Tests: contribute/welfare journal integration + FT-reversal; suite green
+  (109), ledger gate 96%.
 
 ### P0-06 — Flip balance reads & decision gates to the ledger
 - Replace `contribution_balance` / `welfare_fund_balance` / `shares_fund_balance`
