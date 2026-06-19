@@ -4,9 +4,8 @@ from django.test import TestCase
 from django.contrib.auth import get_user_model
 
 # Quarantined under P0-02 — see GitHub issue #14. These exercise the legacy money
-# paths (LedgerEntry dual-write, current_amount/ContributionBalance mutable fields)
-# that Phase 0 rewrites onto post_journal(); they will be rewritten and unskipped
-# in P0-05/06. Two real product bugs were surfaced and are tracked in #14.
+# paths (single-entry shadow ledger + mutable balance fields) that Phase 0 rewrites
+# onto post_journal(); they will be rewritten and unskipped in P0-05/06.
 _LEGACY = "P0-02 #14: legacy money-path test; rewrite onto post_journal() in P0-05/06"
 
 from django.core.exceptions import PermissionDenied, ValidationError

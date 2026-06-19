@@ -36,8 +36,8 @@ from .models import (
 )
 from apps.activity.services import ActivityService
 from apps.ledger.permissions import FinancialPermissions
-from apps.ledger.writer import create_fin_transaction, write_ledger_entry, write_reversal_credit
-from apps.ledger.models import FinancialTransaction, LedgerEntry
+from apps.ledger.writer import create_fin_transaction
+from apps.ledger.models import FinancialTransaction, JournalEntry
 # P0-05 strangler: post double-entry journals alongside the legacy writes. The
 # ledger becomes a parallel source of truth now; reads/gates flip to it in P0-06
 # and the legacy writes are deleted in P0-07.
@@ -317,19 +317,12 @@ class ContributionService:
             else f"contrib-{contribution_id}-{user.id}-manual"
         )
 
-        # ── Legacy: ContributionTransaction (kept for backwards compat) ────────
-        # Check for existing ledger entry to avoid duplicate ContributionTransaction rows
-        existing_le = LedgerEntry.objects.filter(
-            idempotency_key=f"le-{idem_key}"
-        ).first()
-
-        if existing_le:
-            # Already processed — find and return the existing tx
-            tx = ContributionTransaction.objects.filter(
+        # ── Idempotency: if this journal was already posted, return its tx ─────
+        if JournalEntry.objects.filter(idempotency_key=f"je-{idem_key}").exists():
+            return ContributionTransaction.objects.filter(
                 contribution=contribution, user=user,
                 mpesa_receipt=mpesa_receipt,
             ).first()
-            return tx
 
         tx = ContributionTransaction.objects.create(
             contribution=contribution,
@@ -354,7 +347,7 @@ class ContributionService:
             contribution=contribution, user=user
         ).update(amount=F('amount') + Decimal(str(amount)))
 
-        # ── New ledger dual-write ─────────────────────────────────────────────
+        # ── FinancialTransaction (orchestration) ──────────────────────────────
         ft, _ = create_fin_transaction(
             idempotency_key=idem_key,
             op_type=FinancialTransaction.OpType.CONTRIBUTION,
@@ -363,19 +356,8 @@ class ContributionService:
             contribution=contribution,
             initial_state=FinancialTransaction.State.SUCCESS,
         )
-        write_ledger_entry(
-            idempotency_key=f"le-{idem_key}",
-            financial_transaction=ft,
-            user=user,
-            amount=Decimal(str(amount)),
-            direction=LedgerEntry.Direction.CREDIT,
-            entry_type=LedgerEntry.EntryType.MEMBER_CONTRIBUTION,
-            contribution=contribution,
-            mpesa_receipt=mpesa_receipt or None,
-            note=f"Member contribution by {user.phone_number}",
-        )
 
-        # ── Double-entry posting (P0-05) — the future source of truth ─────────
+        # ── Double-entry posting — the source of truth ────────────────────────
         post_journal(
             idempotency_key=f"je-{idem_key}",
             op_type=_pm.Op.CONTRIBUTION,
@@ -530,17 +512,6 @@ class ROSCAService:
             context_id=current_slot.id,
             initial_state=FinancialTransaction.State.SUCCESS,
         )
-        write_ledger_entry(
-            idempotency_key=f"le-{idem_key}",
-            financial_transaction=ft,
-            user=current_slot.participant.user,
-            amount=payout_amount,
-            direction=LedgerEntry.Direction.DEBIT,
-            entry_type=LedgerEntry.EntryType.ROSCA_PAYOUT,
-            contribution=contribution,
-            note=f"ROSCA payout — cycle {current_slot.cycle_number}, slot {current_slot.slot_order}",
-        )
-
         # Double-entry posting (P0-05): payout draws the recipient's pool share.
         post_journal(
             idempotency_key=f"je-{idem_key}",
@@ -729,17 +700,6 @@ class DisbursementService:
             # Already scheduled or completed — nothing to do
             return
 
-        write_ledger_entry(
-            idempotency_key=f"le-{idem_key}",
-            financial_transaction=ft,
-            user=req.requested_by,
-            amount=req.amount,
-            direction=LedgerEntry.Direction.DEBIT,
-            entry_type=LedgerEntry.EntryType.DISBURSEMENT,
-            contribution=contribution,
-            note=f"Disbursement: {req.reason[:120]}",
-        )
-
         # Double-entry posting (P0-05): reserve funds out of the pool.
         post_journal(
             idempotency_key=f"je-{idem_key}",
@@ -829,16 +789,6 @@ class WelfareService:
             welfare_fund=fund,
             initial_state=FinancialTransaction.State.SUCCESS,
         )
-        write_ledger_entry(
-            idempotency_key=f"le-{idem_key}",
-            financial_transaction=ft,
-            user=user,
-            amount=Decimal(str(amount)),
-            direction=LedgerEntry.Direction.CREDIT,
-            entry_type=LedgerEntry.EntryType.WELFARE_CONTRIBUTION,
-            welfare_fund=fund,
-        )
-
         # Double-entry posting (P0-05).
         post_journal(
             idempotency_key=f"je-{idem_key}",
@@ -976,17 +926,6 @@ class WelfareService:
             FinancialTransaction.State.PROCESSING,
         ):
             return  # already in progress
-
-        write_ledger_entry(
-            idempotency_key=f"le-{idem_key}",
-            financial_transaction=ft,
-            user=claim.claimant,
-            amount=claim.amount_requested,
-            direction=LedgerEntry.Direction.DEBIT,
-            entry_type=LedgerEntry.EntryType.WELFARE_CLAIM,
-            welfare_fund=fund,
-            note=f"Welfare claim #{claim.id}: {claim.reason[:80]}",
-        )
 
         # Double-entry posting (P0-05): reserve welfare funds for the claimant.
         post_journal(
@@ -1149,17 +1088,6 @@ class EmergencyAdvanceService:
         ):
             return advance  # already in progress
 
-        write_ledger_entry(
-            idempotency_key=f"le-{idem_key}",
-            financial_transaction=ft,
-            user=advance.borrower,
-            amount=advance.amount,
-            direction=LedgerEntry.Direction.DEBIT,
-            entry_type=LedgerEntry.EntryType.ADVANCE_DISBURSEMENT,
-            contribution=contribution,
-            note=f"Emergency advance #{advance.id} to {advance.borrower.phone_number}",
-        )
-
         # Double-entry posting (P0-05): receivable model — the borrower owes the
         # principal back (asset), funded out of the float.
         post_journal(
@@ -1273,17 +1201,6 @@ class EmergencyAdvanceService:
             context_id=advance.id,
             initial_state=FinancialTransaction.State.SUCCESS,
         )
-        write_ledger_entry(
-            idempotency_key=f"le-{idem_key}",
-            financial_transaction=ft,
-            user=user,
-            amount=amount,
-            direction=LedgerEntry.Direction.CREDIT,
-            entry_type=LedgerEntry.EntryType.ADVANCE_REPAYMENT,
-            contribution=contribution,
-            note=f"Repayment for advance #{advance_id}",
-        )
-
         # Double-entry posting (P0-06): split the repayment into principal (clears
         # the receivable) and interest (income). Outstanding principal is the AR
         # sub-ledger balance, so the principal portion never over-clears it.
@@ -1431,17 +1348,6 @@ class StandingOrderService:
             FinancialTransaction.State.PROCESSING,
         ):
             return order  # already in flight
-
-        write_ledger_entry(
-            idempotency_key=f"le-{idem_key}",
-            financial_transaction=ft,
-            user=user,
-            amount=order.amount,
-            direction=LedgerEntry.Direction.DEBIT,
-            entry_type=LedgerEntry.EntryType.STANDING_ORDER,
-            contribution=contribution,
-            note=f"Standing order payout to {recipient_phone}",
-        )
 
         # Double-entry posting (P0-05): payout draws down the owner's pool share.
         post_journal(

@@ -1,10 +1,10 @@
 """
 Financial ledger — the single source of truth for all money movements.
 
-FinancialTransaction  — one complete financial event with a strict state machine.
-LedgerEntry           — immutable, append-only credit/debit record (LEGACY,
-                        single-entry per fund; being superseded by the
-                        double-entry core below).
+FinancialTransaction  — one complete financial event with a strict state machine
+                        (orchestration layer; links to the journal that moved the
+                        money). The legacy single-entry shadow ledger was removed
+                        in P0-07 (ADR-0002).
 
 Double-entry core (the accounting source of truth):
     Account       — every place money can rest (GL classification + member
@@ -190,88 +190,6 @@ class FinancialTransaction(models.Model):
         if mpesa_receipt:
             self.mpesa_receipt = mpesa_receipt
 
-
-class LedgerEntry(models.Model):
-    """
-    Immutable, append-only financial record.
-
-    Every debit and credit is a separate row.
-    NEVER update or delete rows — create a reversal entry instead.
-
-    Balance = SUM(amount WHERE direction=CREDIT) - SUM(amount WHERE direction=DEBIT)
-    """
-
-    class Direction(models.TextChoices):
-        CREDIT = 'CREDIT', 'Credit'   # money into the pool
-        DEBIT  = 'DEBIT',  'Debit'    # money out of the pool
-
-    class EntryType(models.TextChoices):
-        MEMBER_CONTRIBUTION  = 'MEMBER_CONTRIBUTION',  'Member Contribution'
-        ADVANCE_REPAYMENT    = 'ADVANCE_REPAYMENT',    'Advance Repayment'
-        WELFARE_CONTRIBUTION = 'WELFARE_CONTRIBUTION', 'Welfare Contribution'
-        SHARES_PURCHASE      = 'SHARES_PURCHASE',      'Shares Purchase'
-        REVERSAL_CREDIT      = 'REVERSAL_CREDIT',      'Reversal Credit'
-        DISBURSEMENT         = 'DISBURSEMENT',         'Disbursement'
-        STANDING_ORDER       = 'STANDING_ORDER',       'Standing Order Payout'
-        ROSCA_PAYOUT         = 'ROSCA_PAYOUT',         'ROSCA Payout'
-        ADVANCE_DISBURSEMENT = 'ADVANCE_DISBURSEMENT', 'Emergency Advance Disbursement'
-        WELFARE_CLAIM        = 'WELFARE_CLAIM',        'Welfare Claim Disbursement'
-        REVERSAL_DEBIT       = 'REVERSAL_DEBIT',       'Reversal Debit'
-
-    # ── Context — exactly one should be set ──────────────────────────────────
-    contribution = models.ForeignKey(
-        'contributions.Contribution', null=True, blank=True,
-        on_delete=models.PROTECT, related_name='ledger_entries',
-    )
-    welfare_fund = models.ForeignKey(
-        'contributions.WelfareFund', null=True, blank=True,
-        on_delete=models.PROTECT, related_name='ledger_entries',
-    )
-    shares_fund = models.ForeignKey(
-        'contributions.SharesFund', null=True, blank=True,
-        on_delete=models.PROTECT, related_name='ledger_entries',
-    )
-
-    user       = models.ForeignKey(
-        settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name='ledger_entries',
-    )
-    amount     = models.DecimalField(max_digits=14, decimal_places=2)
-    direction  = models.CharField(max_length=6,  choices=Direction.choices)
-    entry_type = models.CharField(max_length=30, choices=EntryType.choices)
-
-    idempotency_key = models.CharField(max_length=128, unique=True, db_index=True)
-    mpesa_receipt   = models.CharField(max_length=50,  null=True, blank=True, db_index=True)
-
-    financial_transaction = models.ForeignKey(
-        FinancialTransaction, on_delete=models.PROTECT, related_name='ledger_entries',
-    )
-    note       = models.TextField(blank=True)
-    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
-
-    class Meta:
-        indexes = [
-            models.Index(fields=['contribution', 'direction', 'created_at'], name='ledger_le_contrib_dir_idx'),
-            models.Index(fields=['welfare_fund',  'direction', 'created_at'], name='ledger_le_welfare_dir_idx'),
-            models.Index(fields=['shares_fund',   'direction', 'created_at'], name='ledger_le_shares_dir_idx'),
-            models.Index(fields=['user',           'created_at'],             name='ledger_le_user_idx'),
-        ]
-
-    def __str__(self):
-        return f"LE-{self.id} [{self.direction}/{self.entry_type}] KES {self.amount}"
-
-    def save(self, *args, **kwargs):
-        if self.pk:
-            raise ValueError(
-                "LedgerEntry is immutable — "
-                "create a REVERSAL_CREDIT / REVERSAL_DEBIT entry instead of updating."
-            )
-        super().save(*args, **kwargs)
-
-    def delete(self, *args, **kwargs):
-        raise ValueError(
-            "LedgerEntry cannot be deleted — "
-            "create a REVERSAL_CREDIT / REVERSAL_DEBIT entry instead."
-        )
 
 
 # ═══════════════════════════════════════════════════════════════════════════

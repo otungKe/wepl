@@ -67,6 +67,14 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt coverage
 
+      - name: Guard — legacy single-entry shadow ledger stays deleted (P0-07)
+        run: |
+          if grep -rEn "LedgerEntry|write_ledger_entry|write_reversal_credit|ledger\.queries" \
+               apps --include=*.py | grep -v "/migrations/"; then
+            echo "::error::Legacy single-entry ledger reference reintroduced — money moves only via post_journal()."
+            exit 1
+          fi
+
       - name: Check for missing migrations
         run: python manage.py makemigrations --check --dry-run
 

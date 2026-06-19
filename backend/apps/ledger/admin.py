@@ -5,7 +5,6 @@ from .models import (
     FinancialTransaction,
     JournalEntry,
     JournalLine,
-    LedgerEntry,
 )
 
 
@@ -21,25 +20,6 @@ class FinancialTransactionAdmin(admin.ModelAdmin):
 
     def has_delete_permission(self, request, obj=None):
         return False  # financial records must never be deleted
-
-
-@admin.register(LedgerEntry)
-class LedgerEntryAdmin(admin.ModelAdmin):
-    list_display  = ('id', 'entry_type', 'direction', 'amount', 'user',
-                     'contribution', 'mpesa_receipt', 'created_at')
-    list_filter   = ('entry_type', 'direction')
-    search_fields = ('idempotency_key', 'mpesa_receipt', 'user__phone_number')
-    readonly_fields = tuple(f.name for f in LedgerEntry._meta.get_fields())
-    ordering = ('-created_at',)
-
-    def has_add_permission(self, request):
-        return False  # ledger entries only created via write_ledger_entry()
-
-    def has_change_permission(self, request, obj=None):
-        return False  # immutable
-
-    def has_delete_permission(self, request, obj=None):
-        return False  # immutable
 
 
 # ── Double-entry core ───────────────────────────────────────────────────────

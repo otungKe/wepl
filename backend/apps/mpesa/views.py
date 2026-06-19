@@ -333,11 +333,9 @@ class B2CResultView(APIView):
             except TransitionError:
                 pass
 
-            from apps.ledger.writer import write_reversal_credit
             from apps.ledger.tasks import _update_context_on_failure
             from apps.ledger.posting import reverse_financial_transaction
-            write_reversal_credit(ft, note=err)
-            reverse_financial_transaction(ft, note=err)  # double-entry reversal (P0-05)
+            reverse_financial_transaction(ft, note=err)  # restore reserved funds
             _update_context_on_failure(ft)
 
         return Response({"ResultCode": 0, "ResultDesc": "Accepted"})
@@ -442,8 +440,8 @@ def _process_shares_purchase(stk: MpesaSTKRequest) -> None:
     """
     from decimal import Decimal as D
     from apps.contributions.models import ShareHolding
-    from apps.ledger.writer import create_fin_transaction, write_ledger_entry
-    from apps.ledger.models import FinancialTransaction, LedgerEntry
+    from apps.ledger.writer import create_fin_transaction
+    from apps.ledger.models import FinancialTransaction
 
     fund = SharesFund.objects.select_for_update().get(id=stk.shares_fund_id)
     amount = D(str(stk.amount))
@@ -464,7 +462,7 @@ def _process_shares_purchase(stk: MpesaSTKRequest) -> None:
         total_pool=F('total_pool') + amount
     )
 
-    # Ledger dual-write
+    # FinancialTransaction (orchestration)
     idem_key = f"shares-{fund.id}-{stk.user_id}-{stk.mpesa_receipt or stk.checkout_request_id}"
     ft, _ = create_fin_transaction(
         idempotency_key=idem_key,
@@ -473,16 +471,6 @@ def _process_shares_purchase(stk: MpesaSTKRequest) -> None:
         initiated_by=stk.user,
         shares_fund=fund,
         initial_state=FinancialTransaction.State.SUCCESS,
-    )
-    write_ledger_entry(
-        idempotency_key=f"le-{idem_key}",
-        financial_transaction=ft,
-        user=stk.user,
-        amount=amount,
-        direction=LedgerEntry.Direction.CREDIT,
-        entry_type=LedgerEntry.EntryType.SHARES_PURCHASE,
-        shares_fund=fund,
-        mpesa_receipt=stk.mpesa_receipt,
     )
 
     # Double-entry posting (P0-05): cash into the float, member shares liability up.

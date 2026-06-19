@@ -188,11 +188,6 @@ CELERY_BEAT_SCHEDULE = {
         'task': 'apps.contributions.tasks.execute_due_standing_orders',
         'schedule': crontab(minute=0, hour='8,12,18'),  # 8am, 12pm, 6pm EAT
     },
-    # Ledger vs. legacy-field drift check — runs at 3am EAT
-    'reconcile-contribution-balances': {
-        'task': 'apps.contributions.tasks.reconcile_balances',
-        'schedule': crontab(minute=0, hour=3),
-    },
     # Detects B2C payments stuck in PROCESSING for > 15 min
     'recover-stale-processing-transactions': {
         'task': 'apps.ledger.tasks.recover_stale_processing_transactions',

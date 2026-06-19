@@ -307,14 +307,12 @@ def _handle_payout_failure(ft, reason: str) -> None:
          and retry if appropriate.
     """
     from apps.ledger.models import FinancialTransaction
-    from apps.ledger.writer import write_reversal_credit
     from apps.ledger.posting import reverse_financial_transaction
 
     try:
-        write_reversal_credit(ft, note=reason[:500])
-        reverse_financial_transaction(ft, note=reason[:500])  # double-entry reversal (P0-05)
+        reverse_financial_transaction(ft, note=reason[:500])  # restore reserved funds
     except Exception:
-        logger.exception("_handle_payout_failure: could not write reversal for FT %s", ft.id)
+        logger.exception("_handle_payout_failure: could not reverse journal for FT %s", ft.id)
 
     try:
         ft.transition_to(FinancialTransaction.State.FAILED, failure_reason=reason[:500])
@@ -349,10 +347,9 @@ def _update_context_on_failure(ft) -> None:
             try:
                 claim = WelfareClaim.objects.get(id=ft.context_id)
                 claim.transition_to('PENDING')
-                # Restore the mutable WelfareFund.balance field.
-                # write_reversal_credit already restores the immutable ledger;
-                # this keeps the mutable field in sync so submit_claim balance
-                # guards work correctly.
+                # Keep the mutable WelfareFund.balance cache in sync (the ledger
+                # is already restored by reverse_financial_transaction). This
+                # cache is removed in P0-07 Milestone 2.
                 WelfareFund.objects.filter(pk=claim.fund_id).update(
                     balance=F('balance') + claim.amount_requested
                 )
