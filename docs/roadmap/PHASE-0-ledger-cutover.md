@@ -47,9 +47,14 @@ Independent of the cutover; these are live risks.
 - Wire durable object storage (S3/Cloudflare R2 via `django-storages`) for
   `MEDIA` — KYC IDs/selfies currently live on the ephemeral dyno disk and are lost
   on every redeploy.
-- Split Celery `worker` and `beat` onto their own Render services (off the web dyno).
+- Split Celery `worker` and `beat` onto their own services (off the web dyno).
 - **Acceptance:** OTP bypass impossible in prod (test asserts); KYC upload survives
   a redeploy; `celery beat` schedule fires from a dedicated process.
+- **Status (2026-06-19):** OTP-bypass guard ✅ (boot-time `ImproperlyConfigured` +
+  `SMS_BACKEND` wired + flag removed from `render.yaml`; automated test in
+  `apps/users/tests.py`). KYC durable storage ✅ (opt-in S3/R2). Celery split
+  **deferred** — kept in the web dyno until a paid worker plan / deployment
+  platform is chosen (decision is platform-agnostic, not Render-specific).
 
 ### P0-02 — Test harness + CI green gate *(prerequisite for all money changes)*
 - Fix test discovery (default runner currently finds 0 tests — namespace-package
@@ -149,8 +154,9 @@ Only after P0-05/06 are merged and green:
 - [ ] Every decision gate reads ledger-derived balances.
 - [ ] Full test suite green in CI; ledger coverage ≥90%.
 - [ ] Reconciliation proves projection==replay and a zero global trial balance.
-- [x] Safety fixes (P0-01) shipped — commit `cc60527` (OTP-bypass guard + S3/R2
-      media + Celery split; the split needs a paid Render worker plan to activate).
+- [x] Safety fixes (P0-01) shipped — OTP-bypass guard (+ automated test) and
+      durable S3/R2 KYC media. Celery split deferred pending a platform/worker-plan
+      decision (tracked above).
 
 ## Risks & mitigations
 
