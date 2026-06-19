@@ -158,17 +158,31 @@ Paths (file references are current call sites):
   dropped. Rewriting the quarantined #14 tests is also remaining test-debt.
 
 ### P0-07 — Delete legacy *(the wipe)*
-Only after P0-05/06 are merged and green:
-- Delete `apps/ledger/writer.py`, `apps/ledger/queries.py`, model `LedgerEntry`.
-- Remove mutable balance fields and balance-cache models: `Contribution.current_amount`,
-  `WelfareFund.balance`, `SharesFund.total_pool`, `ContributionAccount`,
-  `ContributionBalance`, `ShareHolding.total_contributed` semantics (review).
-- Remove dead compat fields: `Contribution.contribution_type`, `cycle_amount`,
-  `min_approvals`, `deadline`.
-- Remove the legacy drift job `reconcile_balances` (`apps/contributions/tasks.py:67`).
-- Destructive migrations dropping the columns/tables.
-- **Acceptance:** `grep -r "LedgerEntry\|current_amount\|\.balance\b\|total_pool\|writer\|queries"`
-  over `apps/` (excluding the new core) is clean; app boots; suite green.
+Done in two milestones (additive reads/writes were in place from P0-05/06).
+
+**Milestone 1 — single-entry shadow ledger ✅ (2026-06-19, commit `6734702`):**
+- Deleted model `LedgerEntry` (+ admin) and `apps/ledger/queries.py`; migration
+  `0006` drops the table.
+- Removed all `write_ledger_entry` / `write_reversal_credit` calls; B2C failure
+  restores funds via `reverse_financial_transaction()` only.
+- `writer.py` retained but stripped to `create_fin_transaction` (FinancialTransaction
+  is the orchestration layer, kept).
+- Removed the legacy `reconcile_balances` drift task + its beat schedule.
+- CI guard fails if `LedgerEntry`/`write_ledger_entry`/`write_reversal_credit`/
+  `ledger.queries` reappear.
+
+**Milestone 2 — mutable balance-field caches ⏳ (next):**
+- Remove `Contribution.current_amount`, `WelfareFund.balance`, `SharesFund.total_pool`,
+  models `ContributionAccount` and `ContributionBalance`. Replace remaining
+  presentation reads (serializers / admin / `views.py` / `ShareHolding.ownership_pct`)
+  with ledger-derived values, adding a bulk balance annotation to avoid N+1 on list
+  views. Drop the legacy F() write sites. Destructive migration drops the columns/models.
+- **Correction to original plan:** `contribution_type` and `cycle_amount` are *not*
+  dead (ROSCA discriminator / cycle messaging) — they stay. `min_approvals`/`deadline`
+  reviewed separately.
+- Extend the CI guard to assert `post_journal()` is the only money mutation.
+- **Acceptance:** no business/presentation code reads the mutable balance fields;
+  app boots; suite green.
 - **ADR:** [0002](../adr/0002-remove-legacy-ledger-and-mutable-balances.md).
 
 ### P0-08 — Reconciliation & observability for the new core
