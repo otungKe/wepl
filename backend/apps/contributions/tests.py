@@ -24,6 +24,12 @@ from .services import (
     EmergencyAdvanceService,
 )
 
+from datetime import date
+
+from apps.ledger import coa
+from apps.ledger.balances import account_balance, trial_balance
+from apps.ledger.models import JournalEntry
+
 User = get_user_model()
 
 
@@ -31,6 +37,16 @@ def make_user(phone):
     u = User.objects.create(phone_number=phone)
     u.set_pin("123456")
     return u
+
+
+def approve_kyc(user):
+    """Give a user an approved KYC profile (contribute() requires one)."""
+    from apps.users.models import KYCProfile
+    return KYCProfile.objects.create(
+        user=user, status="approved",
+        given_names="Test", surname="User",
+        id_number=f"ID{user.pk}", date_of_birth=date(1990, 1, 1),
+    )
 
 
 def make_community(creator, name="Test Chama"):
@@ -82,6 +98,44 @@ class ContributionCreationGovernanceTests(TestCase):
              "amendment_voting_threshold": "50"},
         )
         self.assertEqual(c.voting_threshold, "50")
+
+
+class ContributionLedgerPostingTests(TestCase):
+    """P0-05: contribute() posts a balanced double-entry journal alongside the
+    legacy writes (strangler pattern). Reads/gates flip to the ledger in P0-06."""
+
+    def setUp(self):
+        coa.seed_chart_of_accounts()
+        self.alice = make_user("+254700000301")
+        approve_kyc(self.alice)
+        self.c = ContributionService.create_contribution(self.alice, {"title": "Pool"})
+
+    def test_contribute_posts_balanced_journal(self):
+        ContributionService.contribute(
+            self.alice, self.c.id, Decimal("1000"), mpesa_receipt="RCPT1")
+
+        je = JournalEntry.objects.get(op_type="CONTRIBUTION")
+        self.assertIsNotNone(je.financial_transaction)
+
+        member = coa.member_fund_account(
+            user=self.alice, fund_type="contribution", fund_id=self.c.id)
+        self.assertEqual(account_balance(coa.mpesa_float_account()), Decimal("1000.0000"))
+        self.assertEqual(account_balance(member), Decimal("1000.0000"))
+        self.assertTrue(trial_balance()["balanced"])
+
+        # legacy dual-write still intact (reads flip to the ledger in P0-06)
+        self.c.refresh_from_db()
+        self.assertEqual(self.c.current_amount, Decimal("1000"))
+
+    def test_contribute_is_idempotent_on_receipt(self):
+        for _ in range(2):
+            ContributionService.contribute(
+                self.alice, self.c.id, Decimal("1000"), mpesa_receipt="DUP")
+        self.assertEqual(JournalEntry.objects.filter(op_type="CONTRIBUTION").count(), 1)
+        member = coa.member_fund_account(
+            user=self.alice, fund_type="contribution", fund_id=self.c.id)
+        self.assertEqual(account_balance(member), Decimal("1000.0000"))
+        self.assertTrue(trial_balance()["balanced"])
 
 
 @skip(_LEGACY)

@@ -38,6 +38,12 @@ from apps.activity.services import ActivityService
 from apps.ledger.permissions import FinancialPermissions
 from apps.ledger.writer import create_fin_transaction, write_ledger_entry, write_reversal_credit
 from apps.ledger.models import FinancialTransaction, LedgerEntry
+# P0-05 strangler: post double-entry journals alongside the legacy writes. The
+# ledger becomes a parallel source of truth now; reads/gates flip to it in P0-06
+# and the legacy writes are deleted in P0-07.
+from apps.ledger.posting import post_journal, reverse_journal
+from apps.ledger import posting_map as _pm
+from apps.ledger.money import Money
 
 
 def _dn(user) -> str:
@@ -364,6 +370,19 @@ class ContributionService:
             contribution=contribution,
             mpesa_receipt=mpesa_receipt or None,
             note=f"Member contribution by {user.phone_number}",
+        )
+
+        # ── Double-entry posting (P0-05) — the future source of truth ─────────
+        post_journal(
+            idempotency_key=f"je-{idem_key}",
+            op_type=_pm.Op.CONTRIBUTION,
+            lines=_pm.contribution_lines(
+                member=user, fund_type='contribution',
+                fund_id=contribution.id, gross=Money(str(amount)),
+            ),
+            narration=f"Member contribution by {user.phone_number}",
+            financial_transaction=ft,
+            created_by=user,
         )
 
         # ── Side effects ──────────────────────────────────────────────────────
