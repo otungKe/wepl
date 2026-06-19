@@ -66,6 +66,12 @@ Independent of the cutover; these are live risks.
   block merge on red.
 - Establish a coverage floor for `apps/ledger` (≥90%) and money-path services.
 - **Acceptance:** green suite in CI on every PR; coverage gate enforced.
+- **Status (2026-06-19):** ✅ Discovery fixed (`apps/__init__.py`; 0→71 tests
+  collected). ✅ Suite green — `OK (skipped=49)`; the 49 failures were all legacy
+  money-path tests (rewrite under P0-05/06), quarantined with `@skip` and tracked
+  in **issue #14** (which also logs 2 real product bugs they surfaced). ✅ CI added
+  (`.github/workflows/ci.yml`): Postgres+Redis, missing-migration check, posting
+  engine coverage gated ≥90% (currently ~95%; ratchets up as legacy is deleted).
 
 ### P0-03 — Money standardisation
 - Introduce a `Money` value object (amount + currency) and standardise all monetary

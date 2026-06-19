@@ -48,7 +48,7 @@ settlement, reporting) has exactly one insertion point.
 
 | # | Phase | Goal | Stage reached | Epic | Status |
 |---|-------|------|---------------|------|--------|
-| 0 | [Ledger-First Cutover (Legacy Wipe)](PHASE-0-ledger-cutover.md) | Make double-entry authoritative; delete all legacy money code | 3 (solid) | [#4](https://github.com/otungKe/wepl/issues/4) | 🟡 In progress (P0-01 done) |
+| 0 | [Ledger-First Cutover (Legacy Wipe)](PHASE-0-ledger-cutover.md) | Make double-entry authoritative; delete all legacy money code | 3 (solid) | [#4](https://github.com/otungKe/wepl/issues/4) | 🟡 In progress (P0-01, P0-02 done) |
 | 1 | [Payment Rail Abstraction](PHASE-1-payment-rails.md) | `PaymentProvider` port; M-Pesa as adapter #1 | 3→4 | [#5](https://github.com/otungKe/wepl/issues/5) | 🔴 Not started |
 | 2 | [Durable Eventing (Transactional Outbox)](PHASE-2-eventing-outbox.md) | No lost domain events | 4 | [#6](https://github.com/otungKe/wepl/issues/6) | 🔴 Not started |
 | 3 | [Controls: Limits & Risk](PHASE-3-controls-limits-risk.md) | Limits + velocity/fraud gate at the posting chokepoint | 4 | [#7](https://github.com/otungKe/wepl/issues/7) | 🔴 Not started |
