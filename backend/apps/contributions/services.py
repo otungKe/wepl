@@ -538,6 +538,19 @@ class ROSCAService:
             note=f"ROSCA payout — cycle {current_slot.cycle_number}, slot {current_slot.slot_order}",
         )
 
+        # Double-entry posting (P0-05): payout draws the recipient's pool share.
+        post_journal(
+            idempotency_key=f"je-{idem_key}",
+            op_type=_pm.Op.ROSCA_PAYOUT,
+            lines=_pm.disbursement_lines(
+                member=current_slot.participant.user, fund_type='contribution',
+                fund_id=contribution.id, amount=Money(str(payout_amount)),
+            ),
+            narration=f"ROSCA payout — cycle {current_slot.cycle_number}, slot {current_slot.slot_order}",
+            financial_transaction=ft,
+            created_by=user,
+        )
+
         _notify(
             user=current_slot.participant.user,
             notification_type='rosca_payout',
@@ -723,6 +736,19 @@ class DisbursementService:
             note=f"Disbursement: {req.reason[:120]}",
         )
 
+        # Double-entry posting (P0-05): reserve funds out of the pool.
+        post_journal(
+            idempotency_key=f"je-{idem_key}",
+            op_type=_pm.Op.DISBURSEMENT,
+            lines=_pm.disbursement_lines(
+                member=req.requested_by, fund_type='contribution',
+                fund_id=contribution.id, amount=Money(str(req.amount)),
+            ),
+            narration=f"Disbursement: {req.reason[:120]}",
+            financial_transaction=ft,
+            created_by=req.requested_by,
+        )
+
         # ── Legacy balance update via F() ─────────────────────────────────────
         Contribution.objects.filter(pk=contribution.pk).update(
             current_amount=F('current_amount') - req.amount
@@ -807,6 +833,18 @@ class WelfareService:
             direction=LedgerEntry.Direction.CREDIT,
             entry_type=LedgerEntry.EntryType.WELFARE_CONTRIBUTION,
             welfare_fund=fund,
+        )
+
+        # Double-entry posting (P0-05).
+        post_journal(
+            idempotency_key=f"je-{idem_key}",
+            op_type=_pm.Op.WELFARE_CONTRIBUTION,
+            lines=_pm.welfare_contribution_lines(
+                member=user, fund_id=fund.id, amount=Money(str(amount)),
+            ),
+            narration=f"Welfare contribution by {user.phone_number}",
+            financial_transaction=ft,
+            created_by=user,
         )
 
         ActivityService.log_activity(
@@ -943,6 +981,19 @@ class WelfareService:
             entry_type=LedgerEntry.EntryType.WELFARE_CLAIM,
             welfare_fund=fund,
             note=f"Welfare claim #{claim.id}: {claim.reason[:80]}",
+        )
+
+        # Double-entry posting (P0-05): reserve welfare funds for the claimant.
+        post_journal(
+            idempotency_key=f"je-{idem_key}",
+            op_type=_pm.Op.WELFARE_CLAIM,
+            lines=_pm.welfare_claim_lines(
+                member=claim.claimant, fund_id=fund.id,
+                amount=Money(str(claim.amount_requested)),
+            ),
+            narration=f"Welfare claim #{claim.id}",
+            financial_transaction=ft,
+            created_by=claim.claimant,
         )
 
         # Legacy balance update via F()
@@ -1108,6 +1159,20 @@ class EmergencyAdvanceService:
             note=f"Emergency advance #{advance.id} to {advance.borrower.phone_number}",
         )
 
+        # Double-entry posting (P0-05): receivable model — the borrower owes the
+        # principal back (asset), funded out of the float.
+        post_journal(
+            idempotency_key=f"je-{idem_key}",
+            op_type=_pm.Op.ADVANCE_DISBURSEMENT,
+            lines=_pm.advance_disbursement_lines(
+                member=advance.borrower, advance_id=advance.id,
+                principal=Money(str(advance.amount)),
+            ),
+            narration=f"Emergency advance #{advance.id}",
+            financial_transaction=ft,
+            created_by=admin_user,
+        )
+
         # Legacy balance deduction (was MISSING before — critical bug fix)
         Contribution.objects.filter(pk=contribution.pk).update(
             current_amount=F('current_amount') - advance.amount
@@ -1216,6 +1281,21 @@ class EmergencyAdvanceService:
             entry_type=LedgerEntry.EntryType.ADVANCE_REPAYMENT,
             contribution=contribution,
             note=f"Repayment for advance #{advance_id}",
+        )
+
+        # Double-entry posting (P0-05): cash in, clears the receivable. The
+        # principal/interest split (interest -> 4100) is finalised in P0-06 when
+        # the ledger becomes the source of truth; here the whole repayment clears
+        # the receivable so the journal balances.
+        post_journal(
+            idempotency_key=f"je-{idem_key}",
+            op_type=_pm.Op.ADVANCE_REPAYMENT,
+            lines=_pm.advance_repayment_lines(
+                member=user, advance_id=advance.id, principal=Money(str(amount)),
+            ),
+            narration=f"Repayment for advance #{advance_id}",
+            financial_transaction=ft,
+            created_by=user,
         )
 
         # Legacy: dedicated REPAYMENT transaction (not patched — created fresh)
@@ -1355,6 +1435,19 @@ class StandingOrderService:
             entry_type=LedgerEntry.EntryType.STANDING_ORDER,
             contribution=contribution,
             note=f"Standing order payout to {recipient_phone}",
+        )
+
+        # Double-entry posting (P0-05): payout draws down the owner's pool share.
+        post_journal(
+            idempotency_key=f"je-{idem_key}",
+            op_type=_pm.Op.STANDING_ORDER,
+            lines=_pm.disbursement_lines(
+                member=user, fund_type='contribution',
+                fund_id=contribution.id, amount=Money(str(order.amount)),
+            ),
+            narration=f"Standing order payout to {recipient_phone}",
+            financial_transaction=ft,
+            created_by=user,
         )
 
         # Legacy balance update via F()

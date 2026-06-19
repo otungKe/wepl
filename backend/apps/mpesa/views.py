@@ -335,7 +335,9 @@ class B2CResultView(APIView):
 
             from apps.ledger.writer import write_reversal_credit
             from apps.ledger.tasks import _update_context_on_failure
+            from apps.ledger.posting import reverse_financial_transaction
             write_reversal_credit(ft, note=err)
+            reverse_financial_transaction(ft, note=err)  # double-entry reversal (P0-05)
             _update_context_on_failure(ft)
 
         return Response({"ResultCode": 0, "ResultDesc": "Accepted"})
@@ -481,6 +483,22 @@ def _process_shares_purchase(stk: MpesaSTKRequest) -> None:
         entry_type=LedgerEntry.EntryType.SHARES_PURCHASE,
         shares_fund=fund,
         mpesa_receipt=stk.mpesa_receipt,
+    )
+
+    # Double-entry posting (P0-05): cash into the float, member shares liability up.
+    from apps.ledger.posting import post_journal
+    from apps.ledger import posting_map as pm
+    from apps.ledger.money import Money
+    post_journal(
+        idempotency_key=f"je-{idem_key}",
+        op_type=pm.Op.SHARES_PURCHASE,
+        lines=pm.contribution_lines(
+            member=stk.user, fund_type='shares', fund_id=fund.id,
+            gross=Money(str(amount)),
+        ),
+        narration=f"Shares purchase by {stk.user.phone_number}",
+        financial_transaction=ft,
+        created_by=stk.user,
     )
 
 

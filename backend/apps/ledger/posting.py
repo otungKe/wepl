@@ -156,6 +156,28 @@ def _apply_to_projection(lines: list[Line]) -> None:
         )
 
 
+def reverse_financial_transaction(ft, *, note: str = '', created_by=None) -> JournalEntry | None:
+    """Reverse the primary (non-reversal) journal posted for a FinancialTransaction.
+
+    Used on payout failure to restore reserved funds in the ledger. Idempotent —
+    ``reverse_journal`` keys off the original, so repeated calls return the same
+    reversal. Returns None if no journal was posted for this FT.
+    """
+    original = (
+        JournalEntry.objects
+        .filter(financial_transaction=ft, reverses__isnull=True)
+        .order_by('id')
+        .first()
+    )
+    if original is None:
+        return None
+    return reverse_journal(
+        original,
+        narration=note or f"Reversal of {original.op_type}",
+        created_by=created_by,
+    )
+
+
 def reverse_journal(
     original: JournalEntry,
     *,

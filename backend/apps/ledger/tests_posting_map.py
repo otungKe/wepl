@@ -105,6 +105,30 @@ class PostingMapTests(TestCase):
         self.assertEqual(JournalEntry.objects.count(), len(recipes))
         self.assertTrue(trial_balance()["balanced"])
 
+    def test_reverse_financial_transaction_restores_and_is_idempotent(self):
+        from apps.ledger.writer import create_fin_transaction
+        from apps.ledger.posting import reverse_financial_transaction
+
+        ft, _ = create_fin_transaction(
+            idempotency_key="ft-rev", op_type=pm.Op.DISBURSEMENT,
+            amount=Decimal("500"), initiated_by=self.bob)
+        post_journal(
+            idempotency_key="je-ft-rev", op_type=pm.Op.DISBURSEMENT,
+            lines=pm.disbursement_lines(
+                member=self.bob, fund_type="contribution", fund_id=5, amount=Money("500")),
+            financial_transaction=ft)
+        member = coa.member_fund_account(user=self.bob, fund_type="contribution", fund_id=5)
+        self.assertEqual(account_balance(member), Decimal("-500.0000"))
+
+        rev = reverse_financial_transaction(ft, note="payout failed")
+        self.assertIsNotNone(rev)
+        self.assertEqual(account_balance(member), Decimal("0.0000"))
+        self.assertEqual(account_balance(self.float), Decimal("0.0000"))
+        # idempotent: a second call returns the same reversal, posts nothing new
+        again = reverse_financial_transaction(ft, note="payout failed")
+        self.assertEqual(again.id, rev.id)
+        self.assertTrue(trial_balance()["balanced"])
+
     def test_non_positive_amounts_rejected(self):
         with self.assertRaises(ValueError):
             pm.contribution_lines(member=self.alice, fund_type="contribution",

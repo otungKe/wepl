@@ -138,6 +138,24 @@ class ContributionLedgerPostingTests(TestCase):
         self.assertTrue(trial_balance()["balanced"])
 
 
+class WelfareLedgerPostingTests(TestCase):
+    """P0-05: welfare contribution posts a balanced journal alongside legacy."""
+
+    def setUp(self):
+        coa.seed_chart_of_accounts()
+        self.alice = make_user("+254700000401")
+        self.community = make_community(self.alice, "Welfare Chama")
+
+    def test_welfare_contribution_posts_journal(self):
+        fund = WelfareService.get_or_create_community_fund(self.community)
+        WelfareService.contribute_to_welfare(
+            fund.id, self.alice, Decimal("500"), mpesa_receipt="WR1")
+        member = coa.member_fund_account(user=self.alice, fund_type="welfare", fund_id=fund.id)
+        self.assertEqual(account_balance(member), Decimal("500.0000"))
+        self.assertEqual(account_balance(coa.mpesa_float_account()), Decimal("500.0000"))
+        self.assertTrue(trial_balance()["balanced"])
+
+
 @skip(_LEGACY)
 class ContributionCoreTests(TestCase):
 

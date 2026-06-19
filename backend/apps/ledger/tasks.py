@@ -308,9 +308,11 @@ def _handle_payout_failure(ft, reason: str) -> None:
     """
     from apps.ledger.models import FinancialTransaction
     from apps.ledger.writer import write_reversal_credit
+    from apps.ledger.posting import reverse_financial_transaction
 
     try:
         write_reversal_credit(ft, note=reason[:500])
+        reverse_financial_transaction(ft, note=reason[:500])  # double-entry reversal (P0-05)
     except Exception:
         logger.exception("_handle_payout_failure: could not write reversal for FT %s", ft.id)
 
