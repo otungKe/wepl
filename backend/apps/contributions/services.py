@@ -85,45 +85,14 @@ def _compute_next_run(frequency: str, from_dt) -> object:
 class ContributionService:
 
     @staticmethod
-    def _check_governance_deadlock(user, validated_data) -> None:
-        """
-        Check both voting thresholds (disbursement + amendment) for deadlocks
-        before the contribution is created.
-
-        Uses FinancialPermissions.assert_quorum_exists on a lightweight proxy
-        object so the real contribution row doesn't need to exist yet.
-        """
-        from apps.ledger.permissions import FinancialPermissions
-
-        community = validated_data.get('community')
-
-        class _ProxyContribution:
-            """Minimal duck-type so assert_quorum_exists works without a DB row."""
-            def __init__(self, creator, comm):
-                self.created_by_id  = creator.id
-                self.community_id   = comm.id if comm else None
-                self.community      = comm
-
-        proxy = _ProxyContribution(user, community)
-
-        disb_threshold = validated_data.get('voting_threshold', 'admins')
-        FinancialPermissions.assert_quorum_exists(
-            proxy, disb_threshold, user,
-            action="create a contribution with this disbursement approval threshold",
-        )
-
-        amend_threshold = validated_data.get('amendment_voting_threshold', 'admins')
-        FinancialPermissions.assert_quorum_exists(
-            proxy, amend_threshold, user,
-            action="create a contribution with this amendment approval threshold",
-        )
-
-    @staticmethod
     @transaction.atomic
     def create_contribution(user, validated_data, member_phones=None, add_all_members=False):
-        # Guard: detect governance deadlock (disbursement + amendment) before creating
-        ContributionService._check_governance_deadlock(user, validated_data)
-
+        # Governance quorum is enforced at request time against the real
+        # contribution row (submit_disbursement_request / propose amendment),
+        # which correctly accounts for members who join after creation. A
+        # creation-time pre-check used to run here but was removed (issue #14):
+        # it blocked legitimate solo/open contributions and crashed on
+        # percentage thresholds (it queried participants via a fake proxy object).
         contribution = Contribution.objects.create(created_by=user, **validated_data)
         ContributionAccount.objects.create(contribution=contribution)
 

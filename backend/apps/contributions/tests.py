@@ -55,6 +55,35 @@ def make_contribution(creator, community=None, ctype="POOL", cycle_amount=None):
 # Core contribution flow
 # ---------------------------------------------------------------------------
 
+class ContributionCreationGovernanceTests(TestCase):
+    """Regression tests for issue #14 — creation must not run the old, buggy
+    creation-time governance deadlock pre-check. Quorum is enforced at request
+    time instead (see submit_disbursement_request / propose_amendment)."""
+
+    def setUp(self):
+        self.alice = make_user("+254700000201")
+
+    def test_solo_open_contribution_creation_succeeds(self):
+        # Previously blocked: 'admins' threshold + only the creator -> 0 voters.
+        c = ContributionService.create_contribution(self.alice, {"title": "Solo Pool"})
+        self.assertEqual(c.created_by, self.alice)
+        self.assertTrue(
+            ContributionParticipant.objects.filter(
+                contribution=c, user=self.alice, is_active=True
+            ).exists()
+        )
+
+    def test_percentage_threshold_creation_does_not_crash(self):
+        # Previously raised TypeError: the proxy object was used as a FK in a
+        # ContributionParticipant query for percentage thresholds.
+        c = ContributionService.create_contribution(
+            self.alice,
+            {"title": "Pct Pool", "voting_threshold": "50",
+             "amendment_voting_threshold": "50"},
+        )
+        self.assertEqual(c.voting_threshold, "50")
+
+
 @skip(_LEGACY)
 class ContributionCoreTests(TestCase):
 
