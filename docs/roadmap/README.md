@@ -46,17 +46,17 @@ settlement, reporting) has exactly one insertion point.
 
 ## 4. Phases
 
-| # | Phase | Goal | Stage reached | Status |
-|---|-------|------|---------------|--------|
-| 0 | [Ledger-First Cutover (Legacy Wipe)](PHASE-0-ledger-cutover.md) | Make double-entry authoritative; delete all legacy money code | 3 (solid) | 🔴 Not started |
-| 1 | [Payment Rail Abstraction](PHASE-1-payment-rails.md) | `PaymentProvider` port; M-Pesa as adapter #1 | 3→4 | 🔴 Not started |
-| 2 | [Durable Eventing (Transactional Outbox)](PHASE-2-eventing-outbox.md) | No lost domain events | 4 | 🔴 Not started |
-| 3 | [Controls: Limits & Risk](PHASE-3-controls-limits-risk.md) | Limits + velocity/fraud gate at the posting chokepoint | 4 | 🔴 Not started |
-| 4 | [Reporting & GL](PHASE-4-reporting-gl.md) | Trial balance, statements, audit exports | 4 | 🔴 Not started |
-| 5 | [Multi-Currency](PHASE-5-multi-currency.md) | FX-aware Money; per-currency balancing | 4→5 | 🔴 Not started |
-| 6 | [Multi-Tenancy](PHASE-6-multi-tenancy.md) | Tenant boundary + isolation | 5 | 🔴 Not started |
-| 7 | [Banking-as-a-Service](PHASE-7-baas.md) | Public API, webhooks-out, sandbox, API keys | 5 | 🔴 Not started |
-| 8 | [Enterprise & Compliance](PHASE-8-enterprise-compliance.md) | AML, monitoring, treasury, data residency | 6 | 🔴 Not started |
+| # | Phase | Goal | Stage reached | Epic | Status |
+|---|-------|------|---------------|------|--------|
+| 0 | [Ledger-First Cutover (Legacy Wipe)](PHASE-0-ledger-cutover.md) | Make double-entry authoritative; delete all legacy money code | 3 (solid) | [#4](https://github.com/otungKe/wepl/issues/4) | 🔴 Not started |
+| 1 | [Payment Rail Abstraction](PHASE-1-payment-rails.md) | `PaymentProvider` port; M-Pesa as adapter #1 | 3→4 | [#5](https://github.com/otungKe/wepl/issues/5) | 🔴 Not started |
+| 2 | [Durable Eventing (Transactional Outbox)](PHASE-2-eventing-outbox.md) | No lost domain events | 4 | [#6](https://github.com/otungKe/wepl/issues/6) | 🔴 Not started |
+| 3 | [Controls: Limits & Risk](PHASE-3-controls-limits-risk.md) | Limits + velocity/fraud gate at the posting chokepoint | 4 | [#7](https://github.com/otungKe/wepl/issues/7) | 🔴 Not started |
+| 4 | [Reporting & GL](PHASE-4-reporting-gl.md) | Trial balance, statements, audit exports | 4 | [#8](https://github.com/otungKe/wepl/issues/8) | 🔴 Not started |
+| 5 | [Multi-Currency](PHASE-5-multi-currency.md) | FX-aware Money; per-currency balancing | 4→5 | [#9](https://github.com/otungKe/wepl/issues/9) | 🔴 Not started |
+| 6 | [Multi-Tenancy](PHASE-6-multi-tenancy.md) | Tenant boundary + isolation | 5 | [#10](https://github.com/otungKe/wepl/issues/10) | 🔴 Not started |
+| 7 | [Banking-as-a-Service](PHASE-7-baas.md) | Public API, webhooks-out, sandbox, API keys | 5 | [#11](https://github.com/otungKe/wepl/issues/11) | 🔴 Not started |
+| 8 | [Enterprise & Compliance](PHASE-8-enterprise-compliance.md) | AML, monitoring, treasury, data residency | 6 | [#12](https://github.com/otungKe/wepl/issues/12) | 🔴 Not started |
 
 **Sequencing rationale:** Phases 1–4 only become cheap *after* the posting
 chokepoint exists (Phase 0). Phases 5–8 are deliberately deferred — building them
@@ -93,8 +93,8 @@ are left open without paying for the rooms yet.
 
 | Artifact | Link |
 |----------|------|
-| Master tracking issue | _to be filled after creation_ |
-| Phase epics | _to be filled after creation_ |
+| Master tracking issue | [#13](https://github.com/otungKe/wepl/issues/13) |
+| Phase epics | [#4](https://github.com/otungKe/wepl/issues/4) (P0) · [#5](https://github.com/otungKe/wepl/issues/5) (P1) · [#6](https://github.com/otungKe/wepl/issues/6) (P2) · [#7](https://github.com/otungKe/wepl/issues/7) (P3) · [#8](https://github.com/otungKe/wepl/issues/8) (P4) · [#9](https://github.com/otungKe/wepl/issues/9) (P5) · [#10](https://github.com/otungKe/wepl/issues/10) (P6) · [#11](https://github.com/otungKe/wepl/issues/11) (P7) · [#12](https://github.com/otungKe/wepl/issues/12) (P8) |
 
 ## 8. Definition of Done for the whole roadmap
 
