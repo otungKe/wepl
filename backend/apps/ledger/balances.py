@@ -60,6 +60,21 @@ def account_balance(account: Account) -> Decimal:
     return account.signed(ab.debit_total, ab.credit_total)
 
 
+def fund_balance(fund_type: str, fund_id: int) -> Decimal:
+    """Pool balance of a fund = signed sum over its member sub-ledger accounts.
+
+    The member sub-ledgers for contribution / welfare / shares funds are all
+    LIABILITY (credit-normal), so the pool we owe members is ``Σcredit − Σdebit``
+    across those accounts. This is the ledger-derived replacement for the legacy
+    mutable fields (`Contribution.current_amount`, `WelfareFund.balance`,
+    `SharesFund.total_pool`).
+    """
+    agg = AccountBalance.objects.filter(
+        account__fund_type=fund_type, account__fund_id=fund_id,
+    ).aggregate(d=Sum('debit_total'), c=Sum('credit_total'))
+    return (agg['c'] or Decimal('0')) - (agg['d'] or Decimal('0'))
+
+
 @transaction.atomic
 def recompute_account_balance(account: Account) -> AccountBalance:
     """Rebuild the projection for one account from its lines. Repair primitive."""

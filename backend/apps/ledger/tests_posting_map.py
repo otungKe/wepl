@@ -129,6 +129,35 @@ class PostingMapTests(TestCase):
         self.assertEqual(again.id, rev.id)
         self.assertTrue(trial_balance()["balanced"])
 
+    def test_fund_balance_sums_member_subledgers(self):
+        from apps.ledger.balances import fund_balance
+        self._post("fb1", pm.Op.CONTRIBUTION, pm.contribution_lines(
+            member=self.alice, fund_type="contribution", fund_id=88, gross=Money("1000")))
+        self._post("fb2", pm.Op.CONTRIBUTION, pm.contribution_lines(
+            member=self.bob, fund_type="contribution", fund_id=88, gross=Money("500")))
+        self.assertEqual(fund_balance("contribution", 88), Decimal("1500.0000"))
+        self._post("fb3", pm.Op.DISBURSEMENT, pm.disbursement_lines(
+            member=self.alice, fund_type="contribution", fund_id=88, amount=Money("300")))
+        self.assertEqual(fund_balance("contribution", 88), Decimal("1200.0000"))
+
+    def test_advance_repayment_interest_only(self):
+        # principal already cleared elsewhere → a pure-interest payment is valid
+        self._post("ar-int", pm.Op.ADVANCE_REPAYMENT, pm.advance_repayment_lines(
+            member=self.bob, advance_id=99, principal=Money("0"), interest=Money("50")))
+        self.assertEqual(account_balance(coa.interest_income_account()), Decimal("50.0000"))
+        self.assertEqual(account_balance(self.float), Decimal("50.0000"))
+        self.assertTrue(trial_balance()["balanced"])
+
+    def test_advance_repayment_principal_only(self):
+        self._post("ar-disb", pm.Op.ADVANCE_DISBURSEMENT, pm.advance_disbursement_lines(
+            member=self.bob, advance_id=99, principal=Money("200")))
+        self._post("ar-prin", pm.Op.ADVANCE_REPAYMENT, pm.advance_repayment_lines(
+            member=self.bob, advance_id=99, principal=Money("200"), interest=Money("0")))
+        ar = coa.member_receivable_account(user=self.bob, fund_id=99)
+        self.assertEqual(account_balance(ar), Decimal("0.0000"))
+        self.assertEqual(account_balance(coa.interest_income_account()), Decimal("0.0000"))
+        self.assertTrue(trial_balance()["balanced"])
+
     def test_non_positive_amounts_rejected(self):
         with self.assertRaises(ValueError):
             pm.contribution_lines(member=self.alice, fund_type="contribution",

@@ -44,6 +44,9 @@ from apps.ledger.models import FinancialTransaction, LedgerEntry
 from apps.ledger.posting import post_journal, reverse_journal
 from apps.ledger import posting_map as _pm
 from apps.ledger.money import Money
+# P0-06: read pool/member balances from the ledger (the authoritative source).
+from apps.ledger.balances import fund_balance, account_balance
+from apps.ledger import coa as _coa
 
 
 def _dn(user) -> str:
@@ -218,7 +221,7 @@ class ContributionService:
         contribution = Contribution.objects.get(id=contribution_id)
         if contribution.created_by != user:
             raise PermissionDenied("Only the creator can delete this contribution.")
-        if contribution.current_amount > 0:
+        if fund_balance('contribution', contribution.id) > 0:
             raise ValidationError(
                 "Cannot delete a contribution with an active balance. "
                 "Close it and disburse all funds before deleting."
@@ -392,8 +395,8 @@ class ContributionService:
             message=f"{_dn(user)} contributed KES {amount:,.0f} to {contribution.title}",
         )
 
-        contribution.refresh_from_db(fields=['current_amount'])
-        previous_amount = contribution.current_amount - Decimal(str(amount))
+        pool_total = fund_balance('contribution', contribution.id)
+        previous_amount = pool_total - Decimal(str(amount))
 
         if contribution.created_by != user:
             _notify(
@@ -406,7 +409,7 @@ class ContributionService:
 
         if contribution.target_amount and contribution.target_amount > 0:
             prev_pct = int((previous_amount / contribution.target_amount) * 100)
-            curr_pct = int((contribution.current_amount / contribution.target_amount) * 100)
+            curr_pct = int((pool_total / contribution.target_amount) * 100)
             for milestone in (50, 100):
                 if prev_pct < milestone <= curr_pct:
                     label = "reached 50%!" if milestone == 50 else "is fully funded! 🎉"
@@ -418,7 +421,7 @@ class ContributionService:
                             notification_type='contribution_milestone',
                             title=f"{contribution.title} {label}",
                             message=(
-                                f"Collected KES {contribution.current_amount} "
+                                f"Collected KES {pool_total} "
                                 f"of KES {contribution.target_amount}."
                             ),
                             contribution_id=contribution.id,
@@ -492,7 +495,7 @@ class ROSCAService:
         if not current_slot:
             raise ValidationError("All slots have been paid out for this cycle.")
 
-        payout_amount = contribution.current_amount
+        payout_amount = fund_balance('contribution', contribution.id)
 
         current_slot.has_received  = True
         current_slot.received_at   = timezone.now()
@@ -578,8 +581,9 @@ class DisbursementService:
         if not FinancialPermissions.is_active_participant(contribution, user):
             raise PermissionDenied("You must be an active participant.")
 
-        # Balance check with row lock (select_for_update above)
-        if Decimal(str(amount)) > contribution.current_amount:
+        # Balance check — pool balance from the ledger (contribution row is locked
+        # above, serialising concurrent disbursements on this contribution).
+        if Decimal(str(amount)) > fund_balance('contribution', contribution.id):
             raise ValidationError("Amount exceeds current pool balance.")
 
         # Quorum check: ensure at least one eligible voter exists excluding the requester.
@@ -691,7 +695,7 @@ class DisbursementService:
         """
         contribution = Contribution.objects.select_for_update().get(id=req.contribution_id)
 
-        if contribution.current_amount < req.amount:
+        if fund_balance('contribution', contribution.id) < req.amount:
             raise ValidationError("Insufficient pool balance at execution time.")
 
         # Governance cooldown check (Issue 16): block execution if voting_threshold
@@ -871,9 +875,10 @@ class WelfareService:
                 "You already have a pending claim. "
                 "Wait for it to be reviewed before submitting another."
             )
-        if amount > fund.balance:
+        welfare_bal = fund_balance('welfare', fund.id)
+        if amount > welfare_bal:
             raise ValidationError(
-                f"Claim amount exceeds the current fund balance of KES {fund.balance:,.0f}."
+                f"Claim amount exceeds the current fund balance of KES {welfare_bal:,.0f}."
             )
         if amount <= 0:
             raise ValidationError("Claim amount must be greater than zero.")
@@ -950,7 +955,7 @@ class WelfareService:
         DB row locks open.
         """
         fund = WelfareFund.objects.select_for_update().get(id=claim.fund_id)
-        if fund.balance < claim.amount_requested:
+        if fund_balance('welfare', fund.id) < claim.amount_requested:
             raise ValidationError("Insufficient welfare fund balance.")
 
         # ── Reserve funds: DEBIT ledger + legacy balance update ───────────────
@@ -1049,15 +1054,11 @@ class EmergencyAdvanceService:
             from apps.communities.services import check_cooling_off
             check_cooling_off(user, contribution.community, 'emergency_advance')
 
-        # Derive eligibility from ledger (not mutable ContributionBalance)
-        from apps.ledger.queries import member_contribution_total
-        member_total = member_contribution_total(contribution.id, user.id)
-        # Fall back to legacy field if ledger has no entries yet (migration phase)
-        if member_total == Decimal('0'):
-            balance_obj  = ContributionBalance.objects.filter(
-                contribution=contribution, user=user
-            ).first()
-            member_total = balance_obj.amount if balance_obj else Decimal('0')
+        # Eligibility from the double-entry ledger: the member's own contribution
+        # sub-ledger balance (what the pool owes them).
+        member_acct = _coa.member_fund_account(
+            user=user, fund_type='contribution', fund_id=contribution.id)
+        member_total = account_balance(member_acct)
 
         max_advance = member_total * EmergencyAdvanceService.MAX_ADVANCE_RATIO
 
@@ -1125,8 +1126,8 @@ class EmergencyAdvanceService:
         if not FinancialPermissions.is_contribution_admin(contribution, admin_user):
             raise PermissionDenied("Only admins/treasurers can approve advances.")
 
-        # Check pool has enough funds
-        if contribution.current_amount < advance.amount:
+        # Check pool has enough funds (ledger-derived)
+        if fund_balance('contribution', contribution.id) < advance.amount:
             raise ValidationError("Insufficient pool balance to cover this advance.")
 
         # ── Reserve funds: DEBIT ledger + legacy balance update ───────────────
@@ -1283,15 +1284,20 @@ class EmergencyAdvanceService:
             note=f"Repayment for advance #{advance_id}",
         )
 
-        # Double-entry posting (P0-05): cash in, clears the receivable. The
-        # principal/interest split (interest -> 4100) is finalised in P0-06 when
-        # the ledger becomes the source of truth; here the whole repayment clears
-        # the receivable so the journal balances.
+        # Double-entry posting (P0-06): split the repayment into principal (clears
+        # the receivable) and interest (income). Outstanding principal is the AR
+        # sub-ledger balance, so the principal portion never over-clears it.
+        ar_acct = _coa.member_receivable_account(user=user, fund_id=advance.id)
+        outstanding = account_balance(ar_acct)
+        principal_portion = min(Decimal(str(amount)), max(outstanding, Decimal('0')))
+        interest_portion = Decimal(str(amount)) - principal_portion
         post_journal(
             idempotency_key=f"je-{idem_key}",
             op_type=_pm.Op.ADVANCE_REPAYMENT,
             lines=_pm.advance_repayment_lines(
-                member=user, advance_id=advance.id, principal=Money(str(amount)),
+                member=user, advance_id=advance.id,
+                principal=Money(str(principal_portion)),
+                interest=Money(str(interest_portion)),
             ),
             narration=f"Repayment for advance #{advance_id}",
             financial_transaction=ft,
@@ -1386,7 +1392,7 @@ class StandingOrderService:
         contribution = Contribution.objects.select_for_update().get(
             id=order.contribution_id
         )
-        if contribution.current_amount < order.amount:
+        if fund_balance('contribution', contribution.id) < order.amount:
             raise ValidationError("Insufficient funds in the contribution pool.")
 
         if order.payee_type == 'fixed':
@@ -1632,10 +1638,11 @@ class AmendmentService:
         if 'target_amount' in changes:
             try:
                 ta = Decimal(str(changes['target_amount']))
-                if ta < contribution.current_amount:
+                pool_bal = fund_balance('contribution', contribution.id)
+                if ta < pool_bal:
                     raise ValidationError(
                         f"target_amount cannot be lower than the current balance "
-                        f"of KES {contribution.current_amount:,.0f}."
+                        f"of KES {pool_bal:,.0f}."
                     )
             except InvalidOperation:
                 raise ValidationError("Invalid target_amount value.")

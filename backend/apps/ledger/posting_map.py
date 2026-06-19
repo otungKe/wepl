@@ -99,15 +99,17 @@ def advance_disbursement_lines(*, member, advance_id, principal: Money) -> list[
 def advance_repayment_lines(*, member, advance_id, principal: Money,
                             interest: Money | None = None) -> list[Line]:
     """Member repays an advance: cash in, clear the receivable, recognise any
-    interest as income."""
-    _require_positive(principal, "repayment principal")
+    interest as income. Either portion may be zero (e.g. a pure-interest or
+    pure-principal payment), but the total must be positive."""
     interest = interest or Money.zero(principal.currency)
+    if principal.is_negative or interest.is_negative:
+        raise ValueError("repayment principal/interest must be non-negative")
     total = principal + interest
+    _require_positive(total, "repayment total")
     ar = coa.member_receivable_account(user=member, fund_id=advance_id)
-    lines = [
-        Line(coa.mpesa_float_account(), DEBIT, total.amount, note="repayment in"),
-        Line(ar, CREDIT, principal.amount, note="clear receivable"),
-    ]
+    lines = [Line(coa.mpesa_float_account(), DEBIT, total.amount, note="repayment in")]
+    if principal.is_positive:
+        lines.append(Line(ar, CREDIT, principal.amount, note="clear receivable"))
     if interest.is_positive:
         lines.append(Line(coa.interest_income_account(), CREDIT, interest.amount, note="interest"))
     return lines

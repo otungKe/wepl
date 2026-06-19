@@ -123,9 +123,12 @@ class ContributionLedgerPostingTests(TestCase):
         self.assertEqual(account_balance(member), Decimal("1000.0000"))
         self.assertTrue(trial_balance()["balanced"])
 
-        # legacy dual-write still intact (reads flip to the ledger in P0-06)
+        # P0-06: ledger-derived pool balance equals the legacy mutable field
+        # (both are written; the gates now read the ledger).
+        from apps.ledger.balances import fund_balance
         self.c.refresh_from_db()
         self.assertEqual(self.c.current_amount, Decimal("1000"))
+        self.assertEqual(fund_balance("contribution", self.c.id), Decimal("1000.0000"))
 
     def test_contribute_is_idempotent_on_receipt(self):
         for _ in range(2):
