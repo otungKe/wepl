@@ -171,18 +171,22 @@ Done in two milestones (additive reads/writes were in place from P0-05/06).
 - CI guard fails if `LedgerEntry`/`write_ledger_entry`/`write_reversal_credit`/
   `ledger.queries` reappear.
 
-**Milestone 2 — mutable balance-field caches ⏳ (next):**
-- Remove `Contribution.current_amount`, `WelfareFund.balance`, `SharesFund.total_pool`,
-  models `ContributionAccount` and `ContributionBalance`. Replace remaining
-  presentation reads (serializers / admin / `views.py` / `ShareHolding.ownership_pct`)
-  with ledger-derived values, adding a bulk balance annotation to avoid N+1 on list
-  views. Drop the legacy F() write sites. Destructive migration drops the columns/models.
+**Milestone 2 — mutable balance-field caches ✅ (2026-06-19, commit `0c24ed3`):**
+- Removed `Contribution.current_amount`, `WelfareFund.balance`, `SharesFund.total_pool`
+  and deleted models `ContributionAccount` / `ContributionBalance` (migration `0020`).
+- Removed every legacy F() write site across services / mpesa / recovery task.
+- Presentation is now ledger-derived: `ContributionSerializer.current_amount`,
+  `WelfareFundSerializer.balance`, `SharesFundSerializer.total_pool`, member
+  balances, `ShareHolding.ownership_pct`, and both admins. List views pass a bulk
+  balance dict via serializer context (new helpers `member_fund_balance` /
+  `user_fund_balances` / `fund_member_balances` / `fund_balances`) to avoid N+1;
+  the `ContributionBalance` prefetch is gone.
+- CI guard extended to fail if the legacy ledger **or** the mutable caches/writes return.
 - **Correction to original plan:** `contribution_type` and `cycle_amount` are *not*
   dead (ROSCA discriminator / cycle messaging) — they stay. `min_approvals`/`deadline`
-  reviewed separately.
-- Extend the CI guard to assert `post_journal()` is the only money mutation.
-- **Acceptance:** no business/presentation code reads the mutable balance fields;
-  app boots; suite green.
+  retained (serializer-exposed) pending a separate review.
+- **Acceptance met:** no business/presentation code reads the mutable balance
+  fields; app boots; suite green (113), ledger gate 92%.
 - **ADR:** [0002](../adr/0002-remove-legacy-ledger-and-mutable-balances.md).
 
 ### P0-08 — Reconciliation & observability for the new core
