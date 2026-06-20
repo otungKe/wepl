@@ -170,6 +170,7 @@ CELERY_WORKER_PREFETCH_MULTIPLIER = 1  # fair dispatch
 CELERY_TASK_QUEUES_DEFAULT = 'default'
 CELERY_TASK_DEFAULT_QUEUE  = 'default'
 CELERY_TASK_ROUTES = {
+    'apps.core.tasks.*':           {'queue': 'notifications'},
     'apps.notifications.tasks.*':  {'queue': 'notifications'},
     'apps.payments.tasks.*':       {'queue': 'payments'},
     'apps.mpesa.tasks.*':          {'queue': 'payments'},
@@ -183,6 +184,12 @@ INSTALLED_APPS_BEAT = ['django_celery_beat']
 # Scheduled tasks (run via Celery Beat)
 from celery.schedules import crontab
 CELERY_BEAT_SCHEDULE = {
+    # Transactional outbox relay — deliver durably-stored domain events (Phase 2).
+    # Seconds-interval (crontab is minute-granularity) for timely notifications.
+    'process-outbox': {
+        'task': 'apps.core.tasks.process_outbox',
+        'schedule': 10.0,  # every 10 seconds
+    },
     # Runs 3× daily; only fires orders whose next_run_at has elapsed
     'execute-due-standing-orders': {
         'task': 'apps.contributions.tasks.execute_due_standing_orders',
@@ -207,11 +214,6 @@ CELERY_BEAT_SCHEDULE = {
     'notify-overdue-advances': {
         'task': 'apps.contributions.tasks.notify_overdue_advances',
         'schedule': crontab(minute=0, hour=9),
-    },
-    # P2-02: Outbox relay — safety net for events missed by fast-path on_commit task
-    'relay-outbox-events': {
-        'task': 'apps.core.tasks.relay_outbox_events',
-        'schedule': crontab(minute='*/1'),  # every minute; fast-path handles latency
     },
 }
 
