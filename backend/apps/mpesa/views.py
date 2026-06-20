@@ -458,9 +458,6 @@ def _process_shares_purchase(stk: MpesaSTKRequest) -> None:
         shares_count=F('shares_count') + new_shares,
         total_contributed=F('total_contributed') + amount,
     )
-    SharesFund.objects.filter(pk=fund.pk).update(
-        total_pool=F('total_pool') + amount
-    )
 
     # FinancialTransaction (orchestration)
     idem_key = f"shares-{fund.id}-{stk.user_id}-{stk.mpesa_receipt or stk.checkout_request_id}"

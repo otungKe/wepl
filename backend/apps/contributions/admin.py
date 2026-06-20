@@ -14,9 +14,14 @@ from .models import (
 
 @admin.register(Contribution)
 class ContributionAdmin(admin.ModelAdmin):
-    list_display = ('title', 'contribution_type', 'visibility', 'current_amount', 'target_amount', 'is_active', 'created_at')
+    list_display = ('title', 'contribution_type', 'visibility', 'pool_balance', 'target_amount', 'is_active', 'created_at')
     list_filter = ('contribution_type', 'visibility', 'is_active')
     search_fields = ('title',)
+
+    @admin.display(description='Pool balance')
+    def pool_balance(self, obj):
+        from apps.ledger.balances import fund_balance
+        return fund_balance('contribution', obj.id)
 
 
 @admin.register(ContributionParticipant)
@@ -50,7 +55,12 @@ class DisbursementVoteAdmin(admin.ModelAdmin):
 
 @admin.register(WelfareFund)
 class WelfareFundAdmin(admin.ModelAdmin):
-    list_display = ('community', 'name', 'balance', 'monthly_contribution')
+    list_display = ('community', 'name', 'fund_balance', 'monthly_contribution')
+
+    @admin.display(description='Balance')
+    def fund_balance(self, obj):
+        from apps.ledger.balances import fund_balance
+        return fund_balance('welfare', obj.id)
 
 
 @admin.register(WelfareClaim)

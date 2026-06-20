@@ -158,6 +158,36 @@ class PostingMapTests(TestCase):
         self.assertEqual(account_balance(coa.interest_income_account()), Decimal("0.0000"))
         self.assertTrue(trial_balance()["balanced"])
 
+    def test_balance_helper_variants(self):
+        from apps.ledger.balances import (
+            member_fund_balance, user_fund_balances, fund_member_balances, fund_balances,
+        )
+        self._post("b1", pm.Op.CONTRIBUTION, pm.contribution_lines(
+            member=self.alice, fund_type="contribution", fund_id=77, gross=Money("1000")))
+        self._post("b2", pm.Op.CONTRIBUTION, pm.contribution_lines(
+            member=self.bob, fund_type="contribution", fund_id=77, gross=Money("400")))
+        self._post("b3", pm.Op.CONTRIBUTION, pm.contribution_lines(
+            member=self.alice, fund_type="contribution", fund_id=78, gross=Money("50")))
+
+        # member_fund_balance — non-creating; 0 when nothing posted
+        self.assertEqual(member_fund_balance(self.alice, "contribution", 77), Decimal("1000.0000"))
+        self.assertEqual(member_fund_balance(self.alice, "contribution", 999), Decimal("0"))
+
+        # user_fund_balances — one user across many funds, one query
+        ub = user_fund_balances(self.alice, "contribution", [77, 78])
+        self.assertEqual(ub[77], Decimal("1000.0000"))
+        self.assertEqual(ub[78], Decimal("50.0000"))
+
+        # fund_member_balances — one fund across members
+        fmb = fund_member_balances("contribution", 77)
+        self.assertEqual(fmb[self.alice.id], Decimal("1000.0000"))
+        self.assertEqual(fmb[self.bob.id], Decimal("400.0000"))
+
+        # fund_balances — many funds at once
+        fb = fund_balances("contribution", [77, 78])
+        self.assertEqual(fb[77], Decimal("1400.0000"))
+        self.assertEqual(fb[78], Decimal("50.0000"))
+
     def test_non_positive_amounts_rejected(self):
         with self.assertRaises(ValueError):
             pm.contribution_lines(member=self.alice, fund_type="contribution",

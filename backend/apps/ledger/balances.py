@@ -75,6 +75,61 @@ def fund_balance(fund_type: str, fund_id: int) -> Decimal:
     return (agg['c'] or Decimal('0')) - (agg['d'] or Decimal('0'))
 
 
+def fund_balances(fund_type: str, fund_ids) -> dict:
+    """{fund_id: pool balance} for many funds of one type, in one query."""
+    out: dict = {}
+    for row in (
+        AccountBalance.objects
+        .filter(account__fund_type=fund_type, account__fund_id__in=list(fund_ids))
+        .values('account__fund_id')
+        .annotate(d=Sum('debit_total'), c=Sum('credit_total'))
+    ):
+        out[row['account__fund_id']] = (row['c'] or Decimal('0')) - (row['d'] or Decimal('0'))
+    return out
+
+
+def member_fund_balance(user, fund_type: str, fund_id: int) -> Decimal:
+    """A single member's signed sub-ledger balance in a fund (0 if none).
+
+    Read-only: never creates an Account (unlike ``coa.member_fund_account``), so
+    it is safe to call from serializers / GET paths. Member sub-ledgers for
+    contribution / welfare / shares are LIABILITY (credit-normal).
+    """
+    agg = AccountBalance.objects.filter(
+        account__owner=user, account__fund_type=fund_type, account__fund_id=fund_id,
+    ).aggregate(d=Sum('debit_total'), c=Sum('credit_total'))
+    return (agg['c'] or Decimal('0')) - (agg['d'] or Decimal('0'))
+
+
+def user_fund_balances(user, fund_type: str, fund_ids=None) -> dict:
+    """{fund_id: signed balance} for one user across many funds, in one query.
+
+    Used to avoid N+1 when serialising a list of contributions for a user.
+    """
+    qs = AccountBalance.objects.filter(account__owner=user, account__fund_type=fund_type)
+    if fund_ids is not None:
+        qs = qs.filter(account__fund_id__in=list(fund_ids))
+    out: dict = {}
+    for row in qs.values('account__fund_id').annotate(
+        d=Sum('debit_total'), c=Sum('credit_total')
+    ):
+        out[row['account__fund_id']] = (row['c'] or Decimal('0')) - (row['d'] or Decimal('0'))
+    return out
+
+
+def fund_member_balances(fund_type: str, fund_id: int) -> dict:
+    """{user_id: signed balance} for every member of one fund, in one query."""
+    out: dict = {}
+    for row in (
+        AccountBalance.objects
+        .filter(account__fund_type=fund_type, account__fund_id=fund_id)
+        .values('account__owner_id')
+        .annotate(d=Sum('debit_total'), c=Sum('credit_total'))
+    ):
+        out[row['account__owner_id']] = (row['c'] or Decimal('0')) - (row['d'] or Decimal('0'))
+    return out
+
+
 @transaction.atomic
 def recompute_account_balance(account: Account) -> AccountBalance:
     """Rebuild the projection for one account from its lines. Repair primitive."""

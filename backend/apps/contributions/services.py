@@ -24,8 +24,7 @@ from django.core.exceptions import ValidationError, PermissionDenied
 from django.utils import timezone
 
 from .models import (
-    Contribution, ContributionParticipant, ContributionAccount,
-    ContributionBalance, ContributionTransaction,
+    Contribution, ContributionParticipant, ContributionTransaction,
     SharesFund, ShareHolding,
     ROSCASlot, DisbursementRequest, DisbursementVote,
     WelfareFund, WelfareContribution, WelfareClaim, WelfareVote,
@@ -103,7 +102,6 @@ class ContributionService:
         # it blocked legitimate solo/open contributions and crashed on
         # percentage thresholds (it queried participants via a fake proxy object).
         contribution = Contribution.objects.create(created_by=user, **validated_data)
-        ContributionAccount.objects.create(contribution=contribution)
 
         ContributionParticipant.objects.create(contribution=contribution, user=user, is_active=True)
 
@@ -236,7 +234,7 @@ class ContributionService:
 
     @staticmethod
     def get_user_contributions(user, active_only=True):
-        from django.db.models import Count, Q, Prefetch
+        from django.db.models import Count, Q
         qs = Contribution.objects.filter(
             participants__user=user, participants__is_active=True
         ).distinct()
@@ -245,12 +243,6 @@ class ContributionService:
         return qs.annotate(
             active_participant_count=Count(
                 'participants', filter=Q(participants__is_active=True), distinct=True
-            )
-        ).prefetch_related(
-            Prefetch(
-                'balances',
-                queryset=ContributionBalance.objects.filter(user=user),
-                to_attr='_user_balance_list',
             )
         ).order_by('-created_at')
 
@@ -331,21 +323,6 @@ class ContributionService:
             transaction_type='CONTRIBUTION',
             mpesa_receipt=mpesa_receipt or None,
         )
-
-        # ── Legacy balance updates via F() — safe under concurrency ───────────
-        Contribution.objects.filter(pk=contribution.pk).update(
-            current_amount=F('current_amount') + Decimal(str(amount))
-        )
-        ContributionAccount.objects.filter(contribution=contribution).update(
-            total_amount=F('total_amount') + Decimal(str(amount))
-        )
-        ContributionBalance.objects.update_or_create(
-            contribution=contribution, user=user,
-            defaults={},  # ensure row exists
-        )
-        ContributionBalance.objects.filter(
-            contribution=contribution, user=user
-        ).update(amount=F('amount') + Decimal(str(amount)))
 
         # ── FinancialTransaction (orchestration) ──────────────────────────────
         ft, _ = create_fin_transaction(
@@ -493,13 +470,6 @@ class ROSCAService:
             note=f"ROSCA payout — cycle {current_slot.cycle_number}, slot {current_slot.slot_order}",
         )
 
-        # Legacy balance update via F()
-        Contribution.objects.filter(pk=contribution.pk).update(current_amount=Decimal('0'))
-        ContributionAccount.objects.filter(contribution=contribution).update(
-            total_amount=Decimal('0')
-        )
-
-        # Ledger DEBIT entry
         idem_key = f"rosca-payout-{contribution.id}-cycle{current_slot.cycle_number}-slot{current_slot.slot_order}"
         ft, _ = create_fin_transaction(
             idempotency_key=idem_key,
@@ -713,15 +683,7 @@ class DisbursementService:
             created_by=req.requested_by,
         )
 
-        # ── Legacy balance update via F() ─────────────────────────────────────
-        Contribution.objects.filter(pk=contribution.pk).update(
-            current_amount=F('current_amount') - req.amount
-        )
-        ContributionAccount.objects.filter(contribution=contribution).update(
-            total_amount=F('total_amount') - req.amount
-        )
-
-        # ── Legacy WITHDRAWAL record ──────────────────────────────────────────
+        # ── WITHDRAWAL record (transaction history) ───────────────────────────
         ContributionTransaction.objects.create(
             contribution=contribution,
             user=req.requested_by,
@@ -773,13 +735,8 @@ class WelfareService:
         fund = WelfareFund.objects.select_for_update().get(id=fund_id)
         WelfareContribution.objects.create(fund=fund, user=user, amount=amount)
 
-        # Legacy balance update via F()
-        WelfareFund.objects.filter(pk=fund.pk).update(
-            balance=F('balance') + Decimal(str(amount))
-        )
-
-        # Ledger dual-write — key anchored to the M-Pesa receipt (externally-assigned,
-        # immutable). Retries with the same receipt are no-ops via get_or_create.
+        # Key anchored to the M-Pesa receipt (externally-assigned, immutable);
+        # retries with the same receipt are no-ops via post_journal idempotency.
         idem_key = f"welfare-contrib-{fund_id}-{user.id}-{mpesa_receipt}"
         ft, _ = create_fin_transaction(
             idempotency_key=idem_key,
@@ -940,11 +897,6 @@ class WelfareService:
             created_by=claim.claimant,
         )
 
-        # Legacy balance update via F()
-        WelfareFund.objects.filter(pk=fund.pk).update(
-            balance=F('balance') - claim.amount_requested
-        )
-
         # Mark claim APPROVED (→ DISBURSED when B2C callback confirms)
         claim.transition_to('APPROVED', approved_at=timezone.now())
 
@@ -1102,13 +1054,6 @@ class EmergencyAdvanceService:
             created_by=admin_user,
         )
 
-        # Legacy balance deduction (was MISSING before — critical bug fix)
-        Contribution.objects.filter(pk=contribution.pk).update(
-            current_amount=F('current_amount') - advance.amount
-        )
-        ContributionAccount.objects.filter(contribution=contribution).update(
-            total_amount=F('total_amount') - advance.amount
-        )
         ContributionTransaction.objects.create(
             contribution=contribution,
             user=advance.borrower,
@@ -1228,14 +1173,6 @@ class EmergencyAdvanceService:
             amount=amount,
             transaction_type='REPAYMENT',
             note=f"Advance repayment — advance #{advance_id}",
-        )
-
-        # Legacy balance credit via F()
-        Contribution.objects.filter(pk=contribution.pk).update(
-            current_amount=F('current_amount') + amount
-        )
-        ContributionAccount.objects.filter(contribution=contribution).update(
-            total_amount=F('total_amount') + amount
         )
 
         return advance
@@ -1362,13 +1299,6 @@ class StandingOrderService:
             created_by=user,
         )
 
-        # Legacy balance update via F()
-        Contribution.objects.filter(pk=contribution.pk).update(
-            current_amount=F('current_amount') - order.amount
-        )
-        ContributionAccount.objects.filter(contribution=contribution).update(
-            total_amount=F('total_amount') - order.amount
-        )
         ContributionTransaction.objects.create(
             contribution=contribution,
             user=user,

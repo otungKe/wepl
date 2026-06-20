@@ -342,17 +342,12 @@ def _update_context_on_failure(ft) -> None:
             )
 
         elif ft.context_type == 'welfare_claim':
-            from django.db.models import F
-            from apps.contributions.models import WelfareClaim, WelfareFund
+            from apps.contributions.models import WelfareClaim
             try:
+                # Ledger funds are restored by reverse_financial_transaction;
+                # reset the claim so it can be retried.
                 claim = WelfareClaim.objects.get(id=ft.context_id)
                 claim.transition_to('PENDING')
-                # Keep the mutable WelfareFund.balance cache in sync (the ledger
-                # is already restored by reverse_financial_transaction). This
-                # cache is removed in P0-07 Milestone 2.
-                WelfareFund.objects.filter(pk=claim.fund_id).update(
-                    balance=F('balance') + claim.amount_requested
-                )
             except (WelfareClaim.DoesNotExist, TransitionError):
                 pass
             logger.error(

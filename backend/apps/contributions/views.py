@@ -134,9 +134,9 @@ class CommunityContributionsView(APIView):
     permission_classes = [IsActiveSession]
 
     def get(self, request, community_id):
-        from django.db.models import Count, Q, Prefetch
+        from django.db.models import Count, Q
         from apps.communities.models import Community, CommunityMembership
-        from .models import ContributionBalance
+        from apps.ledger.balances import user_fund_balances
 
         community = get_object_or_404(Community, id=community_id)
         is_member = (
@@ -162,17 +162,14 @@ class CommunityContributionsView(APIView):
             active_participant_count=Count(
                 'participants', filter=Q(participants__is_active=True), distinct=True
             )
-        ).prefetch_related(
-            Prefetch(
-                'balances',
-                queryset=ContributionBalance.objects.filter(user=request.user),
-                to_attr='_user_balance_list',
-            )
         ).order_by('-created_at')
         paginator = FinancialCursorPagination()
         page = paginator.paginate_queryset(contributions, request)
+        user_balances = user_fund_balances(
+            request.user, 'contribution', [c.id for c in page])
         return paginator.get_paginated_response(
-            ContributionSerializer(page, many=True, context={'request': request}).data
+            ContributionSerializer(page, many=True, context={
+                'request': request, 'user_balances': user_balances}).data
         )
 
 
@@ -180,25 +177,22 @@ class OpenContributionsView(APIView):
     permission_classes = [IsActiveSession]
 
     def get(self, request):
-        from django.db.models import Count, Q, Prefetch
-        from .models import ContributionBalance
+        from django.db.models import Count, Q
+        from apps.ledger.balances import user_fund_balances
         contributions = Contribution.objects.filter(
             visibility='open', is_active=True
         ).annotate(
             active_participant_count=Count(
                 'participants', filter=Q(participants__is_active=True), distinct=True
             )
-        ).prefetch_related(
-            Prefetch(
-                'balances',
-                queryset=ContributionBalance.objects.filter(user=request.user),
-                to_attr='_user_balance_list',
-            )
         ).order_by('-created_at')
         paginator = FinancialCursorPagination()
         page = paginator.paginate_queryset(contributions, request)
+        user_balances = user_fund_balances(
+            request.user, 'contribution', [c.id for c in page])
         return paginator.get_paginated_response(
-            ContributionSerializer(page, many=True, context={'request': request}).data
+            ContributionSerializer(page, many=True, context={
+                'request': request, 'user_balances': user_balances}).data
         )
 
 
@@ -256,10 +250,13 @@ class DiscoverCampaignsView(APIView):
 
         today = timezone.now().date()
 
+        from apps.ledger.balances import fund_balances
+        pool_by_id = fund_balances('contribution', [c.id for c in campaigns])
+
         results = []
         for c in campaigns:
             target  = float(c.target_amount) if c.target_amount else None
-            current = float(c.current_amount)
+            current = float(pool_by_id.get(c.id, 0))
             progress_pct = (
                 round(current / target * 100, 1) if target and target > 0 else None
             )

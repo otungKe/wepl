@@ -58,7 +58,6 @@ class Contribution(models.Model):
     invite_code = models.CharField(max_length=20, unique=True, default=_generate_invite_code)
 
     target_amount        = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
-    current_amount       = models.DecimalField(max_digits=12, decimal_places=2, default=0)
     # Per-member personal target: amount each individual participant should
     # reach by the end date. Separate from target_amount (the pool total).
     member_target_amount = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
@@ -201,28 +200,6 @@ class ContributionParticipant(models.Model):
         return f"{self.user.phone_number} -> {self.contribution.title}"
 
 
-class ContributionAccount(models.Model):
-    contribution = models.OneToOneField(
-        Contribution, on_delete=models.CASCADE, related_name='account'
-    )
-    total_amount = models.DecimalField(max_digits=12, decimal_places=2, default=0)
-    updated_at   = models.DateTimeField(auto_now=True)
-
-
-class ContributionBalance(models.Model):
-    contribution = models.ForeignKey(
-        Contribution, on_delete=models.CASCADE, related_name='balances'
-    )
-    user   = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE)
-    amount = models.DecimalField(max_digits=12, decimal_places=2, default=0)
-
-    class Meta:
-        unique_together = ['contribution', 'user']
-        indexes = [
-            models.Index(fields=['contribution', 'user'], name='contrib_bal_user_idx'),
-        ]
-
-
 class ContributionTransaction(models.Model):
     TRANSACTION_TYPES = (
         ('CONTRIBUTION', 'Contribution'),
@@ -257,7 +234,6 @@ class SharesFund(models.Model):
     )
     name        = models.CharField(max_length=255, default='Shares Fund')
     share_price = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal('100.00'))
-    total_pool  = models.DecimalField(max_digits=12, decimal_places=2, default=0)
     created_at  = models.DateTimeField(auto_now_add=True)
 
     def __str__(self):
@@ -275,9 +251,11 @@ class ShareHolding(models.Model):
 
     @property
     def ownership_pct(self):
-        if not self.shares_fund.total_pool:
+        from apps.ledger.balances import fund_balance
+        pool = fund_balance('shares', self.shares_fund_id)
+        if not pool:
             return Decimal('0')
-        return (self.total_contributed / self.shares_fund.total_pool * 100).quantize(Decimal('0.01'))
+        return (self.total_contributed / pool * 100).quantize(Decimal('0.01'))
 
     def __str__(self):
         return f"{self.user.phone_number} | {self.shares_count} shares"
@@ -496,7 +474,6 @@ class WelfareFund(models.Model):
         related_name='welfare_funds', null=True, blank=True,
     )
     name                 = models.CharField(max_length=255, default='Welfare Fund')
-    balance              = models.DecimalField(max_digits=12, decimal_places=2, default=0)
     monthly_contribution = models.DecimalField(
         max_digits=12, decimal_places=2, default=0,
     )

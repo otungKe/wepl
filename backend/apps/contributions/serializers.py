@@ -1,5 +1,7 @@
 from rest_framework import serializers
 
+from apps.ledger.balances import fund_balance, member_fund_balance
+
 from .models import (
     Contribution, ContributionParticipant, ContributionTransaction,
     ROSCASlot, DisbursementRequest, DisbursementVote,
@@ -15,6 +17,8 @@ from .models import (
 class ContributionSerializer(serializers.ModelSerializer):
     created_by        = serializers.CharField(source='created_by.phone_number', read_only=True)
     participant_count = serializers.SerializerMethodField()
+    # Ledger-derived pool balance (replaces the removed mutable current_amount column)
+    current_amount    = serializers.SerializerMethodField()
     user_balance      = serializers.SerializerMethodField()
     voting_label      = serializers.SerializerMethodField()
     my_rosca_slot     = serializers.SerializerMethodField()
@@ -41,8 +45,10 @@ class ContributionSerializer(serializers.ModelSerializer):
         ]
         extra_kwargs = {
             'invite_code':    {'read_only': True},
-            'current_amount': {'read_only': True},
         }
+
+    def get_current_amount(self, obj):
+        return str(fund_balance('contribution', obj.id))
 
     def get_participant_count(self, obj):
         # Use annotation if present (injected by list views via annotate())
@@ -55,12 +61,12 @@ class ContributionSerializer(serializers.ModelSerializer):
         request = self.context.get('request')
         if not request or not request.user.is_authenticated:
             return None
-        # Use prefetch if present (injected by list views via Prefetch(..., to_attr=))
-        prefetched = getattr(obj, '_user_balance_list', None)
-        if prefetched is not None:
-            return str(prefetched[0].amount) if prefetched else '0.00'
-        balance = obj.balances.filter(user=request.user).first()
-        return str(balance.amount) if balance else '0.00'
+        # List views inject a {contribution_id: balance} dict via context to avoid
+        # N+1; detail views fall back to a single read.
+        bulk = self.context.get('user_balances')
+        if bulk is not None:
+            return str(bulk.get(obj.id, '0'))
+        return str(member_fund_balance(request.user, 'contribution', obj.id))
 
     def get_voting_label(self, obj):
         labels = {
@@ -149,10 +155,16 @@ class ContributionParticipantSerializer(serializers.ModelSerializer):
     def get_name(self, obj):
         return obj.user.name or None
 
+    def _member_balance(self, obj):
+        # Views may inject {user_id: balance} via context to avoid N+1.
+        bulk = self.context.get('member_balances')
+        if bulk is not None:
+            return bulk.get(obj.user_id, 0)
+        return member_fund_balance(obj.user, 'contribution', obj.contribution_id)
+
     def get_balance(self, obj):
         """How much this member has contributed to this contribution so far."""
-        b = obj.contribution.balances.filter(user=obj.user).first()
-        return str(b.amount) if b else '0.00'
+        return str(self._member_balance(obj))
 
     def get_progress_pct(self, obj):
         """
@@ -162,9 +174,7 @@ class ContributionParticipantSerializer(serializers.ModelSerializer):
         target = obj.contribution.member_target_amount
         if not target or target <= 0:
             return None
-        b = obj.contribution.balances.filter(user=obj.user).first()
-        amount = b.amount if b else 0
-        return round(float(amount) / float(target) * 100, 1)
+        return round(float(self._member_balance(obj)) / float(target) * 100, 1)
 
     class Meta:
         model = ContributionParticipant
@@ -215,10 +225,15 @@ class ShareHoldingSerializer(serializers.ModelSerializer):
 class SharesFundSerializer(serializers.ModelSerializer):
     holdings     = ShareHoldingSerializer(many=True, read_only=True)
     total_shares = serializers.SerializerMethodField()
+    # Ledger-derived (replaces the removed mutable total_pool column)
+    total_pool   = serializers.SerializerMethodField()
 
     class Meta:
         model = SharesFund
         fields = ['id', 'community', 'name', 'share_price', 'total_pool', 'total_shares', 'holdings', 'created_at']
+
+    def get_total_pool(self, obj):
+        return str(fund_balance('shares', obj.id))
 
     def get_total_shares(self, obj):
         from django.db.models import Sum
@@ -276,6 +291,11 @@ class DisbursementRequestSerializer(serializers.ModelSerializer):
 
 class WelfareFundSerializer(serializers.ModelSerializer):
     is_admin = serializers.SerializerMethodField()
+    # Ledger-derived (replaces the removed mutable balance column)
+    balance  = serializers.SerializerMethodField()
+
+    def get_balance(self, obj):
+        return str(fund_balance('welfare', obj.id))
 
     def get_is_admin(self, obj):
         """
@@ -299,7 +319,6 @@ class WelfareFundSerializer(serializers.ModelSerializer):
     class Meta:
         model = WelfareFund
         fields = ['id', 'community', 'name', 'balance', 'monthly_contribution', 'created_at', 'is_admin']
-        read_only_fields = ['balance', 'is_admin']
 
 
 class WelfareContributionSerializer(serializers.ModelSerializer):
