@@ -1,5 +1,6 @@
 import logging
 from celery import shared_task
+from celery.exceptions import MaxRetriesExceededError
 
 logger = logging.getLogger(__name__)
 
@@ -29,8 +30,8 @@ def poll_mpesa_stk_status(self, checkout_request_id: str):
         return
 
     try:
-        from apps.mpesa.services import MpesaService
-        MpesaService.query_stk_status(checkout_request_id)
+        from apps.payments.providers.registry import get_provider
+        result = get_provider().query_status(provider_ref=checkout_request_id)
     except Exception as exc:
         logger.warning(
             "poll_mpesa_stk_status: query failed for %s (%s), retrying",
@@ -38,10 +39,31 @@ def poll_mpesa_stk_status(self, checkout_request_id: str):
         )
         raise self.retry(exc=exc)
 
-    # Re-fetch after query
     stk.refresh_from_db()
-    if stk.status == 'PENDING' and self.request.retries >= self.max_retries - 1:
+    if stk.status != 'PENDING':
+        return  # resolved by the callback while we were polling
+
+    if result.state == 'failed':
+        stk.status = 'FAILED'
+        stk.result_desc = 'M-Pesa reported the payment failed.'
+        stk.save(update_fields=['status', 'result_desc'])
+        logger.info("poll_mpesa_stk_status: %s failed", checkout_request_id)
+        return
+    if result.state == 'success':
+        # Query says success but the callback hasn't arrived yet to finalise.
+        # Stop polling — the callback will complete the flow.
+        logger.info(
+            "poll_mpesa_stk_status: %s succeeded per query; awaiting callback to finalise",
+            checkout_request_id,
+        )
+        return
+
+    # Still pending — retry; on the final attempt Celery raises
+    # MaxRetriesExceededError, which we catch to mark the request timed out.
+    try:
+        raise self.retry()
+    except MaxRetriesExceededError:
         stk.status = 'FAILED'
         stk.result_desc = 'Timed out waiting for M-Pesa confirmation.'
-        stk.save()
+        stk.save(update_fields=['status', 'result_desc'])
         logger.error("poll_mpesa_stk_status: timed out for %s", checkout_request_id)

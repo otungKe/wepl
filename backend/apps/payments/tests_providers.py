@@ -102,6 +102,15 @@ class MpesaProviderTests(SimpleTestCase):
         self.assertIsNone(ev.receipt)
         self.assertEqual(ev.result_desc, "cancelled")
 
+    def test_query_status_maps_result_code(self):
+        cases = [({"ResultCode": "0"}, "success"),
+                 ({"ResultCode": "1032"}, "failed"),
+                 ({}, "pending")]
+        for resp, expected in cases:
+            with patch("apps.payments.providers.mpesa.MpesaService.query_stk_status",
+                       return_value=resp):
+                self.assertEqual(self.p.query_status(provider_ref="ws_CO_1").state, expected)
+
     def test_parse_b2c_success_result(self):
         payload = {"Result": {
             "ConversationID": "AG_1", "ResultCode": 0, "ResultDesc": "done",

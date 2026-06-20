@@ -14,6 +14,7 @@ from apps.mpesa.services import MpesaService
 
 from . import (
     CallbackEvent, CollectionResult, PaymentProvider, PaymentProviderError, PayoutResult,
+    StatusResult,
 )
 
 logger = logging.getLogger(__name__)
@@ -51,6 +52,17 @@ class MpesaProvider(PaymentProvider):
             provider_ref=resp.get('ConversationID', ''),
             raw=resp,
         )
+
+    def query_status(self, *, provider_ref: str) -> StatusResult:
+        resp = MpesaService.query_stk_status(provider_ref)
+        code = str(resp.get('ResultCode', ''))
+        if code == '0':
+            state = 'success'
+        elif code == '':
+            state = 'pending'      # still under processing / no definitive result yet
+        else:
+            state = 'failed'
+        return StatusResult(state=state, raw=resp)
 
     def parse_callback(self, payload: dict, *, kind: str) -> CallbackEvent:
         if kind == 'collection':

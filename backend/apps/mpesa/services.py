@@ -105,6 +105,31 @@ class MpesaService:
         return resp.json()
 
     @staticmethod
+    def query_stk_status(checkout_request_id: str) -> dict:
+        """Query an STK push's status (Daraja stkpushquery). Returns raw response."""
+        token = MpesaService._get_access_token()
+        timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
+        shortcode = settings.MPESA_SHORTCODE
+        passkey = settings.MPESA_PASSKEY
+        password = base64.b64encode(
+            f"{shortcode}{passkey}{timestamp}".encode()
+        ).decode()
+        payload = {
+            "BusinessShortCode": shortcode,
+            "Password": password,
+            "Timestamp": timestamp,
+            "CheckoutRequestID": checkout_request_id,
+        }
+        resp = requests.post(
+            f"{settings.MPESA_BASE_URL}/mpesa/stkpushquery/v1/query",
+            json=payload,
+            headers={"Authorization": f"Bearer {token}"},
+            timeout=15,
+        )
+        resp.raise_for_status()
+        return resp.json()
+
+    @staticmethod
     def reconcile_c2b(transaction) -> bool:
         """
         Match an inbound C2B payment to a contribution and user, then
