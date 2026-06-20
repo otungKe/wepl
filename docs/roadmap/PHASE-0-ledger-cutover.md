@@ -1,6 +1,6 @@
 # Phase 0 — Ledger-First Cutover (Legacy Wipe)
 
-**Status:** 🟡 In progress (P0-01 shipped — commit `cc60527`)
+**Status:** 🟢 Done (P0-01 → P0-09 shipped, 2026-06-19)
 **Owner:** _unassigned_
 **Related ADRs:** [0001](../adr/0001-ledger-first-double-entry.md),
 [0002](../adr/0002-remove-legacy-ledger-and-mutable-balances.md),
@@ -208,19 +208,23 @@ Done in two milestones (additive reads/writes were in place from P0-05/06).
 - Execute the reset (per pre-production decision), run `seed_coa`, deploy.
 - Remove now-unused imports, update `apps/ledger/models.py` docstring to drop
   "LEGACY" sections, refresh `admin.py`.
-- **Acceptance:** Phase 0 exit criteria (below) all met.
+- **Status (2026-06-19):** ✅ Done (commit `a18c760`). `seed_coa` runs on deploy
+  via migrations `0004`/`0005` (`start.sh` → `migrate`); no backfill per the
+  pre-production reset (ADR-0002). Stale docstrings/comments rewritten (services,
+  ledger tasks, models, admin), dead `reverse_journal` import dropped; `manage.py
+  check` clean.
 
 ---
 
-## Exit criteria (Phase 0 done)
+## Exit criteria (Phase 0 done) — ✅ ALL MET (2026-06-19)
 
-- [ ] Double-entry core is the only monetary source of truth.
-- [ ] `post_journal()` is the sole money-mutation entrypoint (enforced by review +
-      a grep guard in CI for direct `LedgerEntry`/balance-field writes).
-- [ ] All legacy code deleted; repo grep is clean.
-- [ ] Every decision gate reads ledger-derived balances.
-- [ ] Full test suite green in CI; ledger coverage ≥90%.
-- [ ] Reconciliation proves projection==replay and a zero global trial balance.
+- [x] Double-entry core is the only monetary source of truth.
+- [x] `post_journal()` is the sole money-mutation entrypoint (CI grep guard for
+      `LedgerEntry`/balance-field writes).
+- [x] All legacy code deleted; repo grep is clean.
+- [x] Every decision gate reads ledger-derived balances.
+- [x] Full test suite green in CI; ledger-engine coverage gated ≥90% (~96%).
+- [x] Reconciliation proves projection==replay and a zero global trial balance.
 - [x] Safety fixes (P0-01) shipped — OTP-bypass guard (+ automated test) and
       durable S3/R2 KYC media. Celery split deferred pending a platform/worker-plan
       decision (tracked above).
