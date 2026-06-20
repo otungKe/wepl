@@ -208,6 +208,11 @@ CELERY_BEAT_SCHEDULE = {
         'task': 'apps.contributions.tasks.notify_overdue_advances',
         'schedule': crontab(minute=0, hour=9),
     },
+    # P2-02: Outbox relay — safety net for events missed by fast-path on_commit task
+    'relay-outbox-events': {
+        'task': 'apps.core.tasks.relay_outbox_events',
+        'schedule': crontab(minute='*/1'),  # every minute; fast-path handles latency
+    },
 }
 
 # ─── Payment rail selection (apps.payments.providers.registry) ────────────────

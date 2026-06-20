@@ -22,6 +22,7 @@ def dispatch_notification(
     user_id,
     title,
     message,
+    outbox_event_id=None,  # P2-03: UUID for idempotent dedupe across relay retries
     community_id=None,
     conversation_id=None,
     contribution_id=None,
@@ -31,9 +32,8 @@ def dispatch_notification(
     """
     Convert every domain event into an async Celery notification task.
 
-    The import of send_notification is deferred to the function body so this
-    module can be imported at AppConfig.ready() time without triggering circular
-    imports (apps may not be fully loaded at module-import time).
+    outbox_event_id is forwarded to the task so it can deduplicate on it,
+    preventing duplicate notifications when the relay re-delivers an event.
     """
     from .tasks import send_notification
 
@@ -46,4 +46,5 @@ def dispatch_notification(
         conversation_id=conversation_id,
         contribution_id=contribution_id,
         join_request_id=join_request_id,
+        outbox_event_id=outbox_event_id,
     )

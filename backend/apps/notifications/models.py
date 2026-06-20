@@ -70,6 +70,9 @@ class Notification(models.Model):
     contribution_id = models.IntegerField(null=True, blank=True)
     join_request_id = models.IntegerField(null=True, blank=True)
 
+    # P2-03: ties back to OutboxEvent.id for at-least-once → effectively-once
+    source_event_id = models.UUIDField(null=True, blank=True, db_index=True)
+
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:

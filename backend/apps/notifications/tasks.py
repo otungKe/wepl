@@ -23,16 +23,30 @@ def send_notification(
     conversation_id=None,
     contribution_id=None,
     join_request_id=None,
+    outbox_event_id=None,  # P2-03: UUID from OutboxEvent for idempotent dedupe
 ):
     """
     Create a Notification record and dispatch an FCM push notification to all
     of the user's registered devices.
 
     Retries up to 3 times on transient failure with 30-second backoff.
+    When outbox_event_id is provided, skips if a Notification with this
+    source_event_id already exists (relay at-least-once → effectively-once).
     """
     try:
+        from .models import NotificationPreferences, NOTIF_CATEGORY_MAP, Notification
+
+        # ── Idempotency gate (P2-03) ──────────────────────────────────────────
+        if outbox_event_id and Notification.objects.filter(
+            source_event_id=outbox_event_id
+        ).exists():
+            logger.debug(
+                "send_notification: skipping duplicate for outbox event %s", outbox_event_id
+            )
+            return
+
         # ── Check user's notification preferences ─────────────────────────────
-        from .models import NotificationPreferences, NOTIF_CATEGORY_MAP
+
         prefs, _ = NotificationPreferences.objects.get_or_create(user_id=user_id)
 
         if not prefs.push_enabled:
@@ -59,6 +73,7 @@ def send_notification(
             conversation_id=conversation_id,
             contribution_id=contribution_id,
             join_request_id=join_request_id,
+            source_event_id=outbox_event_id,
         )
         # Best-effort push — failure here must not retry the DB write above.
         _push_to_devices.delay(
