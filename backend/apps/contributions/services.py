@@ -4,9 +4,9 @@ Contribution business logic.
 Key architectural principles enforced here:
   - M-Pesa HTTP calls are NEVER made inside @transaction.atomic blocks.
     They are dispatched to Celery tasks via transaction.on_commit().
-  - All balance updates use F() expressions — no read-modify-write.
-  - Ledger entries are written in dual-write mode alongside legacy balance fields.
-    (Legacy fields will be removed once the ledger is confirmed as primary read source.)
+  - All money movement goes through the double-entry ledger via post_journal()
+    (apps.ledger). Balances are derived from immutable journal lines — there are
+    no mutable balance columns.
   - Idempotency keys are used for every financial operation.
   - Authorization uses FinancialPermissions — one implementation, not six.
 """
@@ -40,7 +40,7 @@ from apps.ledger.models import FinancialTransaction, JournalEntry
 # P0-05 strangler: post double-entry journals alongside the legacy writes. The
 # ledger becomes a parallel source of truth now; reads/gates flip to it in P0-06
 # and the legacy writes are deleted in P0-07.
-from apps.ledger.posting import post_journal, reverse_journal
+from apps.ledger.posting import post_journal
 from apps.ledger import posting_map as _pm
 from apps.ledger.money import Money
 # P0-06: read pool/member balances from the ledger (the authoritative source).
@@ -865,7 +865,7 @@ class WelfareService:
         if fund_balance('welfare', fund.id) < claim.amount_requested:
             raise ValidationError("Insufficient welfare fund balance.")
 
-        # ── Reserve funds: DEBIT ledger + legacy balance update ───────────────
+        # ── Reserve funds: post the payout journal (cash leaves on B2C success) ─
         idem_key = f"welfare-claim-{claim.id}"
         ft, created = create_fin_transaction(
             idempotency_key=idem_key,
@@ -1021,7 +1021,7 @@ class EmergencyAdvanceService:
         if fund_balance('contribution', contribution.id) < advance.amount:
             raise ValidationError("Insufficient pool balance to cover this advance.")
 
-        # ── Reserve funds: DEBIT ledger + legacy balance update ───────────────
+        # ── Reserve funds: post the payout journal (cash leaves on B2C success) ─
         idem_key = f"advance-disb-{advance.id}"
         ft, created = create_fin_transaction(
             idempotency_key=idem_key,

@@ -5,7 +5,8 @@ All outgoing M-Pesa B2C payments are dispatched through here, so that:
   - DB transactions are never held open while HTTP calls are in-flight
   - State transitions are atomic (UPDATE WHERE state = current)
   - Retries are idempotent via FinancialTransaction.idempotency_key
-  - Failures write reversal ledger entries so pool balances stay correct
+  - Failures post a reversing journal (reverse_financial_transaction) so pool
+    balances stay correct
   - The B2C async result (from B2CResultView) handles SUCCESS/FAILED resolution
 
 P1-07 fix: _handle_payout_failure is now called ONLY from on_failure (after
