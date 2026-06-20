@@ -1,5 +1,6 @@
 import logging
 from celery import shared_task
+from celery.exceptions import MaxRetriesExceededError
 
 logger = logging.getLogger(__name__)
 
@@ -49,15 +50,20 @@ def poll_mpesa_stk_status(self, checkout_request_id: str):
         logger.info("poll_mpesa_stk_status: %s failed", checkout_request_id)
         return
     if result.state == 'success':
-        # STK succeeded; STKCallbackView posts the contribution + records the
-        # receipt. Stop polling and let it finalise.
+        # Query says success but the callback hasn't arrived yet to finalise.
+        # Stop polling — the callback will complete the flow.
+        logger.info(
+            "poll_mpesa_stk_status: %s succeeded per query; awaiting callback to finalise",
+            checkout_request_id,
+        )
         return
 
-    # Still pending — keep polling, then time out on the final attempt.
-    if self.request.retries >= self.max_retries - 1:
+    # Still pending — retry; on the final attempt Celery raises
+    # MaxRetriesExceededError, which we catch to mark the request timed out.
+    try:
+        raise self.retry()
+    except MaxRetriesExceededError:
         stk.status = 'FAILED'
         stk.result_desc = 'Timed out waiting for M-Pesa confirmation.'
-        stk.save()
+        stk.save(update_fields=['status', 'result_desc'])
         logger.error("poll_mpesa_stk_status: timed out for %s", checkout_request_id)
-        return
-    raise self.retry()
