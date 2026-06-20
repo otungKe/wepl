@@ -77,6 +77,7 @@ class MpesaProvider(PaymentProvider):
             success=success,
             provider_ref=cb.get('CheckoutRequestID', ''),
             result_desc=cb.get('ResultDesc', ''),
+            code='' if result_code is None else str(result_code),
             receipt=receipt,
             amount=amount,
             phone=phone,
@@ -92,12 +93,13 @@ class MpesaProvider(PaymentProvider):
         if success:
             params = (result.get('ResultParameters', {}) or {}).get('ResultParameter', []) or []
             meta = {p.get('Key'): p.get('Value') for p in params}
-            receipt = meta.get('TransactionReceipt')
+            receipt = meta.get('TransactionReceipt') or meta.get('TransactionID')
         return CallbackEvent(
             kind='payout',
             success=success,
-            provider_ref=result.get('ConversationID', ''),
+            provider_ref=result.get('ConversationID') or result.get('OriginatorConversationID') or '',
             result_desc=result.get('ResultDesc', ''),
+            code='' if result_code is None else str(result_code),
             receipt=receipt,
             raw=payload,
         )

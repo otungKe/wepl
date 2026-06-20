@@ -43,6 +43,7 @@ class FakeProvider(PaymentProvider):
             success=bool(payload.get('success', True)),
             provider_ref=payload.get('provider_ref', ''),
             result_desc=payload.get('result_desc', ''),
+            code=payload.get('code', ''),
             receipt=payload.get('receipt'),
             amount=payload.get('amount'),
             phone=payload.get('phone'),

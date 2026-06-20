@@ -157,19 +157,16 @@ class STKCallbackView(APIView):
     permission_classes = [SafaricomIPPermission]
 
     def post(self, request):
-        body        = request.data.get("Body", {})
-        callback    = body.get("stkCallback", {})
-        checkout_id = callback.get("CheckoutRequestID")
-        result_code = callback.get("ResultCode")
+        from apps.payments.providers.registry import get_provider
+        event       = get_provider().parse_callback(request.data, kind='collection')
+        checkout_id = event.provider_ref
 
         if not checkout_id:
             return Response({"ResultCode": 0, "ResultDesc": "Accepted"})
 
-        if result_code == 0:
+        if event.success:
             # ── Success path ───────────────────────────────────────────────────
-            metadata = callback.get("CallbackMetadata", {}).get("Item", [])
-            items    = {i["Name"]: i.get("Value") for i in metadata}
-            receipt  = items.get("MpesaReceiptNumber")
+            receipt = event.receipt
 
             # Atomic claim + deferred task dispatch.
             # on_commit ensures the task is enqueued only after the UPDATE is
@@ -206,8 +203,8 @@ class STKCallbackView(APIView):
                 status='PENDING',
             ).update(
                 status='FAILED',
-                result_code=result_code,
-                result_desc=callback.get("ResultDesc", ""),
+                result_code=int(event.code) if event.code.lstrip('-').isdigit() else None,
+                result_desc=event.result_desc,
             )
             if rows == 0:
                 logger.info(
@@ -281,12 +278,9 @@ class B2CResultView(APIView):
     permission_classes = [SafaricomIPPermission]
 
     def post(self, request):
-        body            = request.data.get("Result", {})
-        result_code     = body.get("ResultCode")
-        conversation_id = (
-            body.get("ConversationID") or
-            body.get("OriginatorConversationID")
-        )
+        from apps.payments.providers.registry import get_provider
+        event           = get_provider().parse_callback(request.data, kind='payout')
+        conversation_id = event.provider_ref
 
         if not conversation_id:
             return Response({"ResultCode": 0, "ResultDesc": "Accepted"})
@@ -302,14 +296,10 @@ class B2CResultView(APIView):
                 "falling back to legacy WelfareClaim lookup.",
                 conversation_id,
             )
-            return _legacy_b2c_result(body, conversation_id, result_code)
+            return _legacy_b2c_result(request.data.get("Result", {}), conversation_id, event.code)
 
-        if result_code == 0:
-            params  = {
-                p["Key"]: p["Value"]
-                for p in body.get("ResultParameters", {}).get("ResultParameter", [])
-            }
-            receipt = params.get("TransactionID") or params.get("TransactionReceipt", "")
+        if event.success:
+            receipt = event.receipt or ""
 
             try:
                 ft.transition_to(
@@ -326,7 +316,7 @@ class B2CResultView(APIView):
             _on_b2c_success(ft, receipt)
 
         else:
-            err = f"B2C ResultCode {result_code}: {body.get('ResultDesc', '')}"
+            err = f"B2C ResultCode {event.code}: {event.result_desc}"
             logger.error(
                 "B2CResultView: B2C failed for FT %s — %s", ft.id, err
             )

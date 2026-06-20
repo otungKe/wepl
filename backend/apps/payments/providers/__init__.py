@@ -53,6 +53,7 @@ class CallbackEvent:
     success: bool
     provider_ref: str           # correlation id matching the initiate result
     result_desc: str = ''
+    code: str = ''              # provider's native result code (string form)
     receipt: str | None = None  # rail receipt for a settled collection/payout
     amount: Decimal | None = None
     phone: str | None = None
