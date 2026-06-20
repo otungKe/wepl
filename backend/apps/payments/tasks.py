@@ -29,8 +29,8 @@ def poll_mpesa_stk_status(self, checkout_request_id: str):
         return
 
     try:
-        from apps.mpesa.services import MpesaService
-        MpesaService.query_stk_status(checkout_request_id)
+        from apps.payments.providers.registry import get_provider
+        result = get_provider().query_status(provider_ref=checkout_request_id)
     except Exception as exc:
         logger.warning(
             "poll_mpesa_stk_status: query failed for %s (%s), retrying",
@@ -38,10 +38,26 @@ def poll_mpesa_stk_status(self, checkout_request_id: str):
         )
         raise self.retry(exc=exc)
 
-    # Re-fetch after query
     stk.refresh_from_db()
-    if stk.status == 'PENDING' and self.request.retries >= self.max_retries - 1:
+    if stk.status != 'PENDING':
+        return  # resolved by the callback while we were polling
+
+    if result.state == 'failed':
+        stk.status = 'FAILED'
+        stk.result_desc = 'M-Pesa reported the payment failed.'
+        stk.save(update_fields=['status', 'result_desc'])
+        logger.info("poll_mpesa_stk_status: %s failed", checkout_request_id)
+        return
+    if result.state == 'success':
+        # STK succeeded; STKCallbackView posts the contribution + records the
+        # receipt. Stop polling and let it finalise.
+        return
+
+    # Still pending — keep polling, then time out on the final attempt.
+    if self.request.retries >= self.max_retries - 1:
         stk.status = 'FAILED'
         stk.result_desc = 'Timed out waiting for M-Pesa confirmation.'
         stk.save()
         logger.error("poll_mpesa_stk_status: timed out for %s", checkout_request_id)
+        return
+    raise self.retry()

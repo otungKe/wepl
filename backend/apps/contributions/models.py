@@ -528,7 +528,6 @@ class WelfareClaim(models.Model):
     created_at           = models.DateTimeField(auto_now_add=True)
     approved_at          = models.DateTimeField(null=True, blank=True)
     disbursed_at         = models.DateTimeField(null=True, blank=True)
-    b2c_conversation_id  = models.CharField(max_length=255, null=True, blank=True)
     mpesa_receipt        = models.CharField(max_length=50, null=True, blank=True)
 
     class Meta:

@@ -290,13 +290,11 @@ class B2CResultView(APIView):
         try:
             ft = FinancialTransaction.objects.get(mpesa_conversation_id=conversation_id)
         except FinancialTransaction.DoesNotExist:
-            # Could be a legacy B2C payment (welfare claim via old flow)
             logger.warning(
-                "B2CResultView: no FinancialTransaction with conversation_id=%s — "
-                "falling back to legacy WelfareClaim lookup.",
+                "B2CResultView: no FinancialTransaction with conversation_id=%s — ignoring.",
                 conversation_id,
             )
-            return _legacy_b2c_result(request.data.get("Result", {}), conversation_id, event.code)
+            return Response({"ResultCode": 0, "ResultDesc": "Accepted"})
 
         if event.success:
             receipt = event.receipt or ""
@@ -553,54 +551,3 @@ def _on_b2c_success(ft, receipt: str) -> None:
             ft.context_id, receipt,
         )
 
-
-def _legacy_b2c_result(body: dict, conversation_id: str, result_code: int) -> Response:
-    """
-    Fallback for B2C callbacks that predate the FinancialTransaction model.
-    Handles old-style welfare claims that stored b2c_conversation_id directly.
-    """
-    from apps.contributions.models import WelfareClaim
-    from apps.contributions.services import _notify
-
-    try:
-        claim = WelfareClaim.objects.get(b2c_conversation_id=conversation_id)
-    except WelfareClaim.DoesNotExist:
-        logger.warning(
-            "_legacy_b2c_result: no WelfareClaim with b2c_conversation_id=%s",
-            conversation_id,
-        )
-        return Response({"ResultCode": 0, "ResultDesc": "Accepted"})
-
-    if result_code == 0:
-        params  = {
-            p["Key"]: p["Value"]
-            for p in body.get("ResultParameters", {}).get("ResultParameter", [])
-        }
-        receipt = params.get("TransactionID") or params.get("TransactionReceipt", "")
-        try:
-            claim.transition_to(
-                'DISBURSED',
-                disbursed_at=timezone.now(),
-                mpesa_receipt=receipt or None,
-            )
-        except TransitionError:
-            logger.warning(
-                "_legacy_b2c_result: WelfareClaim %s already transitioned (idempotent)",
-                claim.id,
-            )
-        _notify(
-            user=claim.claimant,
-            notification_type='welfare_disbursed',
-            title="M-Pesa payment sent!",
-            message=(
-                f"KES {claim.amount_requested:,.0f} sent to your M-Pesa."
-                + (f" Receipt: {receipt}." if receipt else "")
-            ),
-        )
-    else:
-        logger.error(
-            "_legacy_b2c_result: B2C failed for claim %s — code %s",
-            claim.id, result_code,
-        )
-
-    return Response({"ResultCode": 0, "ResultDesc": "Accepted"})
