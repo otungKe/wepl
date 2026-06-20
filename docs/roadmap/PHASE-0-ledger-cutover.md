@@ -196,6 +196,13 @@ Done in two milestones (additive reads/writes were in place from P0-05/06).
 - Dashboard/log metrics: journals posted, unbalanced attempts rejected, reversal count.
 - **Acceptance:** nightly job proves projection==replay and global Σdebit==Σcredit;
   a deliberately corrupted projection is detected and auto-repaired in a test.
+- **Status (2026-06-19):** ✅ Done. `reconcile_ledger` task (beat: 2am EAT) checks
+  the global trial balance is zero and replays every account, auto-repairing
+  drifted `AccountBalance` projections; imbalance/drift logs + a Sentry alert.
+  `manage.py reconcile_ledger [--no-repair]` for on-demand / deploy-gate use.
+  Tests: clean pass, drift detect+auto-repair, report-only. Observability today is
+  structured logging (post/reversal/drift); metric counters/dashboards are future
+  work (Phase 4/8). Suite green (116), ledger gate 96%.
 
 ### P0-09 — Cutover execution & cleanup
 - Execute the reset (per pre-production decision), run `seed_coa`, deploy.
