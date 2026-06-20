@@ -70,8 +70,9 @@ class Notification(models.Model):
     contribution_id = models.IntegerField(null=True, blank=True)
     join_request_id = models.IntegerField(null=True, blank=True)
 
-    # P2-03: ties back to OutboxEvent.id for at-least-once → effectively-once
-    source_event_id = models.UUIDField(null=True, blank=True, db_index=True)
+    # Outbox idempotency: the OutboxEvent id this notification was created from.
+    # Unique so at-least-once relay redelivery is a no-op (NULL for direct creates).
+    event_id = models.BigIntegerField(null=True, blank=True, unique=True)
 
     created_at = models.DateTimeField(auto_now_add=True)
 

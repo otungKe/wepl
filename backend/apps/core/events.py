@@ -1,20 +1,16 @@
 """
-Domain event bus — transactional outbox edition (Phase 2).
+Domain event bus.
 
 Services call emit() to announce that something happened.
 They do NOT know which apps are listening or what those apps do with the event.
 
-The event is persisted to the OutboxEvent table inside the same DB transaction
-as the state change, so no event can be lost even if the process dies between
-commit and in-process dispatch.  A fast-path Celery task fires on_commit for
-low-latency delivery; the relay worker (apps.core.tasks.relay_outbox_events)
-recovers any events missed due to a crash.
+Receiver registration happens in each consumer app's AppConfig.ready()
+(e.g. apps/notifications/apps.py).
 
-Receiver registration is still done in each consumer app's AppConfig.ready()
-(e.g. apps/notifications/apps.py).  Consumers must be idempotent — they receive
-the outbox event UUID and may deduplicate on it.
+Adding a new consumer (push notifications, SMS, analytics) means adding a
+new receiver — no service code needs to change.
 
-Usage (unchanged from Phase 0):
+Usage in a service:
     from apps.core.events import emit
 
     emit(
@@ -26,58 +22,50 @@ Usage (unchanged from Phase 0):
     )
 """
 
-import logging
-
 from django.db import transaction
 from django.dispatch import Signal
 
-logger = logging.getLogger(__name__)
-
-# In-process delivery signal — consumers connect to this in AppConfig.ready().
-# Senders always pass event_type=str plus event-specific kwargs.
-# Receivers should use **kwargs to stay forward-compatible as new fields are added.
+# A single typed signal for all domain events. The outbox relay
+# (apps/core/tasks.process_outbox) re-fires this signal for each durably-stored
+# event; receivers register in their app's AppConfig.ready() and stay
+# forward-compatible by accepting **kwargs.
 domain_event = Signal()
 
 
-def emit(
-    event_type: str,
-    *,
-    user_id: int,
-    title: str,
-    message: str,
-    community_id: int | None = None,
-    conversation_id: int | None = None,
-    contribution_id: int | None = None,
-    join_request_id: int | None = None,
-) -> None:
+def emit(event_type: str, *, user_id: int, title: str, message: str,
+         community_id: int | None = None,
+         conversation_id: int | None = None,
+         contribution_id: int | None = None,
+         join_request_id: int | None = None) -> None:
     """
-    Emit a domain event durably.
+    Emit a domain event durably (transactional outbox, ADR-0006).
 
-    Writes an OutboxEvent row inside the current transaction (or its own
-    transaction if called outside one).  After commit, schedules
-    deliver_outbox_event for low-latency delivery via the in-process Signal.
-    The relay worker is the safety net for events lost to process crashes.
+    Writes an OutboxEvent row in the CURRENT transaction — atomic with the state
+    change when called inside an ``atomic`` block, so a rolled-back transaction
+    discards the event (no phantoms) and a process/broker crash never loses it.
+    The ``process_outbox`` relay delivers it at-least-once to consumers.
 
-    All payload values must be JSON-serializable primitives — never pass ORM
-    objects, which may be garbage-collected before delivery.
+    Signature is unchanged from the previous on_commit/signal implementation, so
+    all ~30 call sites are untouched. Payload values must be JSON-serialisable
+    primitives (IDs, strings, numbers) — never ORM objects.
+
+    Args:
+        event_type: Identifies the event (maps to Notification.notification_type).
+        user_id: Primary recipient of the resulting notification.
+        title / message: Notification text.
+        *_id: Optional FK hints for deep-linking.
     """
     from .models import OutboxEvent
 
-    payload = {
-        'user_id':         user_id,
-        'title':           title,
-        'message':         message,
-        'community_id':    community_id,
-        'conversation_id': conversation_id,
-        'contribution_id': contribution_id,
-        'join_request_id': join_request_id,
-    }
-
-    event = OutboxEvent.objects.create(event_type=event_type, payload=payload)
-    event_id = str(event.id)
-
-    def _schedule_delivery():
-        from apps.core.tasks import deliver_outbox_event
-        deliver_outbox_event.delay(event_id)
-
-    transaction.on_commit(_schedule_delivery)
+    OutboxEvent.objects.create(
+        event_type=event_type,
+        payload={
+            'user_id':         user_id,
+            'title':           title,
+            'message':         message,
+            'community_id':    community_id,
+            'conversation_id': conversation_id,
+            'contribution_id': contribution_id,
+            'join_request_id': join_request_id,
+        },
+    )

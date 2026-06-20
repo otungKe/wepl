@@ -18,20 +18,21 @@ class NotificationService:
         conversation_id=None,
         contribution_id=None,
         join_request_id=None,
-        source_event_id=None,  # P2-03: OutboxEvent UUID for idempotency
+        event_id=None,
     ):
         """
         Create a Notification record and enqueue an FCM push to the user's
         registered devices (Issue 19).
 
-        Accepts either a User instance (``user=``) or a plain integer
-        (``user_id=``) so it can be called safely from ``transaction.on_commit``
-        callbacks where the ORM object may no longer be in scope.
+        Accepts either a User instance (``user=``) or a plain integer (``user_id=``).
+
+        ``event_id`` (the outbox OutboxEvent id) makes creation idempotent: the
+        relay is at-least-once, so a redelivered event must not duplicate the row.
         """
         if user_id is None and user is not None:
             user_id = user.id if hasattr(user, 'id') else user
 
-        notification = Notification.objects.create(
+        fields = dict(
             user_id=user_id,
             notification_type=notification_type,
             title=title,
@@ -40,8 +41,13 @@ class NotificationService:
             conversation_id=conversation_id,
             contribution_id=contribution_id,
             join_request_id=join_request_id,
-            source_event_id=source_event_id,
         )
+        if event_id is not None:
+            notification, _ = Notification.objects.get_or_create(
+                event_id=event_id, defaults=fields,
+            )
+        else:
+            notification = Notification.objects.create(**fields)
         # FCM dispatch is handled by the send_notification Celery task that
         # calls this method — do NOT dispatch here to avoid double-firing.
         return notification

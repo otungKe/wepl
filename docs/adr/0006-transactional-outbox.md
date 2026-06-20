@@ -1,6 +1,6 @@
 # ADR-0006: Transactional outbox for durable domain events
 
-- **Status:** Proposed
+- **Status:** Accepted — implemented 2026-06-20
 - **Date:** 2026-06-19
 - **Phase:** 2
 
@@ -44,7 +44,9 @@ Grounded against the current `apps/core/events.py`:
 - **Relay** claims with `select_for_update(skip_locked=True)`; schedule at a
   **seconds interval** (Celery `crontab` is minute-granularity). Reuse the P0-08
   reconcile/alert pattern for lag + dead-letter alerts.
-- **Open decision:** relay re-fires the `domain_event` signal (keeps pluggable
-  fan-out — recommended) vs. directly creating notifications.
+- **Resolved decision:** relay re-fires the `domain_event` signal (keeps pluggable
+  fan-out; the substrate for Phase 7 webhooks).
 
-**Status: not yet implemented** — design only.
+**Implemented 2026-06-20** — `apps/core/{models,events,tasks}.py` +
+`Notification.event_id`; relay on Celery beat (10s); tests in
+`apps/core/tests_outbox.py`.
