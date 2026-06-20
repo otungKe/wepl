@@ -102,20 +102,22 @@ class STKPushView(APIView):
             account_ref  = f"WEPL-{contribution.id}"
             description  = contribution.title
 
+        from apps.payments.providers.registry import get_provider
+        from apps.ledger.money import Money
         try:
-            result = MpesaService.stk_push(
-                phone_number=phone,
-                amount=amount,
-                account_ref=account_ref,
+            result = get_provider().initiate_collection(
+                phone=phone,
+                amount=Money(str(amount)),
+                reference=account_ref,
                 description=description,
             )
         except Exception as exc:
             logger.exception("STK push failed")
             return Response({"error": str(exc)}, status=status.HTTP_502_BAD_GATEWAY)
 
-        if result.get("ResponseCode") != "0":
+        if not result.accepted:
             return Response(
-                {"error": result.get("errorMessage", "STK push failed")},
+                {"error": result.raw.get("errorMessage", "STK push failed")},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
@@ -128,14 +130,14 @@ class STKPushView(APIView):
             advance=advance,
             phone_number=_normalize_phone(phone),
             amount=amount,
-            checkout_request_id=result["CheckoutRequestID"],
-            merchant_request_id=result["MerchantRequestID"],
+            checkout_request_id=result.provider_ref,
+            merchant_request_id=result.raw.get("MerchantRequestID", ""),
         )
 
         return Response(
             {
                 "message": "STK Push sent. Enter your M-Pesa PIN on your phone.",
-                "checkout_request_id": result["CheckoutRequestID"],
+                "checkout_request_id": result.provider_ref,
             },
             status=status.HTTP_200_OK,
         )
