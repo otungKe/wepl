@@ -18,6 +18,7 @@ class NotificationService:
         conversation_id=None,
         contribution_id=None,
         join_request_id=None,
+        source_event_id=None,  # P2-03: OutboxEvent UUID for idempotency
     ):
         """
         Create a Notification record and enqueue an FCM push to the user's
@@ -39,6 +40,7 @@ class NotificationService:
             conversation_id=conversation_id,
             contribution_id=contribution_id,
             join_request_id=join_request_id,
+            source_event_id=source_event_id,
         )
         # FCM dispatch is handled by the send_notification Celery task that
         # calls this method — do NOT dispatch here to avoid double-firing.

@@ -50,7 +50,7 @@ settlement, reporting) has exactly one insertion point.
 |---|-------|------|---------------|------|--------|
 | 0 | [Ledger-First Cutover (Legacy Wipe)](PHASE-0-ledger-cutover.md) | Make double-entry authoritative; delete all legacy money code | 3 (solid) | [#4](https://github.com/otungKe/wepl/issues/4) | 🟢 Done (P0-01 → P0-09) |
 | 1 | [Payment Rail Abstraction](PHASE-1-payment-rails.md) | `PaymentProvider` port; M-Pesa as adapter #1 | 3→4 | [#5](https://github.com/otungKe/wepl/issues/5) | 🔴 Not started |
-| 2 | [Durable Eventing (Transactional Outbox)](PHASE-2-eventing-outbox.md) | No lost domain events | 4 | [#6](https://github.com/otungKe/wepl/issues/6) | 🔴 Not started |
+| 2 | [Durable Eventing (Transactional Outbox)](PHASE-2-eventing-outbox.md) | No lost domain events | 4 | [#6](https://github.com/otungKe/wepl/issues/6) | 🟢 Done (P2-01 → P2-05) |
 | 3 | [Controls: Limits & Risk](PHASE-3-controls-limits-risk.md) | Limits + velocity/fraud gate at the posting chokepoint | 4 | [#7](https://github.com/otungKe/wepl/issues/7) | 🔴 Not started |
 | 4 | [Reporting & GL](PHASE-4-reporting-gl.md) | Trial balance, statements, audit exports | 4 | [#8](https://github.com/otungKe/wepl/issues/8) | 🔴 Not started |
 | 5 | [Multi-Currency](PHASE-5-multi-currency.md) | FX-aware Money; per-currency balancing | 4→5 | [#9](https://github.com/otungKe/wepl/issues/9) | 🔴 Not started |
