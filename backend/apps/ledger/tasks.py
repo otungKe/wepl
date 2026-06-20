@@ -95,9 +95,11 @@ def execute_b2c_payout(self, fin_transaction_id: int) -> str:
     remarks   = f"{ft.get_op_type_display()} #{ft.id}"
 
     try:
-        result = MpesaService.b2c_payment(
-            phone_number=ft.recipient_phone,
-            amount=ft.amount,
+        from apps.payments.providers.registry import get_provider
+        from apps.ledger.money import Money
+        result = get_provider().initiate_payout(
+            phone=ft.recipient_phone,
+            amount=Money(str(ft.amount)),
             reference=reference[:100],
             remarks=remarks[:100],
         )
@@ -117,12 +119,9 @@ def execute_b2c_payout(self, fin_transaction_id: int) -> str:
             return "all_retries_exhausted"
         raise self.retry(exc=exc)
 
-    conversation_id = (
-        result.get('ConversationID') or
-        result.get('OriginatorConversationID') or ''
-    )
-    if not conversation_id:
-        err = f"No ConversationID in B2C response: {result}"
+    conversation_id = result.provider_ref
+    if not result.accepted or not conversation_id:
+        err = f"B2C payout not accepted by provider: {result.raw}"
         logger.error("execute_b2c_payout: FT %s — %s", ft.id, err)
         _handle_payout_failure(ft, err)
         return "no_conversation_id"

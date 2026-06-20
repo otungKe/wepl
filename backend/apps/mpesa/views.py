@@ -102,20 +102,22 @@ class STKPushView(APIView):
             account_ref  = f"WEPL-{contribution.id}"
             description  = contribution.title
 
+        from apps.payments.providers.registry import get_provider
+        from apps.ledger.money import Money
         try:
-            result = MpesaService.stk_push(
-                phone_number=phone,
-                amount=amount,
-                account_ref=account_ref,
+            result = get_provider().initiate_collection(
+                phone=phone,
+                amount=Money(str(amount)),
+                reference=account_ref,
                 description=description,
             )
         except Exception as exc:
             logger.exception("STK push failed")
             return Response({"error": str(exc)}, status=status.HTTP_502_BAD_GATEWAY)
 
-        if result.get("ResponseCode") != "0":
+        if not result.accepted:
             return Response(
-                {"error": result.get("errorMessage", "STK push failed")},
+                {"error": result.raw.get("errorMessage", "STK push failed")},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
@@ -128,14 +130,14 @@ class STKPushView(APIView):
             advance=advance,
             phone_number=_normalize_phone(phone),
             amount=amount,
-            checkout_request_id=result["CheckoutRequestID"],
-            merchant_request_id=result["MerchantRequestID"],
+            checkout_request_id=result.provider_ref,
+            merchant_request_id=result.raw.get("MerchantRequestID", ""),
         )
 
         return Response(
             {
                 "message": "STK Push sent. Enter your M-Pesa PIN on your phone.",
-                "checkout_request_id": result["CheckoutRequestID"],
+                "checkout_request_id": result.provider_ref,
             },
             status=status.HTTP_200_OK,
         )
@@ -155,19 +157,16 @@ class STKCallbackView(APIView):
     permission_classes = [SafaricomIPPermission]
 
     def post(self, request):
-        body        = request.data.get("Body", {})
-        callback    = body.get("stkCallback", {})
-        checkout_id = callback.get("CheckoutRequestID")
-        result_code = callback.get("ResultCode")
+        from apps.payments.providers.registry import get_provider
+        event       = get_provider().parse_callback(request.data, kind='collection')
+        checkout_id = event.provider_ref
 
         if not checkout_id:
             return Response({"ResultCode": 0, "ResultDesc": "Accepted"})
 
-        if result_code == 0:
+        if event.success:
             # ── Success path ───────────────────────────────────────────────────
-            metadata = callback.get("CallbackMetadata", {}).get("Item", [])
-            items    = {i["Name"]: i.get("Value") for i in metadata}
-            receipt  = items.get("MpesaReceiptNumber")
+            receipt = event.receipt
 
             # Atomic claim + deferred task dispatch.
             # on_commit ensures the task is enqueued only after the UPDATE is
@@ -204,8 +203,8 @@ class STKCallbackView(APIView):
                 status='PENDING',
             ).update(
                 status='FAILED',
-                result_code=result_code,
-                result_desc=callback.get("ResultDesc", ""),
+                result_code=int(event.code) if event.code.lstrip('-').isdigit() else None,
+                result_desc=event.result_desc,
             )
             if rows == 0:
                 logger.info(
@@ -279,12 +278,9 @@ class B2CResultView(APIView):
     permission_classes = [SafaricomIPPermission]
 
     def post(self, request):
-        body            = request.data.get("Result", {})
-        result_code     = body.get("ResultCode")
-        conversation_id = (
-            body.get("ConversationID") or
-            body.get("OriginatorConversationID")
-        )
+        from apps.payments.providers.registry import get_provider
+        event           = get_provider().parse_callback(request.data, kind='payout')
+        conversation_id = event.provider_ref
 
         if not conversation_id:
             return Response({"ResultCode": 0, "ResultDesc": "Accepted"})
@@ -300,14 +296,10 @@ class B2CResultView(APIView):
                 "falling back to legacy WelfareClaim lookup.",
                 conversation_id,
             )
-            return _legacy_b2c_result(body, conversation_id, result_code)
+            return _legacy_b2c_result(request.data.get("Result", {}), conversation_id, event.code)
 
-        if result_code == 0:
-            params  = {
-                p["Key"]: p["Value"]
-                for p in body.get("ResultParameters", {}).get("ResultParameter", [])
-            }
-            receipt = params.get("TransactionID") or params.get("TransactionReceipt", "")
+        if event.success:
+            receipt = event.receipt or ""
 
             try:
                 ft.transition_to(
@@ -324,7 +316,7 @@ class B2CResultView(APIView):
             _on_b2c_success(ft, receipt)
 
         else:
-            err = f"B2C ResultCode {result_code}: {body.get('ResultDesc', '')}"
+            err = f"B2C ResultCode {event.code}: {event.result_desc}"
             logger.error(
                 "B2CResultView: B2C failed for FT %s — %s", ft.id, err
             )

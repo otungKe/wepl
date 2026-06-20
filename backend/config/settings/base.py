@@ -210,6 +210,10 @@ CELERY_BEAT_SCHEDULE = {
     },
 }
 
+# ─── Payment rail selection (apps.payments.providers.registry) ────────────────
+#   'mpesa' → Daraja; 'fake' → no-network stub; '' → auto (fake under DEBUG)
+PAYMENT_PROVIDER = config('PAYMENT_PROVIDER', default='')
+
 # ─── SMS / OTP delivery ───────────────────────────────────────────────────────
 # Gateway selection consumed by apps.users.sms.get_sms_gateway():
 #   'at'      → Africa's Talking (real SMS)
