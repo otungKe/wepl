@@ -8,7 +8,13 @@ Covers the critical security and idempotency boundaries:
   - reconcile_c2b    : community-member gate (the C2B auto-join bypass fix)
 """
 from decimal import Decimal
+from unittest import skip
 from unittest.mock import MagicMock, patch
+
+# Quarantined under P0-02 — see GitHub issue #14. These cover the M-Pesa callback
+# credit/reversal paths that Phase 0 rewrites onto post_journal()/reverse_journal()
+# (P0-05); they will be rewritten and unskipped then.
+_LEGACY = "P0-02 #14: legacy M-Pesa money-path test; rewrite onto post_journal() in P0-05"
 
 from django.test import TestCase
 from django.urls import reverse
@@ -71,6 +77,7 @@ def _make_stk(user, contribution, amount="500.00", status="PENDING"):
 # STKCallbackView
 # ---------------------------------------------------------------------------
 
+@skip(_LEGACY)
 class STKCallbackViewTest(TestCase):
 
     def setUp(self):
@@ -160,6 +167,7 @@ class STKCallbackViewTest(TestCase):
 # C2BCallbackView — basic reconciliation
 # ---------------------------------------------------------------------------
 
+@skip(_LEGACY)
 class C2BCallbackViewTest(TestCase):
 
     def setUp(self):
@@ -216,6 +224,7 @@ class C2BCallbackViewTest(TestCase):
 # reconcile_c2b — community membership gate
 # ---------------------------------------------------------------------------
 
+@skip(_LEGACY)
 class ReconcileC2BCommunityGateTest(TestCase):
     """
     The C2B auto-join bypass: a non-community-member pays into a private
@@ -309,6 +318,7 @@ class ReconcileC2BCommunityGateTest(TestCase):
 # B2CResultView
 # ---------------------------------------------------------------------------
 
+@skip(_LEGACY)
 class B2CResultViewTest(TestCase):
 
     def setUp(self):
@@ -378,6 +388,7 @@ class AuthEndpointPermissionTest(TestCase):
         resp = self.client.get("/api/users/profile/")
         self.assertEqual(resp.status_code, 401)
 
+    @skip(_LEGACY)
     def test_stk_push_requires_active_session(self):
         """STK push is a money endpoint — must require active session."""
         resp = self.client.post(

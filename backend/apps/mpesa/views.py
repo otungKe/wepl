@@ -333,9 +333,9 @@ class B2CResultView(APIView):
             except TransitionError:
                 pass
 
-            from apps.ledger.writer import write_reversal_credit
             from apps.ledger.tasks import _update_context_on_failure
-            write_reversal_credit(ft, note=err)
+            from apps.ledger.posting import reverse_financial_transaction
+            reverse_financial_transaction(ft, note=err)  # restore reserved funds
             _update_context_on_failure(ft)
 
         return Response({"ResultCode": 0, "ResultDesc": "Accepted"})
@@ -440,8 +440,8 @@ def _process_shares_purchase(stk: MpesaSTKRequest) -> None:
     """
     from decimal import Decimal as D
     from apps.contributions.models import ShareHolding
-    from apps.ledger.writer import create_fin_transaction, write_ledger_entry
-    from apps.ledger.models import FinancialTransaction, LedgerEntry
+    from apps.ledger.writer import create_fin_transaction
+    from apps.ledger.models import FinancialTransaction
 
     fund = SharesFund.objects.select_for_update().get(id=stk.shares_fund_id)
     amount = D(str(stk.amount))
@@ -458,11 +458,8 @@ def _process_shares_purchase(stk: MpesaSTKRequest) -> None:
         shares_count=F('shares_count') + new_shares,
         total_contributed=F('total_contributed') + amount,
     )
-    SharesFund.objects.filter(pk=fund.pk).update(
-        total_pool=F('total_pool') + amount
-    )
 
-    # Ledger dual-write
+    # FinancialTransaction (orchestration)
     idem_key = f"shares-{fund.id}-{stk.user_id}-{stk.mpesa_receipt or stk.checkout_request_id}"
     ft, _ = create_fin_transaction(
         idempotency_key=idem_key,
@@ -472,15 +469,21 @@ def _process_shares_purchase(stk: MpesaSTKRequest) -> None:
         shares_fund=fund,
         initial_state=FinancialTransaction.State.SUCCESS,
     )
-    write_ledger_entry(
-        idempotency_key=f"le-{idem_key}",
+
+    # Double-entry posting (P0-05): cash into the float, member shares liability up.
+    from apps.ledger.posting import post_journal
+    from apps.ledger import posting_map as pm
+    from apps.ledger.money import Money
+    post_journal(
+        idempotency_key=f"je-{idem_key}",
+        op_type=pm.Op.SHARES_PURCHASE,
+        lines=pm.contribution_lines(
+            member=stk.user, fund_type='shares', fund_id=fund.id,
+            gross=Money(str(amount)),
+        ),
+        narration=f"Shares purchase by {stk.user.phone_number}",
         financial_transaction=ft,
-        user=stk.user,
-        amount=amount,
-        direction=LedgerEntry.Direction.CREDIT,
-        entry_type=LedgerEntry.EntryType.SHARES_PURCHASE,
-        shares_fund=fund,
-        mpesa_receipt=stk.mpesa_receipt,
+        created_by=stk.user,
     )
 
 

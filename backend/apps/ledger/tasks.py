@@ -5,7 +5,8 @@ All outgoing M-Pesa B2C payments are dispatched through here, so that:
   - DB transactions are never held open while HTTP calls are in-flight
   - State transitions are atomic (UPDATE WHERE state = current)
   - Retries are idempotent via FinancialTransaction.idempotency_key
-  - Failures write reversal ledger entries so pool balances stay correct
+  - Failures post a reversing journal (reverse_financial_transaction) so pool
+    balances stay correct
   - The B2C async result (from B2CResultView) handles SUCCESS/FAILED resolution
 
 P1-07 fix: _handle_payout_failure is now called ONLY from on_failure (after
@@ -307,12 +308,12 @@ def _handle_payout_failure(ft, reason: str) -> None:
          and retry if appropriate.
     """
     from apps.ledger.models import FinancialTransaction
-    from apps.ledger.writer import write_reversal_credit
+    from apps.ledger.posting import reverse_financial_transaction
 
     try:
-        write_reversal_credit(ft, note=reason[:500])
+        reverse_financial_transaction(ft, note=reason[:500])  # restore reserved funds
     except Exception:
-        logger.exception("_handle_payout_failure: could not write reversal for FT %s", ft.id)
+        logger.exception("_handle_payout_failure: could not reverse journal for FT %s", ft.id)
 
     try:
         ft.transition_to(FinancialTransaction.State.FAILED, failure_reason=reason[:500])
@@ -342,18 +343,12 @@ def _update_context_on_failure(ft) -> None:
             )
 
         elif ft.context_type == 'welfare_claim':
-            from django.db.models import F
-            from apps.contributions.models import WelfareClaim, WelfareFund
+            from apps.contributions.models import WelfareClaim
             try:
+                # Ledger funds are restored by reverse_financial_transaction;
+                # reset the claim so it can be retried.
                 claim = WelfareClaim.objects.get(id=ft.context_id)
                 claim.transition_to('PENDING')
-                # Restore the mutable WelfareFund.balance field.
-                # write_reversal_credit already restores the immutable ledger;
-                # this keeps the mutable field in sync so submit_claim balance
-                # guards work correctly.
-                WelfareFund.objects.filter(pk=claim.fund_id).update(
-                    balance=F('balance') + claim.amount_requested
-                )
             except (WelfareClaim.DoesNotExist, TransitionError):
                 pass
             logger.error(
@@ -379,3 +374,73 @@ def _update_context_on_failure(ft) -> None:
             "_update_context_on_failure: error updating context %s/%s",
             ft.context_type, ft.context_id,
         )
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Reconciliation & observability (P0-08)
+# ═══════════════════════════════════════════════════════════════════════════
+
+def _alert(message: str, extra: dict) -> None:
+    """Send a Sentry alert if configured; always safe to call."""
+    try:
+        import sentry_sdk
+        with sentry_sdk.push_scope() as scope:
+            for k, v in extra.items():
+                scope.set_extra(k, v)
+            sentry_sdk.capture_message(message, level="error")
+    except Exception:  # sentry not installed/configured — logging already covers it
+        pass
+
+
+@shared_task(queue='financial')
+def reconcile_ledger(repair: bool = True) -> dict:
+    """Nightly ledger-integrity check (the safety net for the authoritative core).
+
+    1. Global trial balance must be zero (Σdebit == Σcredit across all lines).
+    2. Every account's AccountBalance projection must equal a replay of its
+       immutable lines; drifted projections are auto-repaired when ``repair`` is
+       True and always reported.
+
+    Any imbalance or drift is logged and raised to Sentry via _alert(). Returns a
+    summary dict.
+    """
+    from .balances import reconcile_account, recompute_account_balance, trial_balance
+    from .models import Account
+
+    tb = trial_balance()
+    drifted: list[dict] = []
+    for account in Account.objects.all().iterator():
+        result = reconcile_account(account)
+        if not result['ok']:
+            drifted.append(result)
+            if repair:
+                recompute_account_balance(account)
+
+    report = {
+        'balanced':     tb['balanced'],
+        'total_debit':  str(tb['total_debit']),
+        'total_credit': str(tb['total_credit']),
+        'drift_count':  len(drifted),
+        'repaired':     repair,
+    }
+
+    if not tb['balanced']:
+        logger.critical(
+            "LEDGER IMBALANCE: trial balance debit=%s credit=%s",
+            tb['total_debit'], tb['total_credit'],
+        )
+        _alert("Ledger trial balance is not zero", report)
+
+    if drifted:
+        codes = [d['account'] for d in drifted]
+        logger.error(
+            "Ledger projection drift on %d account(s)%s: %s",
+            len(drifted), " (auto-repaired)" if repair else "", codes[:20],
+        )
+        _alert(f"Ledger projection drift on {len(drifted)} account(s)",
+               {**report, 'accounts': codes[:50]})
+
+    if tb['balanced'] and not drifted:
+        logger.info("reconcile_ledger: OK — trial balance zero, all projections match.")
+
+    return report

@@ -16,6 +16,9 @@ services:
     rootDir: backend
     plan: free
     buildCommand: pip install -r requirements.txt && python manage.py collectstatic --noinput
+    # start.sh also launches Celery worker + beat in-process. Splitting them into
+    # dedicated services is the target (P0-01) but needs a paid worker plan / a
+    # chosen platform — deferred for now.
     startCommand: bash start.sh
     healthCheckPath: /health/
     envVars:
@@ -27,8 +30,9 @@ services:
         value: wepl-api.onrender.com
       - key: CORS_ALLOWED_ORIGINS
         value: https://wepl-api.onrender.com
-      - key: STAGING_OTP_BYPASS
-        value: "true"
+      # OTP delivery: 'console' logs the code (visible in logs) instead of sending
+      # real SMS. STAGING_OTP_BYPASS is intentionally absent — production refuses
+      # to boot with it enabled (see config/settings/production.py).
       - key: SMS_BACKEND
         value: console
       - key: DB_NAME
@@ -82,4 +86,19 @@ services:
       - key: SENTRY_DSN
         sync: false
       - key: FIREBASE_CREDENTIALS_JSON
+        sync: false
+      # ── Durable media storage (S3 / Cloudflare R2) ──────────────────────────
+      # Flip USE_S3 to "true" and populate the creds below so KYC/profile uploads
+      # survive redeploys (the dyno disk is ephemeral). See production.py.
+      - key: USE_S3
+        value: "false"
+      - key: AWS_STORAGE_BUCKET_NAME
+        sync: false
+      - key: AWS_S3_REGION_NAME
+        value: auto
+      - key: AWS_S3_ENDPOINT_URL
+        sync: false
+      - key: AWS_ACCESS_KEY_ID
+        sync: false
+      - key: AWS_SECRET_ACCESS_KEY
         sync: false

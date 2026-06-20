@@ -188,15 +188,15 @@ CELERY_BEAT_SCHEDULE = {
         'task': 'apps.contributions.tasks.execute_due_standing_orders',
         'schedule': crontab(minute=0, hour='8,12,18'),  # 8am, 12pm, 6pm EAT
     },
-    # Ledger vs. legacy-field drift check — runs at 3am EAT
-    'reconcile-contribution-balances': {
-        'task': 'apps.contributions.tasks.reconcile_balances',
-        'schedule': crontab(minute=0, hour=3),
-    },
     # Detects B2C payments stuck in PROCESSING for > 15 min
     'recover-stale-processing-transactions': {
         'task': 'apps.ledger.tasks.recover_stale_processing_transactions',
         'schedule': crontab(minute='*/30'),  # every 30 minutes
+    },
+    # Ledger integrity: trial balance == 0 and projection == replay — runs 2am EAT
+    'reconcile-ledger': {
+        'task': 'apps.ledger.tasks.reconcile_ledger',
+        'schedule': crontab(minute=0, hour=2),
     },
     # Fire due reminders every 30 minutes
     'fire-due-reminders': {
@@ -209,6 +209,13 @@ CELERY_BEAT_SCHEDULE = {
         'schedule': crontab(minute=0, hour=9),
     },
 }
+
+# ─── SMS / OTP delivery ───────────────────────────────────────────────────────
+# Gateway selection consumed by apps.users.sms.get_sms_gateway():
+#   'at'      → Africa's Talking (real SMS)
+#   'console' → log the message only (dev / staging / CI)
+#   ''        → auto: 'console' under DEBUG, 'at' otherwise
+SMS_BACKEND = config('SMS_BACKEND', default='')
 
 # ─── Africa's Talking (SMS / OTP) ─────────────────────────────────────────────
 AT_API_KEY   = config('AT_API_KEY',   default='')

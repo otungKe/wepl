@@ -4,9 +4,9 @@ Contribution business logic.
 Key architectural principles enforced here:
   - M-Pesa HTTP calls are NEVER made inside @transaction.atomic blocks.
     They are dispatched to Celery tasks via transaction.on_commit().
-  - All balance updates use F() expressions — no read-modify-write.
-  - Ledger entries are written in dual-write mode alongside legacy balance fields.
-    (Legacy fields will be removed once the ledger is confirmed as primary read source.)
+  - All money movement goes through the double-entry ledger via post_journal()
+    (apps.ledger). Balances are derived from immutable journal lines — there are
+    no mutable balance columns.
   - Idempotency keys are used for every financial operation.
   - Authorization uses FinancialPermissions — one implementation, not six.
 """
@@ -24,8 +24,7 @@ from django.core.exceptions import ValidationError, PermissionDenied
 from django.utils import timezone
 
 from .models import (
-    Contribution, ContributionParticipant, ContributionAccount,
-    ContributionBalance, ContributionTransaction,
+    Contribution, ContributionParticipant, ContributionTransaction,
     SharesFund, ShareHolding,
     ROSCASlot, DisbursementRequest, DisbursementVote,
     WelfareFund, WelfareContribution, WelfareClaim, WelfareVote,
@@ -36,8 +35,17 @@ from .models import (
 )
 from apps.activity.services import ActivityService
 from apps.ledger.permissions import FinancialPermissions
-from apps.ledger.writer import create_fin_transaction, write_ledger_entry, write_reversal_credit
-from apps.ledger.models import FinancialTransaction, LedgerEntry
+from apps.ledger.writer import create_fin_transaction
+from apps.ledger.models import FinancialTransaction, JournalEntry
+# P0-05 strangler: post double-entry journals alongside the legacy writes. The
+# ledger becomes a parallel source of truth now; reads/gates flip to it in P0-06
+# and the legacy writes are deleted in P0-07.
+from apps.ledger.posting import post_journal
+from apps.ledger import posting_map as _pm
+from apps.ledger.money import Money
+# P0-06: read pool/member balances from the ledger (the authoritative source).
+from apps.ledger.balances import fund_balance, account_balance
+from apps.ledger import coa as _coa
 
 
 def _dn(user) -> str:
@@ -85,47 +93,15 @@ def _compute_next_run(frequency: str, from_dt) -> object:
 class ContributionService:
 
     @staticmethod
-    def _check_governance_deadlock(user, validated_data) -> None:
-        """
-        Check both voting thresholds (disbursement + amendment) for deadlocks
-        before the contribution is created.
-
-        Uses FinancialPermissions.assert_quorum_exists on a lightweight proxy
-        object so the real contribution row doesn't need to exist yet.
-        """
-        from apps.ledger.permissions import FinancialPermissions
-
-        community = validated_data.get('community')
-
-        class _ProxyContribution:
-            """Minimal duck-type so assert_quorum_exists works without a DB row."""
-            def __init__(self, creator, comm):
-                self.created_by_id  = creator.id
-                self.community_id   = comm.id if comm else None
-                self.community      = comm
-
-        proxy = _ProxyContribution(user, community)
-
-        disb_threshold = validated_data.get('voting_threshold', 'admins')
-        FinancialPermissions.assert_quorum_exists(
-            proxy, disb_threshold, user,
-            action="create a contribution with this disbursement approval threshold",
-        )
-
-        amend_threshold = validated_data.get('amendment_voting_threshold', 'admins')
-        FinancialPermissions.assert_quorum_exists(
-            proxy, amend_threshold, user,
-            action="create a contribution with this amendment approval threshold",
-        )
-
-    @staticmethod
     @transaction.atomic
     def create_contribution(user, validated_data, member_phones=None, add_all_members=False):
-        # Guard: detect governance deadlock (disbursement + amendment) before creating
-        ContributionService._check_governance_deadlock(user, validated_data)
-
+        # Governance quorum is enforced at request time against the real
+        # contribution row (submit_disbursement_request / propose amendment),
+        # which correctly accounts for members who join after creation. A
+        # creation-time pre-check used to run here but was removed (issue #14):
+        # it blocked legitimate solo/open contributions and crashed on
+        # percentage thresholds (it queried participants via a fake proxy object).
         contribution = Contribution.objects.create(created_by=user, **validated_data)
-        ContributionAccount.objects.create(contribution=contribution)
 
         ContributionParticipant.objects.create(contribution=contribution, user=user, is_active=True)
 
@@ -243,7 +219,7 @@ class ContributionService:
         contribution = Contribution.objects.get(id=contribution_id)
         if contribution.created_by != user:
             raise PermissionDenied("Only the creator can delete this contribution.")
-        if contribution.current_amount > 0:
+        if fund_balance('contribution', contribution.id) > 0:
             raise ValidationError(
                 "Cannot delete a contribution with an active balance. "
                 "Close it and disburse all funds before deleting."
@@ -258,7 +234,7 @@ class ContributionService:
 
     @staticmethod
     def get_user_contributions(user, active_only=True):
-        from django.db.models import Count, Q, Prefetch
+        from django.db.models import Count, Q
         qs = Contribution.objects.filter(
             participants__user=user, participants__is_active=True
         ).distinct()
@@ -267,12 +243,6 @@ class ContributionService:
         return qs.annotate(
             active_participant_count=Count(
                 'participants', filter=Q(participants__is_active=True), distinct=True
-            )
-        ).prefetch_related(
-            Prefetch(
-                'balances',
-                queryset=ContributionBalance.objects.filter(user=user),
-                to_attr='_user_balance_list',
             )
         ).order_by('-created_at')
 
@@ -339,19 +309,12 @@ class ContributionService:
             else f"contrib-{contribution_id}-{user.id}-manual"
         )
 
-        # ── Legacy: ContributionTransaction (kept for backwards compat) ────────
-        # Check for existing ledger entry to avoid duplicate ContributionTransaction rows
-        existing_le = LedgerEntry.objects.filter(
-            idempotency_key=f"le-{idem_key}"
-        ).first()
-
-        if existing_le:
-            # Already processed — find and return the existing tx
-            tx = ContributionTransaction.objects.filter(
+        # ── Idempotency: if this journal was already posted, return its tx ─────
+        if JournalEntry.objects.filter(idempotency_key=f"je-{idem_key}").exists():
+            return ContributionTransaction.objects.filter(
                 contribution=contribution, user=user,
                 mpesa_receipt=mpesa_receipt,
             ).first()
-            return tx
 
         tx = ContributionTransaction.objects.create(
             contribution=contribution,
@@ -361,22 +324,7 @@ class ContributionService:
             mpesa_receipt=mpesa_receipt or None,
         )
 
-        # ── Legacy balance updates via F() — safe under concurrency ───────────
-        Contribution.objects.filter(pk=contribution.pk).update(
-            current_amount=F('current_amount') + Decimal(str(amount))
-        )
-        ContributionAccount.objects.filter(contribution=contribution).update(
-            total_amount=F('total_amount') + Decimal(str(amount))
-        )
-        ContributionBalance.objects.update_or_create(
-            contribution=contribution, user=user,
-            defaults={},  # ensure row exists
-        )
-        ContributionBalance.objects.filter(
-            contribution=contribution, user=user
-        ).update(amount=F('amount') + Decimal(str(amount)))
-
-        # ── New ledger dual-write ─────────────────────────────────────────────
+        # ── FinancialTransaction (orchestration) ──────────────────────────────
         ft, _ = create_fin_transaction(
             idempotency_key=idem_key,
             op_type=FinancialTransaction.OpType.CONTRIBUTION,
@@ -385,16 +333,18 @@ class ContributionService:
             contribution=contribution,
             initial_state=FinancialTransaction.State.SUCCESS,
         )
-        write_ledger_entry(
-            idempotency_key=f"le-{idem_key}",
+
+        # ── Double-entry posting — the source of truth ────────────────────────
+        post_journal(
+            idempotency_key=f"je-{idem_key}",
+            op_type=_pm.Op.CONTRIBUTION,
+            lines=_pm.contribution_lines(
+                member=user, fund_type='contribution',
+                fund_id=contribution.id, gross=Money(str(amount)),
+            ),
+            narration=f"Member contribution by {user.phone_number}",
             financial_transaction=ft,
-            user=user,
-            amount=Decimal(str(amount)),
-            direction=LedgerEntry.Direction.CREDIT,
-            entry_type=LedgerEntry.EntryType.MEMBER_CONTRIBUTION,
-            contribution=contribution,
-            mpesa_receipt=mpesa_receipt or None,
-            note=f"Member contribution by {user.phone_number}",
+            created_by=user,
         )
 
         # ── Side effects ──────────────────────────────────────────────────────
@@ -404,8 +354,8 @@ class ContributionService:
             message=f"{_dn(user)} contributed KES {amount:,.0f} to {contribution.title}",
         )
 
-        contribution.refresh_from_db(fields=['current_amount'])
-        previous_amount = contribution.current_amount - Decimal(str(amount))
+        pool_total = fund_balance('contribution', contribution.id)
+        previous_amount = pool_total - Decimal(str(amount))
 
         if contribution.created_by != user:
             _notify(
@@ -418,7 +368,7 @@ class ContributionService:
 
         if contribution.target_amount and contribution.target_amount > 0:
             prev_pct = int((previous_amount / contribution.target_amount) * 100)
-            curr_pct = int((contribution.current_amount / contribution.target_amount) * 100)
+            curr_pct = int((pool_total / contribution.target_amount) * 100)
             for milestone in (50, 100):
                 if prev_pct < milestone <= curr_pct:
                     label = "reached 50%!" if milestone == 50 else "is fully funded! 🎉"
@@ -430,7 +380,7 @@ class ContributionService:
                             notification_type='contribution_milestone',
                             title=f"{contribution.title} {label}",
                             message=(
-                                f"Collected KES {contribution.current_amount} "
+                                f"Collected KES {pool_total} "
                                 f"of KES {contribution.target_amount}."
                             ),
                             contribution_id=contribution.id,
@@ -504,7 +454,7 @@ class ROSCAService:
         if not current_slot:
             raise ValidationError("All slots have been paid out for this cycle.")
 
-        payout_amount = contribution.current_amount
+        payout_amount = fund_balance('contribution', contribution.id)
 
         current_slot.has_received  = True
         current_slot.received_at   = timezone.now()
@@ -520,13 +470,6 @@ class ROSCAService:
             note=f"ROSCA payout — cycle {current_slot.cycle_number}, slot {current_slot.slot_order}",
         )
 
-        # Legacy balance update via F()
-        Contribution.objects.filter(pk=contribution.pk).update(current_amount=Decimal('0'))
-        ContributionAccount.objects.filter(contribution=contribution).update(
-            total_amount=Decimal('0')
-        )
-
-        # Ledger DEBIT entry
         idem_key = f"rosca-payout-{contribution.id}-cycle{current_slot.cycle_number}-slot{current_slot.slot_order}"
         ft, _ = create_fin_transaction(
             idempotency_key=idem_key,
@@ -539,15 +482,17 @@ class ROSCAService:
             context_id=current_slot.id,
             initial_state=FinancialTransaction.State.SUCCESS,
         )
-        write_ledger_entry(
-            idempotency_key=f"le-{idem_key}",
+        # Double-entry posting (P0-05): payout draws the recipient's pool share.
+        post_journal(
+            idempotency_key=f"je-{idem_key}",
+            op_type=_pm.Op.ROSCA_PAYOUT,
+            lines=_pm.disbursement_lines(
+                member=current_slot.participant.user, fund_type='contribution',
+                fund_id=contribution.id, amount=Money(str(payout_amount)),
+            ),
+            narration=f"ROSCA payout — cycle {current_slot.cycle_number}, slot {current_slot.slot_order}",
             financial_transaction=ft,
-            user=current_slot.participant.user,
-            amount=payout_amount,
-            direction=LedgerEntry.Direction.DEBIT,
-            entry_type=LedgerEntry.EntryType.ROSCA_PAYOUT,
-            contribution=contribution,
-            note=f"ROSCA payout — cycle {current_slot.cycle_number}, slot {current_slot.slot_order}",
+            created_by=user,
         )
 
         _notify(
@@ -577,8 +522,9 @@ class DisbursementService:
         if not FinancialPermissions.is_active_participant(contribution, user):
             raise PermissionDenied("You must be an active participant.")
 
-        # Balance check with row lock (select_for_update above)
-        if Decimal(str(amount)) > contribution.current_amount:
+        # Balance check — pool balance from the ledger (contribution row is locked
+        # above, serialising concurrent disbursements on this contribution).
+        if Decimal(str(amount)) > fund_balance('contribution', contribution.id):
             raise ValidationError("Amount exceeds current pool balance.")
 
         # Quorum check: ensure at least one eligible voter exists excluding the requester.
@@ -690,7 +636,7 @@ class DisbursementService:
         """
         contribution = Contribution.objects.select_for_update().get(id=req.contribution_id)
 
-        if contribution.current_amount < req.amount:
+        if fund_balance('contribution', contribution.id) < req.amount:
             raise ValidationError("Insufficient pool balance at execution time.")
 
         # Governance cooldown check (Issue 16): block execution if voting_threshold
@@ -724,26 +670,20 @@ class DisbursementService:
             # Already scheduled or completed — nothing to do
             return
 
-        write_ledger_entry(
-            idempotency_key=f"le-{idem_key}",
+        # Double-entry posting (P0-05): reserve funds out of the pool.
+        post_journal(
+            idempotency_key=f"je-{idem_key}",
+            op_type=_pm.Op.DISBURSEMENT,
+            lines=_pm.disbursement_lines(
+                member=req.requested_by, fund_type='contribution',
+                fund_id=contribution.id, amount=Money(str(req.amount)),
+            ),
+            narration=f"Disbursement: {req.reason[:120]}",
             financial_transaction=ft,
-            user=req.requested_by,
-            amount=req.amount,
-            direction=LedgerEntry.Direction.DEBIT,
-            entry_type=LedgerEntry.EntryType.DISBURSEMENT,
-            contribution=contribution,
-            note=f"Disbursement: {req.reason[:120]}",
+            created_by=req.requested_by,
         )
 
-        # ── Legacy balance update via F() ─────────────────────────────────────
-        Contribution.objects.filter(pk=contribution.pk).update(
-            current_amount=F('current_amount') - req.amount
-        )
-        ContributionAccount.objects.filter(contribution=contribution).update(
-            total_amount=F('total_amount') - req.amount
-        )
-
-        # ── Legacy WITHDRAWAL record ──────────────────────────────────────────
+        # ── WITHDRAWAL record (transaction history) ───────────────────────────
         ContributionTransaction.objects.create(
             contribution=contribution,
             user=req.requested_by,
@@ -795,13 +735,8 @@ class WelfareService:
         fund = WelfareFund.objects.select_for_update().get(id=fund_id)
         WelfareContribution.objects.create(fund=fund, user=user, amount=amount)
 
-        # Legacy balance update via F()
-        WelfareFund.objects.filter(pk=fund.pk).update(
-            balance=F('balance') + Decimal(str(amount))
-        )
-
-        # Ledger dual-write — key anchored to the M-Pesa receipt (externally-assigned,
-        # immutable). Retries with the same receipt are no-ops via get_or_create.
+        # Key anchored to the M-Pesa receipt (externally-assigned, immutable);
+        # retries with the same receipt are no-ops via post_journal idempotency.
         idem_key = f"welfare-contrib-{fund_id}-{user.id}-{mpesa_receipt}"
         ft, _ = create_fin_transaction(
             idempotency_key=idem_key,
@@ -811,14 +746,16 @@ class WelfareService:
             welfare_fund=fund,
             initial_state=FinancialTransaction.State.SUCCESS,
         )
-        write_ledger_entry(
-            idempotency_key=f"le-{idem_key}",
+        # Double-entry posting (P0-05).
+        post_journal(
+            idempotency_key=f"je-{idem_key}",
+            op_type=_pm.Op.WELFARE_CONTRIBUTION,
+            lines=_pm.welfare_contribution_lines(
+                member=user, fund_id=fund.id, amount=Money(str(amount)),
+            ),
+            narration=f"Welfare contribution by {user.phone_number}",
             financial_transaction=ft,
-            user=user,
-            amount=Decimal(str(amount)),
-            direction=LedgerEntry.Direction.CREDIT,
-            entry_type=LedgerEntry.EntryType.WELFARE_CONTRIBUTION,
-            welfare_fund=fund,
+            created_by=user,
         )
 
         ActivityService.log_activity(
@@ -845,9 +782,10 @@ class WelfareService:
                 "You already have a pending claim. "
                 "Wait for it to be reviewed before submitting another."
             )
-        if amount > fund.balance:
+        welfare_bal = fund_balance('welfare', fund.id)
+        if amount > welfare_bal:
             raise ValidationError(
-                f"Claim amount exceeds the current fund balance of KES {fund.balance:,.0f}."
+                f"Claim amount exceeds the current fund balance of KES {welfare_bal:,.0f}."
             )
         if amount <= 0:
             raise ValidationError("Claim amount must be greater than zero.")
@@ -924,10 +862,10 @@ class WelfareService:
         DB row locks open.
         """
         fund = WelfareFund.objects.select_for_update().get(id=claim.fund_id)
-        if fund.balance < claim.amount_requested:
+        if fund_balance('welfare', fund.id) < claim.amount_requested:
             raise ValidationError("Insufficient welfare fund balance.")
 
-        # ── Reserve funds: DEBIT ledger + legacy balance update ───────────────
+        # ── Reserve funds: post the payout journal (cash leaves on B2C success) ─
         idem_key = f"welfare-claim-{claim.id}"
         ft, created = create_fin_transaction(
             idempotency_key=idem_key,
@@ -946,20 +884,17 @@ class WelfareService:
         ):
             return  # already in progress
 
-        write_ledger_entry(
-            idempotency_key=f"le-{idem_key}",
+        # Double-entry posting (P0-05): reserve welfare funds for the claimant.
+        post_journal(
+            idempotency_key=f"je-{idem_key}",
+            op_type=_pm.Op.WELFARE_CLAIM,
+            lines=_pm.welfare_claim_lines(
+                member=claim.claimant, fund_id=fund.id,
+                amount=Money(str(claim.amount_requested)),
+            ),
+            narration=f"Welfare claim #{claim.id}",
             financial_transaction=ft,
-            user=claim.claimant,
-            amount=claim.amount_requested,
-            direction=LedgerEntry.Direction.DEBIT,
-            entry_type=LedgerEntry.EntryType.WELFARE_CLAIM,
-            welfare_fund=fund,
-            note=f"Welfare claim #{claim.id}: {claim.reason[:80]}",
-        )
-
-        # Legacy balance update via F()
-        WelfareFund.objects.filter(pk=fund.pk).update(
-            balance=F('balance') - claim.amount_requested
+            created_by=claim.claimant,
         )
 
         # Mark claim APPROVED (→ DISBURSED when B2C callback confirms)
@@ -1010,15 +945,11 @@ class EmergencyAdvanceService:
             from apps.communities.services import check_cooling_off
             check_cooling_off(user, contribution.community, 'emergency_advance')
 
-        # Derive eligibility from ledger (not mutable ContributionBalance)
-        from apps.ledger.queries import member_contribution_total
-        member_total = member_contribution_total(contribution.id, user.id)
-        # Fall back to legacy field if ledger has no entries yet (migration phase)
-        if member_total == Decimal('0'):
-            balance_obj  = ContributionBalance.objects.filter(
-                contribution=contribution, user=user
-            ).first()
-            member_total = balance_obj.amount if balance_obj else Decimal('0')
+        # Eligibility from the double-entry ledger: the member's own contribution
+        # sub-ledger balance (what the pool owes them).
+        member_acct = _coa.member_fund_account(
+            user=user, fund_type='contribution', fund_id=contribution.id)
+        member_total = account_balance(member_acct)
 
         max_advance = member_total * EmergencyAdvanceService.MAX_ADVANCE_RATIO
 
@@ -1086,11 +1017,11 @@ class EmergencyAdvanceService:
         if not FinancialPermissions.is_contribution_admin(contribution, admin_user):
             raise PermissionDenied("Only admins/treasurers can approve advances.")
 
-        # Check pool has enough funds
-        if contribution.current_amount < advance.amount:
+        # Check pool has enough funds (ledger-derived)
+        if fund_balance('contribution', contribution.id) < advance.amount:
             raise ValidationError("Insufficient pool balance to cover this advance.")
 
-        # ── Reserve funds: DEBIT ledger + legacy balance update ───────────────
+        # ── Reserve funds: post the payout journal (cash leaves on B2C success) ─
         idem_key = f"advance-disb-{advance.id}"
         ft, created = create_fin_transaction(
             idempotency_key=idem_key,
@@ -1109,24 +1040,20 @@ class EmergencyAdvanceService:
         ):
             return advance  # already in progress
 
-        write_ledger_entry(
-            idempotency_key=f"le-{idem_key}",
+        # Double-entry posting (P0-05): receivable model — the borrower owes the
+        # principal back (asset), funded out of the float.
+        post_journal(
+            idempotency_key=f"je-{idem_key}",
+            op_type=_pm.Op.ADVANCE_DISBURSEMENT,
+            lines=_pm.advance_disbursement_lines(
+                member=advance.borrower, advance_id=advance.id,
+                principal=Money(str(advance.amount)),
+            ),
+            narration=f"Emergency advance #{advance.id}",
             financial_transaction=ft,
-            user=advance.borrower,
-            amount=advance.amount,
-            direction=LedgerEntry.Direction.DEBIT,
-            entry_type=LedgerEntry.EntryType.ADVANCE_DISBURSEMENT,
-            contribution=contribution,
-            note=f"Emergency advance #{advance.id} to {advance.borrower.phone_number}",
+            created_by=admin_user,
         )
 
-        # Legacy balance deduction (was MISSING before — critical bug fix)
-        Contribution.objects.filter(pk=contribution.pk).update(
-            current_amount=F('current_amount') - advance.amount
-        )
-        ContributionAccount.objects.filter(contribution=contribution).update(
-            total_amount=F('total_amount') - advance.amount
-        )
         ContributionTransaction.objects.create(
             contribution=contribution,
             user=advance.borrower,
@@ -1219,15 +1146,24 @@ class EmergencyAdvanceService:
             context_id=advance.id,
             initial_state=FinancialTransaction.State.SUCCESS,
         )
-        write_ledger_entry(
-            idempotency_key=f"le-{idem_key}",
+        # Double-entry posting (P0-06): split the repayment into principal (clears
+        # the receivable) and interest (income). Outstanding principal is the AR
+        # sub-ledger balance, so the principal portion never over-clears it.
+        ar_acct = _coa.member_receivable_account(user=user, fund_id=advance.id)
+        outstanding = account_balance(ar_acct)
+        principal_portion = min(Decimal(str(amount)), max(outstanding, Decimal('0')))
+        interest_portion = Decimal(str(amount)) - principal_portion
+        post_journal(
+            idempotency_key=f"je-{idem_key}",
+            op_type=_pm.Op.ADVANCE_REPAYMENT,
+            lines=_pm.advance_repayment_lines(
+                member=user, advance_id=advance.id,
+                principal=Money(str(principal_portion)),
+                interest=Money(str(interest_portion)),
+            ),
+            narration=f"Repayment for advance #{advance_id}",
             financial_transaction=ft,
-            user=user,
-            amount=amount,
-            direction=LedgerEntry.Direction.CREDIT,
-            entry_type=LedgerEntry.EntryType.ADVANCE_REPAYMENT,
-            contribution=contribution,
-            note=f"Repayment for advance #{advance_id}",
+            created_by=user,
         )
 
         # Legacy: dedicated REPAYMENT transaction (not patched — created fresh)
@@ -1237,14 +1173,6 @@ class EmergencyAdvanceService:
             amount=amount,
             transaction_type='REPAYMENT',
             note=f"Advance repayment — advance #{advance_id}",
-        )
-
-        # Legacy balance credit via F()
-        Contribution.objects.filter(pk=contribution.pk).update(
-            current_amount=F('current_amount') + amount
-        )
-        ContributionAccount.objects.filter(contribution=contribution).update(
-            total_amount=F('total_amount') + amount
         )
 
         return advance
@@ -1318,7 +1246,7 @@ class StandingOrderService:
         contribution = Contribution.objects.select_for_update().get(
             id=order.contribution_id
         )
-        if contribution.current_amount < order.amount:
+        if fund_balance('contribution', contribution.id) < order.amount:
             raise ValidationError("Insufficient funds in the contribution pool.")
 
         if order.payee_type == 'fixed':
@@ -1358,24 +1286,19 @@ class StandingOrderService:
         ):
             return order  # already in flight
 
-        write_ledger_entry(
-            idempotency_key=f"le-{idem_key}",
+        # Double-entry posting (P0-05): payout draws down the owner's pool share.
+        post_journal(
+            idempotency_key=f"je-{idem_key}",
+            op_type=_pm.Op.STANDING_ORDER,
+            lines=_pm.disbursement_lines(
+                member=user, fund_type='contribution',
+                fund_id=contribution.id, amount=Money(str(order.amount)),
+            ),
+            narration=f"Standing order payout to {recipient_phone}",
             financial_transaction=ft,
-            user=user,
-            amount=order.amount,
-            direction=LedgerEntry.Direction.DEBIT,
-            entry_type=LedgerEntry.EntryType.STANDING_ORDER,
-            contribution=contribution,
-            note=f"Standing order payout to {recipient_phone}",
+            created_by=user,
         )
 
-        # Legacy balance update via F()
-        Contribution.objects.filter(pk=contribution.pk).update(
-            current_amount=F('current_amount') - order.amount
-        )
-        ContributionAccount.objects.filter(contribution=contribution).update(
-            total_amount=F('total_amount') - order.amount
-        )
         ContributionTransaction.objects.create(
             contribution=contribution,
             user=user,
@@ -1551,10 +1474,11 @@ class AmendmentService:
         if 'target_amount' in changes:
             try:
                 ta = Decimal(str(changes['target_amount']))
-                if ta < contribution.current_amount:
+                pool_bal = fund_balance('contribution', contribution.id)
+                if ta < pool_bal:
                     raise ValidationError(
                         f"target_amount cannot be lower than the current balance "
-                        f"of KES {contribution.current_amount:,.0f}."
+                        f"of KES {pool_bal:,.0f}."
                     )
             except InvalidOperation:
                 raise ValidationError("Invalid target_amount value.")

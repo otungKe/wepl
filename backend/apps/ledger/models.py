@@ -1,18 +1,31 @@
 """
 Financial ledger — the single source of truth for all money movements.
 
-FinancialTransaction  — one complete financial event with a strict state machine.
-LedgerEntry           — immutable, append-only credit/debit record.
+FinancialTransaction  — one complete financial event with a strict state machine
+                        (orchestration layer; links to the journal that moved the
+                        money). The legacy single-entry shadow ledger was removed
+                        in P0-07 (ADR-0002).
 
-Balances are ALWAYS derived:  SUM(CREDIT entries) - SUM(DEBIT entries)
-Mutable balance fields on other models exist only as a performance cache
-and will be removed once the ledger is the confirmed primary read source.
+Double-entry core (the accounting source of truth):
+    Account       — every place money can rest (GL classification + member
+                    sub-ledgers that roll up to a GL parent).
+    JournalEntry  — one balanced financial event.
+    JournalLine   — an immutable debit/credit against a single Account.
+    AccountBalance— a rebuildable projection (cache) of an account's totals.
+
+Balances are ALWAYS derived from immutable lines. Mutable balance fields and
+the AccountBalance projection exist only as a performance cache and can be
+reconstructed at any time by replaying JournalLines.
 """
+from decimal import Decimal
+
 from django.conf import settings
 from django.db import models
+from django.db.models import Q
 from django.utils import timezone
 
 from apps.core.exceptions import TransitionError
+from apps.ledger.exceptions import JournalImmutableError
 
 
 class FinancialTransaction(models.Model):
@@ -178,84 +191,233 @@ class FinancialTransaction(models.Model):
             self.mpesa_receipt = mpesa_receipt
 
 
-class LedgerEntry(models.Model):
+
+# ═══════════════════════════════════════════════════════════════════════════
+# DOUBLE-ENTRY CORE
+# ═══════════════════════════════════════════════════════════════════════════
+#
+# The classical accounting equation, enforced structurally:
+#
+#       ASSETS = LIABILITIES + EQUITY + (INCOME − EXPENSE)
+#
+# Every financial event is a JournalEntry whose JournalLines satisfy
+#       Σ(debit amounts) = Σ(credit amounts).
+#
+# Account balance, by normal balance side:
+#       debit-normal  (ASSET, EXPENSE):  balance = Σdebit − Σcredit
+#       credit-normal (LIABILITY,        balance = Σcredit − Σdebit
+#                      EQUITY, INCOME)
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+class Account(models.Model):
     """
-    Immutable, append-only financial record.
+    A node in the Chart of Accounts.
 
-    Every debit and credit is a separate row.
-    NEVER update or delete rows — create a reversal entry instead.
+    One table serves two roles, distinguished by whether `owner`/`fund_*` are set:
 
-    Balance = SUM(amount WHERE direction=CREDIT) - SUM(amount WHERE direction=DEBIT)
+      • GL accounts        — the canonical classification accounts
+                             (M-Pesa Float, Member Contributions Payable,
+                              Fee Revenue, Suspense, …). `parent` is null.
+      • Sub-ledger accounts— one per member-per-fund. `parent` points at the
+                             GL account they roll up into, so a pool balance is
+                             simply the parent's balance and a member balance is
+                             the child's.
+
+    Identity lives in `code` (unique), which makes account resolution idempotent:
+    the same logical account always resolves to the same row.
     """
 
-    class Direction(models.TextChoices):
-        CREDIT = 'CREDIT', 'Credit'   # money into the pool
-        DEBIT  = 'DEBIT',  'Debit'    # money out of the pool
+    class Type(models.TextChoices):
+        ASSET     = 'ASSET',     'Asset'
+        LIABILITY = 'LIABILITY', 'Liability'
+        EQUITY    = 'EQUITY',    'Equity'
+        INCOME    = 'INCOME',    'Income'
+        EXPENSE   = 'EXPENSE',   'Expense'
 
-    class EntryType(models.TextChoices):
-        MEMBER_CONTRIBUTION  = 'MEMBER_CONTRIBUTION',  'Member Contribution'
-        ADVANCE_REPAYMENT    = 'ADVANCE_REPAYMENT',    'Advance Repayment'
-        WELFARE_CONTRIBUTION = 'WELFARE_CONTRIBUTION', 'Welfare Contribution'
-        SHARES_PURCHASE      = 'SHARES_PURCHASE',      'Shares Purchase'
-        REVERSAL_CREDIT      = 'REVERSAL_CREDIT',      'Reversal Credit'
-        DISBURSEMENT         = 'DISBURSEMENT',         'Disbursement'
-        STANDING_ORDER       = 'STANDING_ORDER',       'Standing Order Payout'
-        ROSCA_PAYOUT         = 'ROSCA_PAYOUT',         'ROSCA Payout'
-        ADVANCE_DISBURSEMENT = 'ADVANCE_DISBURSEMENT', 'Emergency Advance Disbursement'
-        WELFARE_CLAIM        = 'WELFARE_CLAIM',        'Welfare Claim Disbursement'
-        REVERSAL_DEBIT       = 'REVERSAL_DEBIT',       'Reversal Debit'
+    # Types whose balance increases on the DEBIT side.
+    DEBIT_NORMAL_TYPES = frozenset({Type.ASSET, Type.EXPENSE})
 
-    # ── Context — exactly one should be set ──────────────────────────────────
-    contribution = models.ForeignKey(
-        'contributions.Contribution', null=True, blank=True,
-        on_delete=models.PROTECT, related_name='ledger_entries',
+    code = models.CharField(
+        max_length=64, unique=True,
+        help_text="Stable Chart-of-Accounts code; account resolution keys on this.",
     )
-    welfare_fund = models.ForeignKey(
-        'contributions.WelfareFund', null=True, blank=True,
-        on_delete=models.PROTECT, related_name='ledger_entries',
-    )
-    shares_fund = models.ForeignKey(
-        'contributions.SharesFund', null=True, blank=True,
-        on_delete=models.PROTECT, related_name='ledger_entries',
+    name   = models.CharField(max_length=255)
+    type   = models.CharField(max_length=10, choices=Type.choices)
+    parent = models.ForeignKey(
+        'self', null=True, blank=True, on_delete=models.PROTECT, related_name='children',
     )
 
-    user       = models.ForeignKey(
-        settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name='ledger_entries',
+    # ── Sub-ledger ownership (null for pure GL accounts) ──────────────────────
+    owner = models.ForeignKey(
+        settings.AUTH_USER_MODEL, null=True, blank=True,
+        on_delete=models.PROTECT, related_name='ledger_accounts',
     )
-    amount     = models.DecimalField(max_digits=14, decimal_places=2)
-    direction  = models.CharField(max_length=6,  choices=Direction.choices)
-    entry_type = models.CharField(max_length=30, choices=EntryType.choices)
+    # Generic link to the owning fund, stored as primitives to avoid circular
+    # FK imports and to keep the ledger independent of fund-type schemas.
+    # fund_type ∈ {'', 'contribution', 'welfare', 'shares', ...}
+    fund_type = models.CharField(max_length=30, blank=True)
+    fund_id   = models.PositiveIntegerField(null=True, blank=True)
 
-    idempotency_key = models.CharField(max_length=128, unique=True, db_index=True)
-    mpesa_receipt   = models.CharField(max_length=50,  null=True, blank=True, db_index=True)
-
-    financial_transaction = models.ForeignKey(
-        FinancialTransaction, on_delete=models.PROTECT, related_name='ledger_entries',
-    )
-    note       = models.TextField(blank=True)
-    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
+    currency  = models.CharField(max_length=3, default='KES')
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
         indexes = [
-            models.Index(fields=['contribution', 'direction', 'created_at'], name='ledger_le_contrib_dir_idx'),
-            models.Index(fields=['welfare_fund',  'direction', 'created_at'], name='ledger_le_welfare_dir_idx'),
-            models.Index(fields=['shares_fund',   'direction', 'created_at'], name='ledger_le_shares_dir_idx'),
-            models.Index(fields=['user',           'created_at'],             name='ledger_le_user_idx'),
+            models.Index(fields=['type'],                        name='ledger_acct_type_idx'),
+            models.Index(fields=['fund_type', 'fund_id'],        name='ledger_acct_fund_idx'),
+            models.Index(fields=['owner', 'fund_type', 'fund_id'], name='ledger_acct_owner_fund_idx'),
         ]
 
+    @property
+    def is_debit_normal(self) -> bool:
+        return self.type in self.DEBIT_NORMAL_TYPES
+
+    def signed(self, debit_total: Decimal, credit_total: Decimal) -> Decimal:
+        """Convert raw debit/credit totals into a normal-balance-aware figure."""
+        if self.is_debit_normal:
+            return debit_total - credit_total
+        return credit_total - debit_total
+
     def __str__(self):
-        return f"LE-{self.id} [{self.direction}/{self.entry_type}] KES {self.amount}"
+        return f"{self.code} · {self.name} [{self.type}]"
+
+
+class JournalEntry(models.Model):
+    """
+    One balanced financial event. Immutable once posted.
+
+    A journal groups ≥2 JournalLines that net to zero. It optionally links to a
+    FinancialTransaction (the orchestration/state-machine layer) and, for
+    corrections, to the JournalEntry it reverses — corrections are always new
+    entries, never mutations.
+    """
+
+    idempotency_key = models.CharField(max_length=128, unique=True, db_index=True)
+    op_type   = models.CharField(
+        max_length=40,
+        help_text="Business operation, e.g. CONTRIBUTION, DISBURSEMENT, FEE, ADJUSTMENT.",
+    )
+    narration = models.TextField(blank=True)
+
+    # Orchestration linkage (nullable: manual adjustments / opening balances
+    # have no FinancialTransaction).
+    financial_transaction = models.ForeignKey(
+        'ledger.FinancialTransaction', null=True, blank=True,
+        on_delete=models.PROTECT, related_name='journals',
+    )
+    # Reversal linkage — never mutate, only reverse.
+    reverses = models.ForeignKey(
+        'self', null=True, blank=True,
+        on_delete=models.PROTECT, related_name='reversed_by',
+    )
+
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, null=True, blank=True,
+        on_delete=models.PROTECT, related_name='posted_journals',
+    )
+    posted_at  = models.DateTimeField(
+        default=timezone.now,
+        help_text="Accounting/value date — may differ from created_at.",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        indexes = [
+            models.Index(fields=['op_type', 'posted_at'], name='ledger_je_optype_posted_idx'),
+        ]
+        verbose_name_plural = 'Journal entries'
+
+    def __str__(self):
+        return f"JE-{self.id} [{self.op_type}]"
 
     def save(self, *args, **kwargs):
         if self.pk:
-            raise ValueError(
-                "LedgerEntry is immutable — "
-                "create a REVERSAL_CREDIT / REVERSAL_DEBIT entry instead of updating."
+            raise JournalImmutableError(
+                f"JournalEntry {self.pk} is immutable — post a reversing entry "
+                "(reverses=<original>) instead of editing it."
             )
         super().save(*args, **kwargs)
 
     def delete(self, *args, **kwargs):
-        raise ValueError(
-            "LedgerEntry cannot be deleted — "
-            "create a REVERSAL_CREDIT / REVERSAL_DEBIT entry instead."
+        raise JournalImmutableError(
+            "JournalEntry cannot be deleted — post a reversing entry instead."
         )
+
+
+class JournalLine(models.Model):
+    """
+    A single immutable debit or credit against one Account.
+
+    Amounts are ALWAYS positive; the `direction` carries the sign. This removes
+    a whole class of sign-handling bugs and makes the balance trigger trivial.
+    """
+
+    class Direction(models.TextChoices):
+        DEBIT  = 'DEBIT',  'Debit'
+        CREDIT = 'CREDIT', 'Credit'
+
+    journal   = models.ForeignKey(
+        JournalEntry, on_delete=models.PROTECT, related_name='lines',
+    )
+    account   = models.ForeignKey(
+        Account, on_delete=models.PROTECT, related_name='lines',
+    )
+    direction = models.CharField(max_length=6, choices=Direction.choices)
+    amount    = models.DecimalField(max_digits=20, decimal_places=4)
+    note      = models.TextField(blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        constraints = [
+            models.CheckConstraint(
+                condition=Q(amount__gt=0), name='ledger_jl_amount_positive',
+            ),
+        ]
+        indexes = [
+            models.Index(fields=['account', 'created_at'], name='ledger_jl_account_created_idx'),
+            models.Index(fields=['journal'],               name='ledger_jl_journal_idx'),
+        ]
+
+    def __str__(self):
+        return f"JL-{self.id} {self.direction} {self.amount} → {self.account_id}"
+
+    def save(self, *args, **kwargs):
+        if self.pk:
+            raise JournalImmutableError(
+                "JournalLine is immutable — post a reversing JournalEntry instead."
+            )
+        super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        raise JournalImmutableError(
+            "JournalLine cannot be deleted — post a reversing JournalEntry instead."
+        )
+
+
+class AccountBalance(models.Model):
+    """
+    A rebuildable projection of an Account's running totals.
+
+    This is a CACHE, not a source of truth: it is updated transactionally by the
+    posting writer and can be fully reconstructed at any time by replaying
+    JournalLines (see balances.recompute_account_balance). A nightly job that
+    asserts projection == replay is both the performance strategy and a
+    continuous reconciliation control.
+    """
+
+    account      = models.OneToOneField(
+        Account, on_delete=models.PROTECT, related_name='balance',
+    )
+    debit_total  = models.DecimalField(max_digits=20, decimal_places=4, default=Decimal('0'))
+    credit_total = models.DecimalField(max_digits=20, decimal_places=4, default=Decimal('0'))
+    updated_at   = models.DateTimeField(auto_now=True)
+
+    @property
+    def balance(self) -> Decimal:
+        """Normal-balance-aware signed balance."""
+        return self.account.signed(self.debit_total, self.credit_total)
+
+    def __str__(self):
+        return f"Bal({self.account.code}) = {self.balance}"
