@@ -193,6 +193,11 @@ CELERY_BEAT_SCHEDULE = {
         'task': 'apps.ledger.tasks.recover_stale_processing_transactions',
         'schedule': crontab(minute='*/30'),  # every 30 minutes
     },
+    # Ledger integrity: trial balance == 0 and projection == replay — runs 2am EAT
+    'reconcile-ledger': {
+        'task': 'apps.ledger.tasks.reconcile_ledger',
+        'schedule': crontab(minute=0, hour=2),
+    },
     # Fire due reminders every 30 minutes
     'fire-due-reminders': {
         'task': 'apps.reminders.tasks.fire_due_reminders',
