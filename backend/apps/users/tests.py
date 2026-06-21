@@ -155,6 +155,21 @@ class KYCAdminDecisionTests(TestCase):
         self.assertIn("Blurry ID", ev.payload["message"])
 
 
+class AdminDashboardTests(TestCase):
+    """The custom admin index renders the platform overview."""
+
+    def test_index_shows_overview(self):
+        staff = get_user_model().objects.create_user(phone_number="254700000099")
+        staff.is_staff = True
+        staff.is_superuser = True
+        staff.save()
+        self.client.force_login(staff)
+        resp = self.client.get("/admin/")
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, "Platform overview")
+        self.assertContains(resp, "KYC pending review")
+
+
 class SeedAdminRolesTests(TestCase):
     """The seed_admin_roles command provisions scoped staff groups."""
 

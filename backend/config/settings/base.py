@@ -35,7 +35,7 @@ INSTALLED_APPS = [
     'daphne',
     'channels',
 
-    'django.contrib.admin',
+    'config.apps.WeplAdminConfig',  # custom admin site (overview dashboard)
     'django.contrib.auth',
     'django.contrib.contenttypes',
     'django.contrib.sessions',
@@ -82,7 +82,7 @@ AUTH_USER_MODEL = 'users.User'
 TEMPLATES = [
     {
         'BACKEND': 'django.template.backends.django.DjangoTemplates',
-        'DIRS': [],
+        'DIRS': [BASE_DIR / 'templates'],
         'APP_DIRS': True,
         'OPTIONS': {
             'context_processors': [

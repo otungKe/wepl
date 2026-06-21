@@ -10,19 +10,19 @@ from .models import User, KYCProfile
 # USER ADMIN
 # ─────────────────────────────────────────────────────────────
 
-@admin.action(description='Deactivate selected users (blocks login)')
+@admin.action(description='Deactivate selected users (blocks login)', permissions=['change'])
 def deactivate_users(modeladmin, request, queryset):
     n = queryset.update(is_active=False)
     modeladmin.message_user(request, f"{n} user(s) deactivated.")
 
 
-@admin.action(description='Reactivate selected users')
+@admin.action(description='Reactivate selected users', permissions=['change'])
 def activate_users(modeladmin, request, queryset):
     n = queryset.update(is_active=True)
     modeladmin.message_user(request, f"{n} user(s) reactivated.")
 
 
-@admin.action(description='Reset PIN (user must set a new one)')
+@admin.action(description='Reset PIN (user must set a new one)', permissions=['change'])
 def reset_pin(modeladmin, request, queryset):
     n = queryset.update(pin='', is_pin_set=False)
     modeladmin.message_user(request, f"{n} user(s) PIN cleared — they'll set a new PIN on next login.")
@@ -84,7 +84,7 @@ def _notify_kyc_decision(kyc):
         )
 
 
-@admin.action(description='Approve selected KYC submissions')
+@admin.action(description='Approve selected KYC submissions', permissions=['change'])
 def approve_kyc(modeladmin, request, queryset):
     n = 0
     for kyc in queryset.filter(status='pending'):
@@ -98,7 +98,7 @@ def approve_kyc(modeladmin, request, queryset):
     modeladmin.message_user(request, f"{n} KYC submission(s) approved and applicant(s) notified.")
 
 
-@admin.action(description='Reject selected KYC submissions')
+@admin.action(description='Reject selected KYC submissions', permissions=['change'])
 def reject_kyc(modeladmin, request, queryset):
     n = 0
     for kyc in queryset.filter(status='pending'):
