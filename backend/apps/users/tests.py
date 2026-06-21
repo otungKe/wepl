@@ -130,3 +130,39 @@ class KYCVerificationEmailTaskTests(TestCase):
         self.assertEqual(kwargs["json"]["sender"]["email"], "sender@example.com")
         self.assertEqual(kwargs["json"]["to"], [{"email": "tester@example.com"}])
         self.assertIn(verify_url, kwargs["json"]["textContent"])
+
+
+class KYCAdminDecisionTests(TestCase):
+    """Approving/rejecting KYC must notify the applicant via the event bus."""
+
+    def test_approval_emits_event(self):
+        from types import SimpleNamespace
+        from apps.core.models import OutboxEvent
+        from apps.users.admin import _notify_kyc_decision
+
+        _notify_kyc_decision(SimpleNamespace(status="approved", user_id=11, rejection_reason=""))
+        self.assertTrue(
+            OutboxEvent.objects.filter(event_type="kyc_approved", payload__user_id=11).exists()
+        )
+
+    def test_rejection_emits_event_with_reason(self):
+        from types import SimpleNamespace
+        from apps.core.models import OutboxEvent
+        from apps.users.admin import _notify_kyc_decision
+
+        _notify_kyc_decision(SimpleNamespace(status="rejected", user_id=12, rejection_reason="Blurry ID"))
+        ev = OutboxEvent.objects.get(event_type="kyc_rejected", payload__user_id=12)
+        self.assertIn("Blurry ID", ev.payload["message"])
+
+
+class SeedAdminRolesTests(TestCase):
+    """The seed_admin_roles command provisions scoped staff groups."""
+
+    def test_creates_roles_with_permissions(self):
+        from django.contrib.auth.models import Group
+        from django.core.management import call_command
+
+        call_command("seed_admin_roles")
+        for name in ["KYC Reviewers", "Support", "Finance & Compliance"]:
+            group = Group.objects.get(name=name)
+            self.assertTrue(group.permissions.exists(), f"{name} has no permissions")
