@@ -33,7 +33,7 @@ services:
       - key: ALLOWED_HOSTS
         value: wepl-api.onrender.com
       - key: CORS_ALLOWED_ORIGINS
-        value: https://wepl-api.onrender.com
+        value: https://wepl-api.onrender.com,https://wepl-web.onrender.com
       # OTP delivery: 'console' logs the code (visible in logs) instead of sending
       # real SMS. STAGING_OTP_BYPASS is forced off here — production refuses to boot
       # with it enabled (see config/settings/production.py). Setting it explicitly
@@ -131,3 +131,19 @@ services:
         sync: false
       - key: AWS_SECRET_ACCESS_KEY
         sync: false
+
+  - type: web
+    name: wepl-web
+    runtime: node
+    rootDir: web
+    plan: free
+    buildCommand: npm install && npm run build
+    startCommand: node node_modules/next/dist/bin/next start
+    healthCheckPath: /
+    envVars:
+      - key: NODE_VERSION
+        value: "20"
+      - key: NEXT_PUBLIC_API_URL
+        value: https://wepl-api.onrender.com/api
+      - key: NEXT_PUBLIC_WS_URL
+        value: wss://wepl-api.onrender.com
