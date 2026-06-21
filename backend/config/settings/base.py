@@ -232,3 +232,20 @@ SMS_BACKEND = config('SMS_BACKEND', default='')
 AT_API_KEY   = config('AT_API_KEY',   default='')
 AT_USERNAME  = config('AT_USERNAME',  default='sandbox')
 AT_SENDER_ID = config('AT_SENDER_ID', default='WEPL')
+
+# ─── Email delivery (KYC verification links, etc.) ────────────────────────────
+# Defaults to the console backend, which writes the full message — including the
+# KYC verification link — to the logs, mirroring SMS_BACKEND=console for OTP.
+# Without this, production fell back to Django's SMTP default (localhost:25) and
+# silently failed: nothing sent, nothing logged. For real delivery, set
+# EMAIL_BACKEND to an SMTP backend and provide the EMAIL_HOST_* credentials.
+EMAIL_BACKEND = config(
+    'EMAIL_BACKEND',
+    default='django.core.mail.backends.console.EmailBackend',
+)
+DEFAULT_FROM_EMAIL  = config('DEFAULT_FROM_EMAIL', default='WEPL <no-reply@wepl.app>')
+EMAIL_HOST          = config('EMAIL_HOST', default='')
+EMAIL_PORT          = config('EMAIL_PORT', default=587, cast=int)
+EMAIL_HOST_USER     = config('EMAIL_HOST_USER', default='')
+EMAIL_HOST_PASSWORD = config('EMAIL_HOST_PASSWORD', default='')
+EMAIL_USE_TLS       = config('EMAIL_USE_TLS', default=True, cast=bool)

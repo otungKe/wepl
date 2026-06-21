@@ -43,6 +43,13 @@ services:
         value: "false"
       - key: SMS_BACKEND
         value: console
+      # Email delivery: 'console' writes KYC verification emails (with their link)
+      # to the logs, same as SMS_BACKEND. Swap EMAIL_BACKEND for an SMTP backend
+      # and add EMAIL_HOST_* creds to send real mail.
+      - key: EMAIL_BACKEND
+        value: django.core.mail.backends.console.EmailBackend
+      - key: DEFAULT_FROM_EMAIL
+        value: WEPL <no-reply@wepl.app>
       - key: DB_NAME
         fromDatabase:
           name: wepl-db
