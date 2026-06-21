@@ -22,6 +22,14 @@ const LOCK_AFTER_MS = 10_000; // 10 seconds
 // inside the functions that use it, only when not in Expo Go.
 const IS_EXPO_GO = Constants.appOwnership === "expo";
 
+// Remote push needs Firebase/FCM on Android: a google-services.json plus the
+// expo-notifications config plugin. Until that's wired up, calling
+// getDevicePushTokenAsync() hits an uninitialised FirebaseApp and crashes the
+// release build *natively* — which JS try/catch cannot stop. So gate the whole
+// push subsystem behind an explicit flag that stays off until Firebase exists.
+// Flip EXPO_PUBLIC_PUSH_ENABLED=true (and ship google-services.json) to enable.
+const PUSH_ENABLED = process.env.EXPO_PUBLIC_PUSH_ENABLED === "true";
+
 /**
  * Request notification permission, fetch the native FCM/APNS device token,
  * and register it with the WEPL backend so the server can send real-time
@@ -34,9 +42,10 @@ const IS_EXPO_GO = Constants.appOwnership === "expo";
  * Fails silently — push is an enhancement, not a core requirement.
  */
 async function registerPushToken() {
-  // Expo Go does not support device push tokens since SDK 53.
+  // Expo Go does not support device push tokens since SDK 53, and without
+  // Firebase configured the native FCM call crashes the build — skip both.
   // The module is never required here so its side-effects never run.
-  if (IS_EXPO_GO) return;
+  if (IS_EXPO_GO || !PUSH_ENABLED) return;
 
   try {
     // Lazy require — only loads the module in real builds, never in Expo Go.
@@ -197,9 +206,10 @@ export default function TabsLayout() {
   }, []);
 
   // Show foreground notifications as banners and update the unread badge.
-  // Only runs in real builds — Expo Go does not support push notifications.
+  // Only runs in real builds with push enabled — Expo Go and Firebase-less
+  // builds skip this so the notifications native module is never touched.
   useEffect(() => {
-    if (IS_EXPO_GO) return;
+    if (IS_EXPO_GO || !PUSH_ENABLED) return;
 
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const Notifications = require("expo-notifications");
