@@ -1,4 +1,5 @@
 from django.urls import path
+from rest_framework_simplejwt.views import TokenRefreshView
 from .views import (
     RequestOTPView,
     VerifyOTPView,
@@ -18,6 +19,14 @@ from .views import (
 )
 
 urlpatterns = [
+    # TOKEN REFRESH
+    # The mobile client (api/client.ts) refreshes its 60-minute access token here
+    # when it expires. SimpleJWT's TokenRefreshView copies all non-reserved claims
+    # onto the new access token, so the custom `stage` claim minted by issue_tokens
+    # survives the refresh. ROTATE_REFRESH_TOKENS + BLACKLIST_AFTER_ROTATION are on,
+    # so a rotated refresh token is returned and the old one is blacklisted.
+    path('token/refresh/', TokenRefreshView.as_view()),
+
     # OTP FLOW
     path('otp/request/', RequestOTPView.as_view()),
     path('otp/verify/',  VerifyOTPView.as_view()),

@@ -3,7 +3,12 @@ import subprocess
 import sys
 from pathlib import Path
 
-from django.test import SimpleTestCase
+from django.contrib.auth import get_user_model
+from django.test import SimpleTestCase, TestCase
+from rest_framework.test import APIClient
+from rest_framework_simplejwt.tokens import AccessToken
+
+from apps.users.auth import STAGE_ACTIVE, STAGE_CLAIM, issue_tokens
 
 # .../backend — the directory that contains the importable `config` package.
 BACKEND_DIR = Path(__file__).resolve().parents[2]
@@ -53,3 +58,29 @@ class ProductionOtpBypassGuardTests(SimpleTestCase):
             msg="production settings booted with STAGING_OTP_BYPASS enabled",
         )
         self.assertIn("STAGING_OTP_BYPASS", result.stderr)
+
+
+class TokenRefreshEndpointTests(TestCase):
+    """The mobile client depends on POST /api/users/token/refresh/ to renew its
+    60-minute access token; without it, testers are logged out every hour."""
+
+    URL = "/api/users/token/refresh/"
+
+    def setUp(self):
+        self.user = get_user_model().objects.create_user(phone_number="254700000001")
+        self.tokens = issue_tokens(self.user, STAGE_ACTIVE)
+        self.client = APIClient()
+
+    def test_refresh_returns_new_access_token(self):
+        resp = self.client.post(self.URL, {"refresh": self.tokens["refresh"]}, format="json")
+        self.assertEqual(resp.status_code, 200, msg=resp.content)
+        self.assertIn("access", resp.data)
+
+    def test_refresh_preserves_stage_claim(self):
+        resp = self.client.post(self.URL, {"refresh": self.tokens["refresh"]}, format="json")
+        access = AccessToken(resp.data["access"])
+        self.assertEqual(access[STAGE_CLAIM], STAGE_ACTIVE)
+
+    def test_invalid_refresh_token_is_rejected(self):
+        resp = self.client.post(self.URL, {"refresh": "not-a-real-token"}, format="json")
+        self.assertEqual(resp.status_code, 401)
