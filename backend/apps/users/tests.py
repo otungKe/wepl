@@ -104,3 +104,29 @@ class KYCVerificationEmailTaskTests(TestCase):
         msg = mail.outbox[0]
         self.assertEqual(msg.to, ["tester@example.com"])
         self.assertIn(verify_url, msg.body)
+
+    @override_settings(
+        BREVO_API_KEY="xkeysib-test",
+        DEFAULT_FROM_EMAIL="Wepl App <sender@example.com>",
+    )
+    def test_task_uses_brevo_http_api_when_key_set(self):
+        from unittest.mock import patch
+
+        verify_url = "https://wepl-api.onrender.com/api/users/kyc/verify-email/?token=xyz"
+        with patch("apps.users.tasks.requests.post") as post:
+            post.return_value.raise_for_status.return_value = None
+            send_kyc_verification_email.apply(kwargs={
+                "email": "tester@example.com",
+                "given_names": "Tester",
+                "verify_url": verify_url,
+                "user_id": 1,
+            })
+
+        # No SMTP used; the Brevo API was called with the verified sender + link.
+        self.assertEqual(len(mail.outbox), 0)
+        post.assert_called_once()
+        _, kwargs = post.call_args
+        self.assertEqual(kwargs["headers"]["api-key"], "xkeysib-test")
+        self.assertEqual(kwargs["json"]["sender"]["email"], "sender@example.com")
+        self.assertEqual(kwargs["json"]["to"], [{"email": "tester@example.com"}])
+        self.assertIn(verify_url, kwargs["json"]["textContent"])

@@ -43,10 +43,13 @@ services:
         value: "false"
       - key: SMS_BACKEND
         value: console
-      # Email delivery via Brevo SMTP (free tier). The two secrets below are
-      # sync:false — set them on the service: Brevo → SMTP & API → SMTP tab →
-      # EMAIL_HOST_USER = your SMTP login (an email), EMAIL_HOST_PASSWORD = the
-      # SMTP key. DEFAULT_FROM_EMAIL must be a Brevo-verified sender/domain.
+      # Email delivery via Brevo. Render's free tier blocks outbound SMTP, so we
+      # send over Brevo's HTTP API (port 443): set BREVO_API_KEY (secret) from
+      # Brevo → SMTP & API → API Keys. The SMTP_* vars below are an unused
+      # fallback kept for non-blocked hosts. DEFAULT_FROM_EMAIL must be a
+      # Brevo-verified sender/domain.
+      - key: BREVO_API_KEY
+        sync: false
       - key: EMAIL_BACKEND
         value: django.core.mail.backends.smtp.EmailBackend
       - key: EMAIL_HOST

@@ -253,3 +253,7 @@ EMAIL_USE_TLS       = config('EMAIL_USE_TLS', default=True, cast=bool)
 # the sender (the KYC email is sent from a Celery worker; without a timeout a
 # blocked send ties the worker up indefinitely).
 EMAIL_TIMEOUT       = config('EMAIL_TIMEOUT', default=15, cast=int)
+# Brevo HTTP API key (port 443). When set, transactional email is delivered via
+# Brevo's API instead of SMTP — required on hosts (e.g. Render free tier) that
+# block outbound SMTP. Leave blank to use the EMAIL_BACKEND above (dev/CI).
+BREVO_API_KEY       = config('BREVO_API_KEY', default='')
