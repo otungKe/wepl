@@ -1,120 +1,84 @@
 'use client'
 import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
-import {
-  Users, Compass, Bell, Settings, LogOut, User,
-  ChevronDown, Building2,
-} from 'lucide-react'
-import { cn } from '@/lib/utils'
-import { Avatar } from '@/components/ui/Avatar'
+import { useEffect, useState } from 'react'
+import { Users, Compass, Bell, User as UserIcon, Settings, LogOut, Building2, ShieldCheck } from 'lucide-react'
 import { useAuthStore } from '@/store/auth'
-import { useState } from 'react'
+import { notificationsApi } from '@/lib/api'
+import { Avatar } from '@/components/ui/Avatar'
+import { cn } from '@/lib/utils'
 
-const NAV_ITEMS = [
-  { href: '/communities', icon: Users,    label: 'Communities' },
-  { href: '/discover',    icon: Compass,  label: 'Discover' },
-  { href: '/notifications',icon: Bell,   label: 'Notifications' },
+const NAV = [
+  { href: '/communities',  label: 'Communities',  icon: Users },
+  { href: '/discover',     label: 'Discover',     icon: Compass },
+  { href: '/notifications',label: 'Notifications',icon: Bell, key: 'notifications' },
+  { href: '/kyc',          label: 'Verification', icon: ShieldCheck },
+  { href: '/profile',      label: 'Profile',      icon: UserIcon },
+  { href: '/settings',     label: 'Settings',     icon: Settings },
 ]
 
-const BOTTOM_ITEMS = [
-  { href: '/profile',  icon: User,     label: 'Profile' },
-  { href: '/settings', icon: Settings, label: 'Settings' },
-]
+export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
+  const pathname = usePathname()
+  const router = useRouter()
+  const user = useAuthStore(s => s.user)
+  const logout = useAuthStore(s => s.logout)
+  const [unread, setUnread] = useState(0)
 
-export function Sidebar() {
-  const pathname  = usePathname()
-  const router    = useRouter()
-  const { user, logout } = useAuthStore()
-  const [expanded, setExpanded] = useState(true)
+  useEffect(() => {
+    let alive = true
+    notificationsApi.unreadCount().then(n => alive && setUnread(n)).catch(() => {})
+    const t = setInterval(() => notificationsApi.unreadCount().then(n => alive && setUnread(n)).catch(() => {}), 30000)
+    return () => { alive = false; clearInterval(t) }
+  }, [pathname])
 
-  const handleLogout = () => { logout(); router.push('/') }
+  function handleLogout() {
+    logout()
+    router.replace('/')
+  }
 
   return (
-    <aside
-      className={cn(
-        'flex flex-col bg-white border-r border-border h-screen sticky top-0 flex-shrink-0 transition-all duration-200',
-        expanded ? 'w-60' : 'w-16'
-      )}
-    >
-      {/* Logo */}
-      <div className="flex items-center gap-3 px-4 py-5 border-b border-divider">
-        <div className="w-8 h-8 rounded-lg bg-primary flex items-center justify-center flex-shrink-0">
-          <Building2 size={18} className="text-white" />
+    <aside className="flex h-full w-64 shrink-0 flex-col border-r border-border bg-surface">
+      <div className="flex items-center gap-2.5 px-5 py-5">
+        <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-primary">
+          <Building2 size={20} className="text-white" />
         </div>
-        {expanded && (
-          <span className="font-bold text-lg text-text tracking-tight">WEPL</span>
-        )}
-        <button
-          onClick={() => setExpanded(e => !e)}
-          className={cn('ml-auto p-1 rounded hover:bg-divider text-text-muted transition-transform', !expanded && 'rotate-180')}
-        >
-          <ChevronDown size={16} className="-rotate-90" />
-        </button>
+        <span className="text-xl font-bold text-text">WEPL</span>
       </div>
 
-      {/* Main nav */}
-      <nav className="flex-1 py-3 overflow-y-auto no-scrollbar">
-        {NAV_ITEMS.map(({ href, icon: Icon, label }) => {
+      <nav className="flex-1 space-y-1 px-3">
+        {NAV.map(({ href, label, icon: Icon, key }) => {
           const active = pathname === href || pathname.startsWith(href + '/')
           return (
             <Link
               key={href}
               href={href}
-              title={!expanded ? label : undefined}
+              onClick={onNavigate}
               className={cn(
-                'flex items-center gap-3 mx-2 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors',
-                active
-                  ? 'bg-primary-pale text-primary'
-                  : 'text-text-secondary hover:bg-primary-bg hover:text-text'
+                'flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors',
+                active ? 'bg-primary-pale text-primary' : 'text-text-secondary hover:bg-divider',
               )}
             >
-              <Icon size={18} className="flex-shrink-0" />
-              {expanded && <span>{label}</span>}
+              <Icon size={19} />
+              <span className="flex-1">{label}</span>
+              {key === 'notifications' && unread > 0 && (
+                <span className="rounded-full bg-accent px-1.5 text-xs font-semibold text-white">{unread > 99 ? '99+' : unread}</span>
+              )}
             </Link>
           )
         })}
       </nav>
 
-      {/* Bottom: profile + settings */}
-      <div className="py-3 border-t border-divider">
-        {BOTTOM_ITEMS.map(({ href, icon: Icon, label }) => (
-          <Link
-            key={href}
-            href={href}
-            title={!expanded ? label : undefined}
-            className={cn(
-              'flex items-center gap-3 mx-2 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors',
-              pathname === href
-                ? 'bg-primary-pale text-primary'
-                : 'text-text-secondary hover:bg-primary-bg hover:text-text'
-            )}
-          >
-            <Icon size={18} className="flex-shrink-0" />
-            {expanded && <span>{label}</span>}
-          </Link>
-        ))}
-
-        {/* User info */}
-        {user && (
-          <div className={cn('flex items-center gap-3 mx-2 mt-2 px-3 py-2', !expanded && 'justify-center')}>
-            <Avatar name={user.name} src={user.profile_photo} size="sm" />
-            {expanded && (
-              <div className="flex-1 min-w-0">
-                <p className="text-sm font-medium text-text truncate">{user.name}</p>
-                <p className="text-xs text-text-muted truncate">{user.phone_number}</p>
-              </div>
-            )}
-            {expanded && (
-              <button
-                onClick={handleLogout}
-                className="p-1 rounded hover:bg-divider text-text-muted"
-                title="Sign out"
-              >
-                <LogOut size={15} />
-              </button>
-            )}
+      <div className="border-t border-divider p-3">
+        <div className="flex items-center gap-3 rounded-lg px-2 py-2">
+          <Avatar name={user?.name || user?.phone_number || '?'} src={user?.profile_photo} size={36} />
+          <div className="min-w-0 flex-1">
+            <p className="truncate text-sm font-semibold text-text">{user?.name || 'WEPL user'}</p>
+            <p className="truncate text-xs text-text-muted">{user?.phone_number}</p>
           </div>
-        )}
+          <button onClick={handleLogout} title="Log out" className="rounded-lg p-1.5 text-text-muted hover:bg-divider hover:text-error">
+            <LogOut size={18} />
+          </button>
+        </div>
       </div>
     </aside>
   )

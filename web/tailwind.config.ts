@@ -76,10 +76,14 @@ const config: Config = {
           '0%':   { opacity: '0' },
           '100%': { opacity: '1' },
         },
+        shimmer: {
+          '100%': { transform: 'translateX(100%)' },
+        },
       },
       animation: {
         slideUp: 'slideUp 0.2s ease-out',
         fadeIn:  'fadeIn 0.15s ease-out',
+        shimmer: 'shimmer 1.5s infinite',
       },
     },
   },

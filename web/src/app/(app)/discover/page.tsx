@@ -1,78 +1,75 @@
 'use client'
-import { useEffect, useState, useCallback } from 'react'
-import { communities as commApi } from '@/lib/api'
-import { Avatar } from '@/components/ui/Avatar'
+import { useEffect, useState } from 'react'
+import { useRouter } from 'next/navigation'
+import { Compass, Search, Users } from 'lucide-react'
+import { communities, apiError, type Community } from '@/lib/api'
+import { PageHeader } from '@/components/app/PageHeader'
 import { Button } from '@/components/ui/Button'
+import { Avatar } from '@/components/ui/Avatar'
 import { EmptyState } from '@/components/ui/EmptyState'
-import { PageLoader } from '@/components/ui/Spinner'
-import { Input } from '@/components/ui/Input'
-import { Compass, Globe } from 'lucide-react'
+import { Skeleton } from '@/components/ui/Spinner'
 import { toast } from 'sonner'
-import Link from 'next/link'
-
-interface Community {
-  id: string; name: string; description: string; member_count: number; community_photo?: string
-}
 
 export default function DiscoverPage() {
-  const [list, setList]       = useState<Community[]>([])
+  const router = useRouter()
+  const [items, setItems] = useState<Community[]>([])
   const [loading, setLoading] = useState(true)
-  const [search, setSearch]   = useState('')
-  const [joining, setJoining] = useState<string | null>(null)
+  const [q, setQ] = useState('')
+  const [pending, setPending] = useState<number | null>(null)
 
-  const load = useCallback(async () => {
-    try {
-      const { data } = await commApi.discover()
-      setList(data.results ?? data)
-    } catch { toast.error('Failed to load communities') }
+  async function load(query = '') {
+    setLoading(true)
+    try { setItems(await communities.discover(query || undefined)) }
+    catch (err) { toast.error(apiError(err)) }
     finally { setLoading(false) }
-  }, [])
+  }
+  useEffect(() => { load() }, [])
 
-  useEffect(() => { load() }, [load])
+  useEffect(() => {
+    const t = setTimeout(() => load(q), 350)
+    return () => clearTimeout(t)
+  }, [q])
 
-  const filtered = list.filter(c => c.name.toLowerCase().includes(search.toLowerCase()))
+  async function join(c: Community) {
+    setPending(c.id)
+    try {
+      if (c.join_policy === 'open') { await communities.join(c.id); toast.success(`Joined ${c.name}`); router.push(`/community/${c.id}`) }
+      else { await communities.requestJoin(c.id); toast.success('Request sent') }
+      load(q)
+    } catch (err) { toast.error(apiError(err)) } finally { setPending(null) }
+  }
 
   return (
-    <div className="max-w-2xl mx-auto px-4 py-6">
-      <div className="flex items-center gap-3 mb-6">
-        <Globe size={22} className="text-primary" />
-        <h1 className="text-2xl font-bold text-text">Discover</h1>
+    <div>
+      <PageHeader title="Discover" subtitle="Find public communities to join" />
+      <div className="relative mb-4">
+        <Search size={18} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-text-muted" />
+        <input value={q} onChange={e => setQ(e.target.value)} placeholder="Search public communities"
+          className="h-11 w-full rounded-lg border border-border bg-white pl-10 pr-3 text-base focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20" />
       </div>
 
-      <Input
-        placeholder="Search public communities…"
-        value={search}
-        onChange={e => setSearch(e.target.value)}
-        className="mb-4"
-      />
-
-      {loading ? <PageLoader /> : filtered.length === 0 ? (
-        <EmptyState icon={Compass} title="No communities found" description="Try a different search term." />
+      {loading ? (
+        <div className="grid gap-3 sm:grid-cols-2">{Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-20" />)}</div>
+      ) : items.length === 0 ? (
+        <EmptyState icon={Compass} title="Nothing to discover" description="There are no public communities matching your search." />
       ) : (
-        <div className="space-y-3">
-          {filtered.map(c => (
-            <div key={c.id} className="flex items-center gap-4 bg-white rounded-lg px-4 py-4 shadow-card">
-              <Avatar name={c.name} src={c.community_photo} size="lg" />
-              <div className="flex-1 min-w-0">
-                <p className="font-semibold text-text">{c.name}</p>
-                {c.description && <p className="text-sm text-text-secondary mt-0.5 line-clamp-2">{c.description}</p>}
-                <p className="text-xs text-text-muted mt-1">{c.member_count} members</p>
+        <div className="grid gap-3 sm:grid-cols-2">
+          {items.map(c => (
+            <div key={c.id} className="flex items-center gap-3 rounded-lg border border-border bg-surface p-4">
+              <Avatar name={c.name} src={c.community_photo} size={44} />
+              <div className="min-w-0 flex-1">
+                <p className="truncate font-semibold text-text">{c.name}</p>
+                <p className="flex items-center gap-1 text-sm text-text-muted"><Users size={13} /> {c.member_count}</p>
               </div>
-              <Button
-                size="sm" variant="secondary"
-                loading={joining === c.id}
-                onClick={async () => {
-                  setJoining(c.id)
-                  try {
-                    // Public discovery join uses community id
-                    await commApi.join(c.id)
-                    toast.success('Join request sent!')
-                  } catch { toast.error('Could not send request') }
-                  finally { setJoining(null) }
-                }}
-              >
-                Request
-              </Button>
+              {c.is_member ? (
+                <Button size="sm" variant="outline" onClick={() => router.push(`/community/${c.id}`)}>Open</Button>
+              ) : c.join_request_status === 'PENDING' ? (
+                <Button size="sm" variant="ghost" disabled>Requested</Button>
+              ) : (
+                <Button size="sm" loading={pending === c.id} onClick={() => join(c)}>
+                  {c.join_policy === 'open' ? 'Join' : 'Request'}
+                </Button>
+              )}
             </div>
           ))}
         </div>

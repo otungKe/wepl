@@ -2,54 +2,47 @@
 import { useState, Suspense } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import Link from 'next/link'
+import { AuthShell } from '@/components/app/AuthShell'
 import { Input } from '@/components/ui/Input'
 import { Button } from '@/components/ui/Button'
-import { Building2, ArrowLeft } from 'lucide-react'
-import { auth } from '@/lib/api'
+import { auth, apiError } from '@/lib/api'
 import { saveTokens } from '@/lib/auth'
 import { useAuthStore } from '@/store/auth'
-import { toast } from 'sonner'
 
-type Phase = 'phone' | 'pin'
-
-export default function LoginPage() {
-  return (
-    <Suspense>
-      <LoginForm />
-    </Suspense>
-  )
+function normalizePhone(raw: string): string {
+  const d = raw.replace(/\D/g, '')
+  if (d.startsWith('0')) return '254' + d.slice(1)
+  if (d.startsWith('7') || d.startsWith('1')) return '254' + d
+  return d
 }
 
 function LoginForm() {
-  const searchParams = useSearchParams()
-  const isRegister   = searchParams.get('mode') === 'register'
-  const router       = useRouter()
+  const params = useSearchParams()
+  const isRegister = params.get('mode') === 'register'
+  const router = useRouter()
   const { setPendingPhone, login } = useAuthStore()
 
-  const [phase, setPhase]       = useState<Phase>('phone')
-  const [phone, setPhone]       = useState('')
-  const [pin, setPin]           = useState('')
-  const [loading, setLoading]   = useState(false)
-  const [error, setError]       = useState('')
+  const [phase, setPhase] = useState<'phone' | 'pin'>('phone')
+  const [phone, setPhone] = useState('')
+  const [pin, setPin] = useState('')
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState('')
 
   async function handlePhone(e: React.FormEvent) {
     e.preventDefault(); setError('')
-    if (!phone.trim()) return
+    const normalized = normalizePhone(phone)
+    if (!/^2547\d{8}$/.test(normalized)) { setError('Enter a valid Kenyan phone number'); return }
     setLoading(true)
     try {
       if (isRegister) {
-        await auth.requestOtp(phone)
-        setPendingPhone(phone)
+        await auth.requestOtp(normalized)
+        setPendingPhone(normalized)
         router.push('/otp')
       } else {
+        setPendingPhone(normalized)
         setPhase('pin')
       }
-    } catch (err: unknown) {
-      const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail
-      setError(msg ?? 'Something went wrong. Please try again.')
-    } finally {
-      setLoading(false)
-    }
+    } catch (err) { setError(apiError(err)) } finally { setLoading(false) }
   }
 
   async function handlePin(e: React.FormEvent) {
@@ -57,92 +50,44 @@ function LoginForm() {
     if (pin.length !== 6) { setError('Enter your 6-digit PIN'); return }
     setLoading(true)
     try {
-      const { data } = await auth.login(phone, pin)
-      // Save tokens before the profile call — it requires the bearer token.
+      const { data } = await auth.login(normalizePhone(phone), pin)
       saveTokens(data.access, data.refresh)
-      const profile  = await auth.profile()
+      const profile = await auth.profile()
       login(data.access, data.refresh, profile.data)
       router.push('/communities')
-    } catch {
-      setError('Incorrect phone number or PIN.')
-    } finally {
-      setLoading(false)
-    }
+    } catch (err) { setError(apiError(err, 'Incorrect phone number or PIN.')) } finally { setLoading(false) }
+  }
+
+  if (phase === 'pin') {
+    return (
+      <AuthShell title="Enter your PIN" subtitle={`Signing in as ${normalizePhone(phone)}`} onBack={() => { setPhase('phone'); setPin(''); setError('') }} backLabel="Change number">
+        <form onSubmit={handlePin} className="flex flex-col gap-5">
+          <Input label="6-digit PIN" type="password" inputMode="numeric" maxLength={6} placeholder="••••••"
+            value={pin} onChange={e => setPin(e.target.value.replace(/\D/g, ''))} error={error} autoFocus />
+          <Button type="submit" size="lg" loading={loading} fullWidth>Sign in</Button>
+          <div className="text-center"><Link href="/forgot-pin" className="text-sm font-medium text-primary">Forgot PIN?</Link></div>
+        </form>
+      </AuthShell>
+    )
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-primary-bg px-4">
-      <div className="w-full max-w-sm">
-        {/* Back */}
-        <Link href="/" className="inline-flex items-center gap-1.5 text-sm text-text-secondary hover:text-text mb-8">
-          <ArrowLeft size={16} /> Back
-        </Link>
-
-        {/* Logo */}
-        <div className="flex items-center gap-3 mb-8">
-          <div className="w-10 h-10 rounded-xl bg-primary flex items-center justify-center">
-            <Building2 size={22} className="text-white" />
-          </div>
-          <span className="text-2xl font-bold text-text">WEPL</span>
-        </div>
-
-        {phase === 'phone' ? (
-          <>
-            <h1 className="text-2xl font-bold mb-1">{isRegister ? 'Create account' : 'Sign in'}</h1>
-            <p className="text-text-secondary mb-8">
-              {isRegister ? 'Enter your phone number to get started.' : 'Enter your phone number to continue.'}
-            </p>
-            <form onSubmit={handlePhone} className="flex flex-col gap-5">
-              <Input
-                label="Phone number"
-                type="tel"
-                placeholder="+254 7XX XXX XXX"
-                value={phone}
-                onChange={e => setPhone(e.target.value)}
-                error={error}
-                autoFocus
-              />
-              <Button type="submit" loading={loading} size="lg">
-                {isRegister ? 'Send OTP' : 'Continue'}
-              </Button>
-            </form>
-            <p className="mt-6 text-center text-sm text-text-secondary">
-              {isRegister
-                ? <>Already have an account? <Link href="/login" className="text-primary font-medium">Sign in</Link></>
-                : <>New to WEPL? <Link href="/login?mode=register" className="text-primary font-medium">Create account</Link></>
-              }
-            </p>
-          </>
-        ) : (
-          <>
-            <button
-              onClick={() => { setPhase('phone'); setPin(''); setError('') }}
-              className="inline-flex items-center gap-1.5 text-sm text-text-secondary hover:text-text mb-6"
-            >
-              <ArrowLeft size={16} /> {phone}
-            </button>
-            <h1 className="text-2xl font-bold mb-1">Enter your PIN</h1>
-            <p className="text-text-secondary mb-8">Use your 6-digit security PIN.</p>
-            <form onSubmit={handlePin} className="flex flex-col gap-5">
-              <Input
-                label="PIN"
-                type="password"
-                inputMode="numeric"
-                maxLength={6}
-                placeholder="••••••"
-                value={pin}
-                onChange={e => setPin(e.target.value.replace(/\D/g, ''))}
-                error={error}
-                autoFocus
-              />
-              <Button type="submit" loading={loading} size="lg">Sign In</Button>
-              <div className="text-center">
-                <Link href="/forgot-pin" className="text-sm text-primary">Forgot PIN?</Link>
-              </div>
-            </form>
-          </>
-        )}
-      </div>
-    </div>
+    <AuthShell
+      title={isRegister ? 'Create account' : 'Welcome back'}
+      subtitle={isRegister ? 'Enter your phone number to get started.' : 'Enter your phone number to continue.'}
+      footer={isRegister
+        ? <>Already have an account? <Link href="/login" className="font-semibold text-primary">Sign in</Link></>
+        : <>New to WEPL? <Link href="/login?mode=register" className="font-semibold text-primary">Create account</Link></>}
+    >
+      <form onSubmit={handlePhone} className="flex flex-col gap-5">
+        <Input label="Phone number" type="tel" placeholder="07XX XXX XXX or 2547XXXXXXXX"
+          value={phone} onChange={e => setPhone(e.target.value)} error={error} autoFocus />
+        <Button type="submit" size="lg" loading={loading} fullWidth>{isRegister ? 'Send OTP' : 'Continue'}</Button>
+      </form>
+    </AuthShell>
   )
+}
+
+export default function LoginPage() {
+  return <Suspense><LoginForm /></Suspense>
 }

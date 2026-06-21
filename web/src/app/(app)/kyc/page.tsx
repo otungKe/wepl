@@ -1,181 +1,131 @@
 'use client'
-import { useState } from 'react'
-import { useRouter } from 'next/navigation'
-import { auth } from '@/lib/api'
+import { useEffect, useRef, useState } from 'react'
+import { ShieldCheck, Clock, Upload, CheckCircle2 } from 'lucide-react'
+import { auth, apiError } from '@/lib/api'
 import { useAuthStore } from '@/store/auth'
+import { PageHeader } from '@/components/app/PageHeader'
+import { Input, Select } from '@/components/ui/Input'
 import { Button } from '@/components/ui/Button'
-import { Input } from '@/components/ui/Input'
-import { ArrowLeft, ArrowRight, Check, ShieldCheck } from 'lucide-react'
+import { PageLoader } from '@/components/ui/Spinner'
 import { toast } from 'sonner'
-import { cn } from '@/lib/utils'
 
-const STEPS = [
-  { id: 1, label: 'Personal Info' },
-  { id: 2, label: 'Photo' },
-  { id: 3, label: 'Documents' },
-  { id: 4, label: 'Review' },
-]
+interface Choices {
+  status: string
+  counties: string[]
+  income_bands: { value: string; label: string }[]
+  income_sources: { value: string; label: string }[]
+}
 
 export default function KycPage() {
-  const router = useRouter()
-  const { user, setUser } = useAuthStore()
-  const [step, setStep]   = useState(1)
-  const [loading, setLoading] = useState(false)
-
+  const setUser = useAuthStore(s => s.setUser)
+  const [choices, setChoices] = useState<Choices | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [saving, setSaving] = useState(false)
   const [form, setForm] = useState({
-    first_name: '', last_name: '', id_number: '', date_of_birth: '',
-    selfie: null as File | null, id_front: null as File | null, id_back: null as File | null,
+    given_names: '', surname: '', id_number: '', date_of_birth: '', email: '',
+    physical_address: '', county: '', occupation: '', source_of_income: '', expected_monthly_income: '',
   })
+  const idFront = useRef<HTMLInputElement | null>(null)
+  const selfie = useRef<HTMLInputElement | null>(null)
 
-  const upd = (k: string, v: string | File | null) => setForm(f => ({ ...f, [k]: v }))
+  useEffect(() => {
+    auth.kycStatus().then(r => setChoices(r.data)).catch(e => toast.error(apiError(e))).finally(() => setLoading(false))
+  }, [])
 
-  async function handleSubmit() {
-    setLoading(true)
+  function set<K extends keyof typeof form>(k: K, v: string) { setForm(f => ({ ...f, [k]: v })) }
+
+  async function submit(e: React.FormEvent) {
+    e.preventDefault()
+    if (!idFront.current?.files?.[0]) return toast.error('Upload the front of your ID')
+    const fd = new FormData()
+    Object.entries(form).forEach(([k, v]) => v && fd.append(k, v))
+    fd.append('id_front', idFront.current.files[0])
+    if (selfie.current?.files?.[0]) fd.append('selfie', selfie.current.files[0])
+    setSaving(true)
     try {
-      const fd = new FormData()
-      Object.entries(form).forEach(([k, v]) => {
-        if (v !== null) fd.append(k, v as string | Blob)
-      })
-      const { data } = await auth.kycSubmit(fd)
-      if (user) setUser({ ...user, kyc_status: 'pending' })
-      toast.success('Verification submitted! We\'ll review within 24 hours.')
-      router.push('/profile')
-    } catch {
-      toast.error('Submission failed. Please try again.')
-    } finally {
-      setLoading(false)
-    }
+      await auth.kycSubmit(fd)
+      const p = await auth.profile(); setUser(p.data)
+      toast.success('Identity submitted for review')
+      setChoices(c => c ? { ...c, status: 'pending' } : c)
+    } catch (e) { toast.error(apiError(e)) } finally { setSaving(false) }
   }
 
-  if (user?.kyc_status === 'approved') {
-    return (
-      <div className="max-w-md mx-auto px-4 py-16 text-center">
-        <div className="w-16 h-16 rounded-full bg-primary-pale flex items-center justify-center mx-auto mb-4">
-          <ShieldCheck size={28} className="text-primary" />
-        </div>
-        <h1 className="text-2xl font-bold text-text mb-2">You&apos;re verified!</h1>
-        <p className="text-text-secondary mb-6">Your identity has been successfully verified. You have full access to all WEPL features.</p>
-        <Button onClick={() => router.push('/communities')}>Go to Communities</Button>
-      </div>
-    )
+  if (loading) return <PageLoader />
+  const status = choices?.status
+
+  if (status === 'approved') {
+    return <StatusCard icon={CheckCircle2} tone="text-primary" title="Identity verified"
+      desc="Your identity has been verified. You have full access to payments, contributions and community features." />
+  }
+  if (status === 'pending') {
+    return <StatusCard icon={Clock} tone="text-accent" title="Verification in review"
+      desc="We’ve received your documents and are reviewing them. You’ll be notified once a decision is made." />
   }
 
   return (
-    <div className="max-w-lg mx-auto px-4 py-6">
-      <div className="flex items-center gap-3 mb-6">
-        <button onClick={() => step > 1 ? setStep(s => s - 1) : router.back()}
-          className="p-1.5 rounded-lg hover:bg-divider text-text-secondary">
-          <ArrowLeft size={18} />
-        </button>
-        <h1 className="text-xl font-bold text-text">Identity Verification</h1>
+    <div className="max-w-lg">
+      <PageHeader title="Verify your identity" subtitle="Required for payments and contributions (KYC)" />
+      <form onSubmit={submit} className="flex flex-col gap-4">
+        <div className="grid gap-4 sm:grid-cols-2">
+          <Input label="Given names" value={form.given_names} onChange={e => set('given_names', e.target.value)} required />
+          <Input label="Surname" value={form.surname} onChange={e => set('surname', e.target.value)} required />
+        </div>
+        <div className="grid gap-4 sm:grid-cols-2">
+          <Input label="National ID number" value={form.id_number} onChange={e => set('id_number', e.target.value)} required />
+          <Input label="Date of birth" type="date" value={form.date_of_birth} onChange={e => set('date_of_birth', e.target.value)} required />
+        </div>
+        <Input label="Email" type="email" value={form.email} onChange={e => set('email', e.target.value)} required hint="Used to send a verification link." />
+        <Input label="Physical address" value={form.physical_address} onChange={e => set('physical_address', e.target.value)} required />
+        <div className="grid gap-4 sm:grid-cols-2">
+          <Select label="County" value={form.county} onChange={e => set('county', e.target.value)}>
+            <option value="">Select county</option>
+            {choices?.counties.map(c => <option key={c} value={c}>{c}</option>)}
+          </Select>
+          <Input label="Occupation" value={form.occupation} onChange={e => set('occupation', e.target.value)} />
+        </div>
+        <div className="grid gap-4 sm:grid-cols-2">
+          <Select label="Source of income" value={form.source_of_income} onChange={e => set('source_of_income', e.target.value)}>
+            <option value="">Select source</option>
+            {choices?.income_sources.map(s => <option key={s.value} value={s.value}>{s.label}</option>)}
+          </Select>
+          <Select label="Monthly income" value={form.expected_monthly_income} onChange={e => set('expected_monthly_income', e.target.value)}>
+            <option value="">Select band</option>
+            {choices?.income_bands.map(b => <option key={b.value} value={b.value}>{b.label}</option>)}
+          </Select>
+        </div>
+
+        <FileField label="ID front (required)" inputRef={idFront} />
+        <FileField label="Selfie (optional)" inputRef={selfie} />
+
+        <Button type="submit" size="lg" loading={saving}><ShieldCheck size={16} /> Submit for verification</Button>
+      </form>
+    </div>
+  )
+}
+
+function FileField({ label, inputRef }: { label: string; inputRef: React.RefObject<HTMLInputElement | null> }) {
+  const [name, setName] = useState('')
+  return (
+    <div className="flex flex-col gap-1.5">
+      <span className="text-sm font-medium text-text-secondary">{label}</span>
+      <button type="button" onClick={() => inputRef.current?.click()}
+        className="flex h-11 items-center gap-2 rounded-lg border border-dashed border-border bg-white px-3.5 text-sm text-text-muted hover:bg-divider/40">
+        <Upload size={16} /> {name || 'Choose an image'}
+      </button>
+      <input ref={inputRef} type="file" accept="image/*" className="hidden" onChange={e => setName(e.target.files?.[0]?.name ?? '')} />
+    </div>
+  )
+}
+
+function StatusCard({ icon: Icon, tone, title, desc }: { icon: typeof Clock; tone: string; title: string; desc: string }) {
+  return (
+    <div className="max-w-lg">
+      <PageHeader title="Identity verification" />
+      <div className="flex flex-col items-center gap-3 rounded-lg border border-border bg-surface px-6 py-12 text-center">
+        <Icon size={44} className={tone} />
+        <p className="text-lg font-bold text-text">{title}</p>
+        <p className="max-w-sm text-sm text-text-muted">{desc}</p>
       </div>
-
-      {/* Step indicator */}
-      <div className="flex items-center gap-0 mb-8">
-        {STEPS.map((s, i) => (
-          <div key={s.id} className="flex items-center flex-1">
-            <div className={cn(
-              'w-8 h-8 rounded-full flex items-center justify-center text-sm font-semibold flex-shrink-0 transition-colors',
-              s.id < step ? 'bg-primary text-white'
-                : s.id === step ? 'bg-primary text-white'
-                : 'bg-divider text-text-muted'
-            )}>
-              {s.id < step ? <Check size={14} /> : s.id}
-            </div>
-            {i < STEPS.length - 1 && (
-              <div className={cn('flex-1 h-0.5', s.id < step ? 'bg-primary' : 'bg-divider')} />
-            )}
-          </div>
-        ))}
-      </div>
-
-      <p className="text-text-secondary mb-6 text-sm">{STEPS[step-1].label}</p>
-
-      {step === 1 && (
-        <div className="flex flex-col gap-4">
-          <Input label="First name" value={form.first_name} onChange={e => upd('first_name', e.target.value)} autoFocus />
-          <Input label="Last name" value={form.last_name} onChange={e => upd('last_name', e.target.value)} />
-          <Input label="National ID number" value={form.id_number} onChange={e => upd('id_number', e.target.value)} />
-          <Input label="Date of birth" type="date" value={form.date_of_birth} onChange={e => upd('date_of_birth', e.target.value)} />
-          <Button className="mt-2" onClick={() => setStep(2)}>
-            Next <ArrowRight size={16} />
-          </Button>
-        </div>
-      )}
-
-      {step === 2 && (
-        <div className="flex flex-col gap-4">
-          <div className="flex flex-col gap-2">
-            <label className="text-sm font-medium text-text">Selfie photo</label>
-            <p className="text-sm text-text-secondary">Take a clear photo of your face.</p>
-            <label className="flex flex-col items-center justify-center border-2 border-dashed border-border rounded-lg p-8 cursor-pointer hover:bg-primary-pale transition-colors">
-              {form.selfie
-                ? <p className="text-sm text-primary font-medium">{form.selfie.name}</p>
-                : <>
-                    <div className="w-12 h-12 rounded-full bg-primary-pale flex items-center justify-center mb-2">
-                      <ShieldCheck size={22} className="text-primary" />
-                    </div>
-                    <p className="text-sm text-text-secondary">Click to upload selfie</p>
-                  </>
-              }
-              <input type="file" accept="image/*" className="hidden"
-                onChange={e => upd('selfie', e.target.files?.[0] ?? null)} />
-            </label>
-          </div>
-          <div className="flex gap-3">
-            <Button variant="secondary" onClick={() => setStep(1)}>Back</Button>
-            <Button onClick={() => setStep(3)} disabled={!form.selfie}>Next <ArrowRight size={16} /></Button>
-          </div>
-        </div>
-      )}
-
-      {step === 3 && (
-        <div className="flex flex-col gap-4">
-          {(['id_front', 'id_back'] as const).map(field => (
-            <div key={field} className="flex flex-col gap-2">
-              <label className="text-sm font-medium text-text">
-                {field === 'id_front' ? 'ID / Passport — Front' : 'ID / Passport — Back'}
-              </label>
-              <label className="flex flex-col items-center justify-center border-2 border-dashed border-border rounded-lg p-6 cursor-pointer hover:bg-primary-pale transition-colors">
-                {form[field]
-                  ? <p className="text-sm text-primary font-medium">{form[field]!.name}</p>
-                  : <p className="text-sm text-text-secondary">Click to upload</p>
-                }
-                <input type="file" accept="image/*" className="hidden"
-                  onChange={e => upd(field, e.target.files?.[0] ?? null)} />
-              </label>
-            </div>
-          ))}
-          <div className="flex gap-3">
-            <Button variant="secondary" onClick={() => setStep(2)}>Back</Button>
-            <Button onClick={() => setStep(4)} disabled={!form.id_front || !form.id_back}>
-              Next <ArrowRight size={16} />
-            </Button>
-          </div>
-        </div>
-      )}
-
-      {step === 4 && (
-        <div className="flex flex-col gap-4">
-          <div className="bg-primary-pale rounded-lg p-5">
-            <p className="font-semibold text-primary mb-3">Review your submission</p>
-            <div className="space-y-2 text-sm text-text-secondary">
-              <p>Name: <span className="text-text font-medium">{form.first_name} {form.last_name}</span></p>
-              <p>ID: <span className="text-text font-medium">{form.id_number}</span></p>
-              <p>DOB: <span className="text-text font-medium">{form.date_of_birth}</span></p>
-              <p>Selfie: <span className="text-text font-medium">{form.selfie?.name}</span></p>
-              <p>ID docs: <span className="text-text font-medium">2 files attached</span></p>
-            </div>
-          </div>
-          <p className="text-sm text-text-muted">
-            By submitting, you confirm that all information is accurate and the documents belong to you.
-          </p>
-          <div className="flex gap-3">
-            <Button variant="secondary" onClick={() => setStep(3)}>Back</Button>
-            <Button loading={loading} onClick={handleSubmit}>Submit Verification</Button>
-          </div>
-        </div>
-      )}
     </div>
   )
 }

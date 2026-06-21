@@ -1,85 +1,66 @@
 'use client'
-import { useEffect, useState, useCallback } from 'react'
-import { notificationsApi } from '@/lib/api'
+import { useEffect, useState } from 'react'
+import { useRouter } from 'next/navigation'
+import { Bell, CheckCheck, Trash2 } from 'lucide-react'
+import { notificationsApi, apiError, type Notification } from '@/lib/api'
+import { PageHeader } from '@/components/app/PageHeader'
+import { Button } from '@/components/ui/Button'
 import { EmptyState } from '@/components/ui/EmptyState'
-import { PageLoader } from '@/components/ui/Spinner'
-import { Bell, Check } from 'lucide-react'
-import { formatRelative } from '@/lib/utils'
-import { cn } from '@/lib/utils'
+import { Skeleton } from '@/components/ui/Spinner'
+import { formatRelative, cn } from '@/lib/utils'
 import { toast } from 'sonner'
 
-interface Notification {
-  id: string; title: string; body: string; is_read: boolean; created_at: string; notification_type?: string
-}
-
 export default function NotificationsPage() {
-  const [items, setItems]     = useState<Notification[]>([])
+  const router = useRouter()
+  const [items, setItems] = useState<Notification[]>([])
   const [loading, setLoading] = useState(true)
 
-  const load = useCallback(async () => {
-    try {
-      const { data } = await notificationsApi.list()
-      setItems(data.results ?? data)
-    } catch { toast.error('Failed to load notifications') }
-    finally { setLoading(false) }
-  }, [])
+  async function load() {
+    setLoading(true)
+    try { setItems(await notificationsApi.list()) }
+    catch (e) { toast.error(apiError(e)) } finally { setLoading(false) }
+  }
+  useEffect(() => { load() }, [])
 
-  useEffect(() => { load() }, [load])
-
-  async function markRead(id: string) {
-    try {
-      await notificationsApi.markRead(id)
-      setItems(prev => prev.map(n => n.id === id ? { ...n, is_read: true } : n))
-    } catch { }
+  async function open(n: Notification) {
+    if (!n.is_read) { notificationsApi.markRead(n.id).catch(() => {}); setItems(prev => prev.map(x => x.id === n.id ? { ...x, is_read: true } : x)) }
+    if (n.conversation_id) router.push(`/conversation/${n.conversation_id}`)
+    else if (n.contribution_id) router.push(`/contribution/${n.contribution_id}`)
+    else if (n.community_id) router.push(`/community/${n.community_id}`)
+  }
+  async function markAll() {
+    try { await notificationsApi.markAllRead(); setItems(prev => prev.map(x => ({ ...x, is_read: true }))); toast.success('All marked as read') }
+    catch (e) { toast.error(apiError(e)) }
+  }
+  async function remove(id: number, e: React.MouseEvent) {
+    e.stopPropagation()
+    setItems(prev => prev.filter(x => x.id !== id))
+    notificationsApi.remove(id).catch(() => {})
   }
 
-  const unread = items.filter(n => !n.is_read)
+  const unread = items.filter(i => !i.is_read).length
 
   return (
-    <div className="max-w-2xl mx-auto px-4 py-6">
-      <div className="flex items-center justify-between mb-6">
-        <h1 className="text-2xl font-bold text-text">Notifications</h1>
-        {unread.length > 0 && (
-          <button
-            onClick={async () => {
-              await Promise.all(unread.map(n => notificationsApi.markRead(n.id)))
-              setItems(prev => prev.map(n => ({ ...n, is_read: true })))
-            }}
-            className="text-sm text-primary hover:underline flex items-center gap-1"
-          >
-            <Check size={14} /> Mark all read
-          </button>
-        )}
-      </div>
+    <div>
+      <PageHeader title="Notifications" subtitle={unread ? `${unread} unread` : 'You’re all caught up'}
+        action={unread > 0 ? <Button size="sm" variant="outline" onClick={markAll}><CheckCheck size={15} /> Mark all read</Button> : undefined} />
 
-      {loading ? <PageLoader /> : items.length === 0 ? (
-        <EmptyState icon={Bell} title="No notifications" description="You're all caught up." />
+      {loading ? (
+        <div className="space-y-2">{Array.from({ length: 5 }).map((_, i) => <Skeleton key={i} className="h-16" />)}</div>
+      ) : items.length === 0 ? (
+        <EmptyState icon={Bell} title="No notifications" description="Activity from your communities will show up here." />
       ) : (
-        <div className="space-y-1">
+        <div className="divide-y divide-divider overflow-hidden rounded-lg border border-border bg-surface">
           {items.map(n => (
-            <div
-              key={n.id}
-              onClick={() => !n.is_read && markRead(n.id)}
-              className={cn(
-                'flex items-start gap-3 px-4 py-4 rounded-lg cursor-pointer transition-colors',
-                n.is_read ? 'bg-white' : 'bg-primary-pale hover:bg-primary-pale/80'
-              )}
-            >
-              <div className={cn(
-                'w-9 h-9 rounded-full flex items-center justify-center flex-shrink-0',
-                n.is_read ? 'bg-divider' : 'bg-primary'
-              )}>
-                <Bell size={16} className={n.is_read ? 'text-text-muted' : 'text-white'} />
+            <button key={n.id} onClick={() => open(n)} className={cn('flex w-full items-start gap-3 p-4 text-left hover:bg-divider/50', !n.is_read && 'bg-primary-pale/40')}>
+              <div className={cn('mt-1 h-2 w-2 shrink-0 rounded-full', n.is_read ? 'bg-transparent' : 'bg-accent')} />
+              <div className="min-w-0 flex-1">
+                <p className={cn('text-sm', n.is_read ? 'font-medium text-text' : 'font-semibold text-text')}>{n.title}</p>
+                <p className="text-sm text-text-secondary">{n.message}</p>
+                <p className="mt-0.5 text-xs text-text-muted">{formatRelative(n.created_at)}</p>
               </div>
-              <div className="flex-1 min-w-0">
-                <p className={cn('text-sm font-medium', n.is_read ? 'text-text-secondary' : 'text-text')}>{n.title}</p>
-                <p className="text-sm text-text-secondary mt-0.5">{n.body}</p>
-                <p className="text-xs text-text-muted mt-1">{formatRelative(n.created_at)}</p>
-              </div>
-              {!n.is_read && (
-                <div className="w-2 h-2 rounded-full bg-primary flex-shrink-0 mt-2" />
-              )}
-            </div>
+              <span onClick={(e) => remove(n.id, e)} className="rounded-lg p-1.5 text-text-muted hover:bg-divider hover:text-error"><Trash2 size={15} /></span>
+            </button>
           ))}
         </div>
       )}

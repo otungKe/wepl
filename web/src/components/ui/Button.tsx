@@ -1,48 +1,49 @@
+import { ButtonHTMLAttributes, forwardRef } from 'react'
 import { cn } from '@/lib/utils'
-import { type ButtonHTMLAttributes, forwardRef } from 'react'
+import { Spinner } from './Spinner'
 
-interface Props extends ButtonHTMLAttributes<HTMLButtonElement> {
-  variant?: 'primary' | 'secondary' | 'ghost' | 'danger'
-  size?: 'sm' | 'md' | 'lg'
+type Variant = 'primary' | 'secondary' | 'ghost' | 'danger' | 'outline'
+type Size = 'sm' | 'md' | 'lg'
+
+interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
+  variant?: Variant
+  size?: Size
   loading?: boolean
+  fullWidth?: boolean
 }
 
-export const Button = forwardRef<HTMLButtonElement, Props>(
-  ({ variant = 'primary', size = 'md', loading, className, children, disabled, ...props }, ref) => (
+const variants: Record<Variant, string> = {
+  primary:   'bg-primary text-white hover:bg-primary-dark shadow-sm',
+  secondary: 'bg-accent text-white hover:bg-accent/90 shadow-sm',
+  ghost:     'bg-transparent text-text-secondary hover:bg-divider',
+  outline:   'bg-white text-text border border-border hover:bg-divider',
+  danger:    'bg-error text-white hover:bg-error/90 shadow-sm',
+}
+
+const sizes: Record<Size, string> = {
+  sm: 'h-9 px-3 text-sm rounded-lg gap-1.5',
+  md: 'h-11 px-4 text-base rounded-lg gap-2',
+  lg: 'h-12 px-6 text-base rounded-lg gap-2',
+}
+
+export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button(
+  { variant = 'primary', size = 'md', loading, fullWidth, className, children, disabled, ...rest }, ref,
+) {
+  const onLight = variant === 'outline' || variant === 'ghost'
+  return (
     <button
       ref={ref}
       disabled={disabled || loading}
       className={cn(
-        'inline-flex items-center justify-center gap-2 font-semibold rounded transition-opacity',
-        'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50',
-        'disabled:opacity-60 disabled:cursor-not-allowed',
-        {
-          'bg-primary text-white hover:bg-primary-dark active:bg-primary-dark':
-            variant === 'primary',
-          'bg-white text-text border border-border hover:bg-primary-pale':
-            variant === 'secondary',
-          'text-text-secondary hover:bg-divider':
-            variant === 'ghost',
-          'bg-error text-white hover:opacity-90':
-            variant === 'danger',
-        },
-        {
-          'text-sm px-3 py-1.5': size === 'sm',
-          'text-base px-5 py-3':  size === 'md',
-          'text-lg px-6 py-4':    size === 'lg',
-        },
-        className
+        'inline-flex items-center justify-center font-semibold transition-colors select-none',
+        'focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/40',
+        'disabled:opacity-50 disabled:pointer-events-none',
+        variants[variant], sizes[size], fullWidth && 'w-full', className,
       )}
-      {...props}
+      {...rest}
     >
-      {loading && (
-        <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24" fill="none">
-          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
-        </svg>
-      )}
+      {loading && <Spinner size={size === 'sm' ? 14 : 18} className={onLight ? 'text-primary' : 'text-white'} />}
       {children}
     </button>
   )
-)
-Button.displayName = 'Button'
+})

@@ -1,212 +1,138 @@
 'use client'
-import { useEffect, useState, useCallback } from 'react'
-import { communities as communitiesApi } from '@/lib/api'
-import { Avatar } from '@/components/ui/Avatar'
-import { Button } from '@/components/ui/Button'
-import { KYCBanner } from '@/components/ui/KYCBanner'
-import { EmptyState } from '@/components/ui/EmptyState'
-import { PageLoader } from '@/components/ui/Spinner'
-import { Modal } from '@/components/ui/Modal'
-import { Input } from '@/components/ui/Input'
-import { useAuthStore } from '@/store/auth'
-import { Users, Plus, Hash, Lock, Globe } from 'lucide-react'
+import { useEffect, useState } from 'react'
 import Link from 'next/link'
+import { Users, Plus, Search, Lock, Coins } from 'lucide-react'
+import { communities, apiError, type Community } from '@/lib/api'
+import { PageHeader } from '@/components/app/PageHeader'
+import { Button } from '@/components/ui/Button'
+import { Input } from '@/components/ui/Input'
+import { Modal } from '@/components/ui/Modal'
+import { Avatar } from '@/components/ui/Avatar'
+import { Badge } from '@/components/ui/Badge'
+import { EmptyState } from '@/components/ui/EmptyState'
+import { Skeleton } from '@/components/ui/Spinner'
 import { toast } from 'sonner'
-import { cn } from '@/lib/utils'
-
-interface Community {
-  id: string
-  name: string
-  description: string
-  member_count: number
-  is_private: boolean
-  community_photo?: string
-  unread_count?: number
-  my_role?: string
-}
 
 export default function CommunitiesPage() {
-  const user = useAuthStore(s => s.user)
-  const [list, setList]         = useState<Community[]>([])
-  const [loading, setLoading]   = useState(true)
-  const [search, setSearch]     = useState('')
-  const [showJoin, setShowJoin] = useState(false)
-  const [showCreate, setShowCreate] = useState(false)
-  const [inviteCode, setInviteCode] = useState('')
-  const [joining, setJoining]   = useState(false)
+  const [items, setItems] = useState<Community[]>([])
+  const [loading, setLoading] = useState(true)
+  const [q, setQ] = useState('')
+  const [createOpen, setCreateOpen] = useState(false)
+  const [joinOpen, setJoinOpen] = useState(false)
 
-  const load = useCallback(async () => {
-    try {
-      const { data } = await communitiesApi.list()
-      setList(data.results ?? data)
-    } catch {
-      toast.error('Failed to load communities')
-    } finally {
-      setLoading(false)
-    }
-  }, [])
-
-  useEffect(() => { load() }, [load])
-
-  async function handleJoin() {
-    if (!inviteCode.trim()) return
-    setJoining(true)
-    try {
-      await communitiesApi.join(inviteCode.trim().toUpperCase())
-      toast.success('Join request sent!')
-      setShowJoin(false)
-      setInviteCode('')
-      load()
-    } catch (err: unknown) {
-      const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail
-      toast.error(msg ?? 'Invalid invite code')
-    } finally {
-      setJoining(false)
-    }
+  async function load() {
+    setLoading(true)
+    try { setItems(await communities.mine()) }
+    catch (err) { toast.error(apiError(err)) }
+    finally { setLoading(false) }
   }
+  useEffect(() => { load() }, [])
 
-  const filtered = list.filter(c =>
-    c.name.toLowerCase().includes(search.toLowerCase())
-  )
-
-  const isVerified = user?.kyc_status === 'approved'
+  const filtered = items.filter(c => c.name.toLowerCase().includes(q.toLowerCase()))
 
   return (
-    <div className="max-w-2xl mx-auto px-4 py-6">
-      {/* Header */}
-      <div className="flex items-center justify-between mb-4">
-        <h1 className="text-2xl font-bold text-text">Communities</h1>
-        {isVerified && (
+    <div>
+      <PageHeader title="Communities" subtitle="Your savings groups and chamas"
+        action={
           <div className="flex gap-2">
-            <Button variant="secondary" size="sm" onClick={() => setShowJoin(true)}>
-              <Hash size={15} /> Join
-            </Button>
-            <Button size="sm" onClick={() => setShowCreate(true)}>
-              <Plus size={15} /> New
-            </Button>
+            <Button variant="outline" size="sm" onClick={() => setJoinOpen(true)}>Join</Button>
+            <Button size="sm" onClick={() => setCreateOpen(true)}><Plus size={16} /> New</Button>
           </div>
-        )}
-      </div>
+        } />
 
-      {/* KYC banner */}
-      {user && user.kyc_status !== 'approved' && (
-        <div className="mb-4">
-          <KYCBanner status={user.kyc_status} />
+      {items.length > 0 && (
+        <div className="relative mb-4">
+          <Search size={18} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-text-muted" />
+          <input value={q} onChange={e => setQ(e.target.value)} placeholder="Search communities"
+            className="h-11 w-full rounded-lg border border-border bg-white pl-10 pr-3 text-base focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20" />
         </div>
       )}
 
-      {/* Search */}
-      <Input
-        placeholder="Search communities…"
-        value={search}
-        onChange={e => setSearch(e.target.value)}
-        className="mb-4"
-      />
-
-      {/* List */}
       {loading ? (
-        <PageLoader />
+        <div className="grid gap-3 sm:grid-cols-2">
+          {Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-24" />)}
+        </div>
       ) : filtered.length === 0 ? (
-        <EmptyState
-          icon={Users}
-          title="No communities yet"
-          description={isVerified ? 'Join with an invite code or create a new one.' : 'Complete verification to join or create communities.'}
-          action={isVerified ? (
-            <Button size="sm" onClick={() => setShowJoin(true)}>
-              <Hash size={15} /> Join with code
-            </Button>
-          ) : undefined}
-        />
+        <EmptyState icon={Users} title="No communities yet"
+          description="Create a community or join one with an invite to get started."
+          action={<Button onClick={() => setCreateOpen(true)}><Plus size={16} /> Create community</Button>} />
       ) : (
-        <div className="space-y-2">
+        <div className="grid gap-3 sm:grid-cols-2">
           {filtered.map(c => (
-            <Link key={c.id} href={`/community/${c.id}`}>
-              <div className={cn(
-                'flex items-center gap-4 bg-white rounded-lg px-4 py-3.5 shadow-card',
-                'hover:shadow-md transition-shadow cursor-pointer'
-              )}>
-                <Avatar name={c.name} src={c.community_photo} size="md" />
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-1.5">
-                    <p className="font-semibold text-text truncate">{c.name}</p>
-                    {c.is_private
-                      ? <Lock size={12} className="text-text-muted flex-shrink-0" />
-                      : <Globe size={12} className="text-text-muted flex-shrink-0" />
-                    }
-                  </div>
-                  <p className="text-sm text-text-secondary truncate mt-0.5">{c.description || `${c.member_count} members`}</p>
+            <Link key={c.id} href={`/community/${c.id}`}
+              className="flex items-center gap-3 rounded-lg border border-border bg-surface p-4 transition-shadow hover:shadow-card">
+              <Avatar name={c.name} src={c.community_photo} size={48} />
+              <div className="min-w-0 flex-1">
+                <div className="flex items-center gap-1.5">
+                  <p className="truncate font-semibold text-text">{c.name}</p>
+                  {c.is_private && <Lock size={13} className="shrink-0 text-text-muted" />}
                 </div>
-                {c.unread_count ? (
-                  <span className="bg-primary text-white text-xs font-bold rounded-full min-w-[20px] h-5 flex items-center justify-center px-1.5">
-                    {c.unread_count > 99 ? '99+' : c.unread_count}
-                  </span>
-                ) : null}
-                <span className="text-xs text-text-muted">{c.member_count} members</span>
+                <p className="truncate text-sm text-text-muted">{c.member_count} members{c.location ? ` · ${c.location}` : ''}</p>
+                <div className="mt-1.5 flex flex-wrap gap-1">
+                  {c.has_welfare_fund && <Badge tone="success">Welfare</Badge>}
+                  {c.has_shares_fund && <Badge tone="warning"><Coins size={11} /> Shares</Badge>}
+                </div>
               </div>
             </Link>
           ))}
         </div>
       )}
 
-      {/* Join modal */}
-      <Modal open={showJoin} onClose={() => setShowJoin(false)} title="Join a Community">
-        <div className="flex flex-col gap-4">
-          <p className="text-sm text-text-secondary">Enter the invite code shared by the community admin.</p>
-          <Input
-            label="Invite code"
-            placeholder="e.g. A3F9K2B1C0"
-            value={inviteCode}
-            onChange={e => setInviteCode(e.target.value.toUpperCase())}
-            autoFocus
-          />
-          <div className="flex gap-3 justify-end">
-            <Button variant="secondary" onClick={() => setShowJoin(false)}>Cancel</Button>
-            <Button onClick={handleJoin} loading={joining}>Send Request</Button>
-          </div>
-        </div>
-      </Modal>
-
-      {/* Create modal */}
-      <Modal open={showCreate} onClose={() => setShowCreate(false)} title="New Community">
-        <CreateCommunityForm onSuccess={() => { setShowCreate(false); load() }} />
-      </Modal>
+      <CreateModal open={createOpen} onClose={() => setCreateOpen(false)} onCreated={load} />
+      <JoinModal open={joinOpen} onClose={() => setJoinOpen(false)} onJoined={load} />
     </div>
   )
 }
 
-function CreateCommunityForm({ onSuccess }: { onSuccess: () => void }) {
-  const [name, setName]         = useState('')
-  const [desc, setDesc]         = useState('')
-  const [isPrivate, setPrivate] = useState(true)
-  const [loading, setLoading]   = useState(false)
+function CreateModal({ open, onClose, onCreated }: { open: boolean; onClose: () => void; onCreated: () => void }) {
+  const [name, setName] = useState('')
+  const [description, setDescription] = useState('')
+  const [isPrivate, setIsPrivate] = useState(false)
+  const [loading, setLoading] = useState(false)
 
-  async function handleSubmit(e: React.FormEvent) {
-    e.preventDefault()
-    if (!name.trim()) return
+  async function submit() {
+    if (!name.trim()) return toast.error('Enter a community name')
     setLoading(true)
     try {
-      await communitiesApi.create({ name, description: desc, is_private: isPrivate })
-      toast.success('Community created!')
-      onSuccess()
-    } catch {
-      toast.error('Failed to create community')
-    } finally {
-      setLoading(false)
-    }
+      await communities.create({ name, description, is_private: isPrivate })
+      toast.success('Community created'); onClose(); setName(''); setDescription(''); onCreated()
+    } catch (err) { toast.error(apiError(err)) } finally { setLoading(false) }
   }
 
   return (
-    <form onSubmit={handleSubmit} className="flex flex-col gap-4">
-      <Input label="Name" value={name} onChange={e => setName(e.target.value)} placeholder="e.g. Westlands Chama" autoFocus />
-      <Input label="Description (optional)" value={desc} onChange={e => setDesc(e.target.value)} placeholder="What is this community about?" />
-      <label className="flex items-center gap-3 cursor-pointer">
-        <input type="checkbox" checked={isPrivate} onChange={e => setPrivate(e.target.checked)}
-          className="w-4 h-4 accent-primary" />
-        <span className="text-sm text-text">Private (invite-only)</span>
-      </label>
-      <div className="flex gap-3 justify-end pt-2">
-        <Button type="submit" loading={loading}>Create</Button>
+    <Modal open={open} onClose={onClose} title="New community">
+      <div className="flex flex-col gap-4">
+        <Input label="Name" value={name} onChange={e => setName(e.target.value)} placeholder="e.g. Westlands Chama" autoFocus />
+        <Input label="Description" value={description} onChange={e => setDescription(e.target.value)} placeholder="What is this group about?" />
+        <label className="flex items-center gap-2 text-sm text-text-secondary">
+          <input type="checkbox" checked={isPrivate} onChange={e => setIsPrivate(e.target.checked)} className="h-4 w-4 accent-primary" />
+          Private (join by invite only)
+        </label>
+        <Button onClick={submit} loading={loading} fullWidth>Create community</Button>
       </div>
-    </form>
+    </Modal>
+  )
+}
+
+function JoinModal({ open, onClose, onJoined }: { open: boolean; onClose: () => void; onJoined: () => void }) {
+  const [code, setCode] = useState('')
+  const [loading, setLoading] = useState(false)
+
+  async function submit() {
+    if (!code.trim()) return toast.error('Enter an invite code')
+    setLoading(true)
+    try {
+      await communities.requestByInvite(code.trim())
+      toast.success('Request sent'); onClose(); setCode(''); onJoined()
+    } catch (err) { toast.error(apiError(err, 'Invalid invite code')) } finally { setLoading(false) }
+  }
+
+  return (
+    <Modal open={open} onClose={onClose} title="Join with invite code">
+      <div className="flex flex-col gap-4">
+        <Input label="Invite code" value={code} onChange={e => setCode(e.target.value)} placeholder="e.g. AB12CD" autoFocus />
+        <Button onClick={submit} loading={loading} fullWidth>Request to join</Button>
+      </div>
+    </Modal>
   )
 }

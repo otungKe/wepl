@@ -1,133 +1,81 @@
 'use client'
 import { useEffect, useState, useCallback } from 'react'
-import { useParams, useRouter } from 'next/navigation'
-import { shares as sharesApi } from '@/lib/api'
+import { useParams } from 'next/navigation'
+import { Coins, Smartphone, TrendingUp } from 'lucide-react'
+import { shares, payments, apiError, type SharesFund } from '@/lib/api'
+import { PageHeader } from '@/components/app/PageHeader'
+import { StatCard } from '@/components/ui/StatCard'
 import { Button } from '@/components/ui/Button'
-import { PageLoader } from '@/components/ui/Spinner'
-import { Modal } from '@/components/ui/Modal'
 import { Input } from '@/components/ui/Input'
-import { ArrowLeft, TrendingUp } from 'lucide-react'
+import { Modal } from '@/components/ui/Modal'
+import { Avatar } from '@/components/ui/Avatar'
+import { EmptyState } from '@/components/ui/EmptyState'
+import { PageLoader } from '@/components/ui/Spinner'
 import { formatMoney } from '@/lib/utils'
 import { toast } from 'sonner'
 
-interface SharesFund {
-  balance?: string; share_price?: string; my_shares?: number; total_shares?: number
-  top_holders?: { name: string; shares_count: number; percentage: number }[]
-}
-
 export default function SharesPage() {
   const { communityId } = useParams<{ communityId: string }>()
-  const router          = useRouter()
   const [fund, setFund] = useState<SharesFund | null>(null)
   const [loading, setLoading] = useState(true)
-  const [showBuy, setShowBuy] = useState(false)
+  const [payOpen, setPayOpen] = useState(false)
 
-  const load = useCallback(async () => {
-    try {
-      const { data } = await sharesApi.get(communityId)
-      setFund(data)
-    } catch { toast.error('Failed to load shares fund') }
-    finally { setLoading(false) }
+  const load = useCallback(() => {
+    shares.get(communityId).then(r => setFund(r.data)).catch(e => toast.error(apiError(e))).finally(() => setLoading(false))
   }, [communityId])
-
   useEffect(() => { load() }, [load])
 
   if (loading) return <PageLoader />
+  if (!fund) return <EmptyState title="Shares fund not found" />
 
   return (
-    <div className="max-w-2xl mx-auto px-4 py-6">
-      <div className="flex items-center gap-3 mb-6">
-        <button onClick={() => router.back()} className="p-1.5 rounded-lg hover:bg-divider text-text-secondary">
-          <ArrowLeft size={18} />
-        </button>
-        <TrendingUp size={22} className="text-primary" />
-        <h1 className="text-2xl font-bold text-text">Shares Fund</h1>
-        <Button size="sm" className="ml-auto" onClick={() => setShowBuy(true)}>Buy Shares</Button>
+    <div>
+      <PageHeader title="Shares fund" subtitle={fund.name} back
+        action={<Button size="sm" onClick={() => setPayOpen(true)}><Smartphone size={15} /> Buy shares</Button>} />
+
+      <div className="mb-5 grid gap-3 sm:grid-cols-3">
+        <StatCard accent label="Total pool" value={formatMoney(fund.total_pool)} icon={Coins} />
+        <StatCard label="Share price" value={formatMoney(fund.share_price)} />
+        <StatCard label="Total shares" value={Number(fund.total_shares).toLocaleString()} icon={TrendingUp} />
       </div>
 
-      {fund && (
-        <>
-          <div className="grid grid-cols-2 gap-3 mb-6 sm:grid-cols-4">
-            {[
-              { label: 'Fund Value', value: formatMoney(fund.balance ?? 0) },
-              { label: 'Share Price', value: formatMoney(fund.share_price ?? 0) },
-              { label: 'My Shares', value: `${fund.my_shares ?? 0}` },
-              { label: 'Total Shares', value: `${fund.total_shares ?? 0}` },
-            ].map(({ label, value }) => (
-              <div key={label} className="bg-white rounded-lg px-4 py-4 shadow-card">
-                <p className="text-xs text-text-secondary mb-1">{label}</p>
-                <p className="text-lg font-bold text-text">{value}</p>
+      <h2 className="mb-3 font-semibold text-text">Top holders</h2>
+      {fund.holdings.length === 0 ? (
+        <EmptyState icon={Coins} title="No shareholders yet" description="Buy shares to become the first holder." />
+      ) : (
+        <div className="divide-y divide-divider overflow-hidden rounded-lg border border-border bg-surface">
+          {[...fund.holdings].sort((a, b) => Number(b.shares_count) - Number(a.shares_count)).map(h => (
+            <div key={h.id} className="flex items-center gap-3 p-3.5">
+              <Avatar name={h.name || h.phone_number} size={38} />
+              <div className="min-w-0 flex-1">
+                <p className="truncate font-medium text-text">{h.name || h.phone_number}</p>
+                <p className="text-xs text-text-muted">{Number(h.shares_count).toLocaleString()} shares · {h.ownership_pct}%</p>
               </div>
-            ))}
-          </div>
-
-          {fund.top_holders && fund.top_holders.length > 0 && (
-            <>
-              <h2 className="text-lg font-semibold text-text mb-3">Top Holders</h2>
-              <div className="space-y-2">
-                {fund.top_holders.map((h, i) => (
-                  <div key={i} className="flex items-center gap-3 bg-white rounded-lg px-4 py-3 shadow-card">
-                    <span className="text-sm font-bold text-text-muted w-5">{i + 1}</span>
-                    <div className="flex-1">
-                      <p className="font-medium text-text">{h.name}</p>
-                      <p className="text-xs text-text-muted">{h.shares_count} shares</p>
-                    </div>
-                    <div className="text-right">
-                      <p className="text-sm font-semibold text-primary">{h.percentage.toFixed(1)}%</p>
-                      <div className="w-20 h-1.5 bg-divider rounded-full mt-1 overflow-hidden">
-                        <div className="h-full bg-primary rounded-full" style={{ width: `${h.percentage}%` }} />
-                      </div>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </>
-          )}
-        </>
+              <p className="font-semibold text-text">{formatMoney(h.total_contributed)}</p>
+            </div>
+          ))}
+        </div>
       )}
 
-      <Modal open={showBuy} onClose={() => setShowBuy(false)} title="Buy Shares">
-        <BuyForm
-          sharePrice={fund?.share_price}
-          communityId={communityId}
-          onSuccess={() => { setShowBuy(false); load() }}
-        />
-      </Modal>
+      <BuyModal open={payOpen} onClose={() => setPayOpen(false)} communityId={Number(communityId)} />
     </div>
   )
 }
 
-function BuyForm({ sharePrice, communityId, onSuccess }: {
-  sharePrice?: string; communityId: string; onSuccess: () => void
-}) {
-  const [qty, setQty]     = useState('1')
-  const [loading, setLoading] = useState(false)
-  const total = sharePrice ? Number(qty) * Number(sharePrice) : 0
-
-  async function handleSubmit(e: React.FormEvent) {
-    e.preventDefault()
+function BuyModal({ open, onClose, communityId }: { open: boolean; onClose: () => void; communityId: number }) {
+  const [amount, setAmount] = useState(''); const [loading, setLoading] = useState(false)
+  async function pay() {
+    const amt = Number(amount); if (!amt) return toast.error('Enter an amount')
     setLoading(true)
-    try {
-      await sharesApi.buy(communityId, Number(qty))
-      toast.success(`Purchased ${qty} shares!`)
-      onSuccess()
-    } catch { toast.error('Purchase failed') }
-    finally { setLoading(false) }
+    try { await payments.stkPush({ payment_type: 'shares', community_id: communityId, amount: amt }); toast.success('Check your phone to authorize payment'); setAmount(''); onClose() }
+    catch (e) { toast.error(apiError(e)) } finally { setLoading(false) }
   }
-
   return (
-    <form onSubmit={handleSubmit} className="flex flex-col gap-4">
-      <Input label="Number of shares" type="number" min="1" value={qty} onChange={e => setQty(e.target.value)} autoFocus />
-      {sharePrice && (
-        <div className="bg-primary-pale rounded-lg px-4 py-3">
-          <p className="text-sm text-text-secondary">
-            {qty} shares × {formatMoney(sharePrice)} = <strong className="text-text">{formatMoney(total)}</strong>
-          </p>
-        </div>
-      )}
-      <div className="flex justify-end">
-        <Button type="submit" loading={loading}>Buy Now</Button>
+    <Modal open={open} onClose={onClose} title="Buy shares">
+      <div className="flex flex-col gap-4">
+        <Input label="Amount (KES)" type="number" inputMode="decimal" value={amount} onChange={e => setAmount(e.target.value)} hint="Shares are allocated at the current share price." autoFocus />
+        <Button onClick={pay} loading={loading} fullWidth><Smartphone size={16} /> Send STK push</Button>
       </div>
-    </form>
+    </Modal>
   )
 }

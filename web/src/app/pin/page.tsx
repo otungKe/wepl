@@ -1,116 +1,73 @@
 'use client'
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { Button } from '@/components/ui/Button'
-import { cn } from '@/lib/utils'
-import { auth } from '@/lib/api'
+import { AuthShell } from '@/components/app/AuthShell'
+import { auth, apiError } from '@/lib/api'
 import { saveTokens } from '@/lib/auth'
 import { useAuthStore } from '@/store/auth'
-import { toast } from 'sonner'
+import { cn } from '@/lib/utils'
+import { Delete } from 'lucide-react'
 
-const PIN_LENGTH = 6
+const LEN = 6
 
 export default function PinPage() {
   const router = useRouter()
-  const { pendingPhone } = useAuthStore()
-  const [pin, setPin]       = useState('')
+  const [pin, setPin] = useState('')
   const [confirm, setConfirm] = useState('')
-  const [step, setStep]     = useState<'enter' | 'confirm'>('enter')
+  const [step, setStep] = useState<'enter' | 'confirm'>('enter')
   const [loading, setLoading] = useState(false)
-  const [error, setError]   = useState('')
+  const [error, setError] = useState('')
 
-  function addDigit(d: string) {
+  const current = step === 'enter' ? pin : confirm
+
+  function press(d: string) {
     if (step === 'enter') {
-      if (pin.length >= PIN_LENGTH) return
-      const next = pin + d
-      setPin(next)
-      if (next.length === PIN_LENGTH) setStep('confirm')
+      if (pin.length >= LEN) return
+      const next = pin + d; setPin(next)
+      if (next.length === LEN) setStep('confirm')
     } else {
-      if (confirm.length >= PIN_LENGTH) return
-      const next = confirm + d
-      setConfirm(next)
-      if (next.length === PIN_LENGTH) handleCreate(pin, next)
+      if (confirm.length >= LEN) return
+      const next = confirm + d; setConfirm(next)
+      if (next.length === LEN) create(pin, next)
     }
   }
+  function back() { step === 'enter' ? setPin(p => p.slice(0, -1)) : (setConfirm(''), setError('')) }
 
-  function backspace() {
-    if (step === 'enter') setPin(p => p.slice(0, -1))
-    else { setConfirm(''); setError('') }
-  }
-
-  async function handleCreate(p: string, c: string) {
+  async function create(p: string, c: string) {
     if (p !== c) { setError('PINs do not match. Try again.'); setConfirm(''); return }
     setLoading(true)
     try {
-      // setPin returns fresh active-stage tokens — save them before any
-      // authenticated call (profile requires an active session).
       const { data } = await auth.setPin(p)
       saveTokens(data.access, data.refresh)
       const profile = await auth.profile()
       useAuthStore.getState().login(data.access, data.refresh, profile.data)
       router.push('/communities')
-    } catch {
-      toast.error('Failed to set PIN. Please try again.')
-      setPin(''); setConfirm(''); setStep('enter')
-    } finally {
-      setLoading(false)
-    }
+    } catch (err) { setError(apiError(err, 'Failed to set PIN.')); setPin(''); setConfirm(''); setStep('enter') }
+    finally { setLoading(false) }
   }
 
-  const current = step === 'enter' ? pin : confirm
-
   return (
-    <div className="min-h-screen flex items-center justify-center bg-primary-bg px-4">
-      <div className="w-full max-w-xs text-center">
-        <h1 className="text-2xl font-bold mb-2">
-          {step === 'enter' ? 'Create your PIN' : 'Confirm your PIN'}
-        </h1>
-        <p className="text-text-secondary mb-10 text-sm">
-          {step === 'enter'
-            ? 'Choose a 6-digit PIN to secure your account.'
-            : 'Enter your PIN again to confirm.'}
-        </p>
-
-        {/* Dots */}
-        <div className="flex justify-center gap-4 mb-10">
-          {Array.from({ length: PIN_LENGTH }).map((_, i) => (
-            <div
-              key={i}
-              className={cn(
-                'w-4 h-4 rounded-full border-2 transition-all',
-                i < current.length
-                  ? 'bg-primary border-primary'
-                  : 'bg-transparent border-border'
-              )}
-            />
-          ))}
-        </div>
-
-        {error && <p className="text-sm text-error mb-4">{error}</p>}
-
-        {/* Keypad */}
-        <div className="grid grid-cols-3 gap-3 mb-6">
-          {['1','2','3','4','5','6','7','8','9','','0','⌫'].map((key, idx) => {
-            if (!key) return <div key={idx} />
-            return (
-              <button
-                key={key}
-                onClick={() => key === '⌫' ? backspace() : addDigit(key)}
-                className={cn(
-                  'h-16 rounded-xl text-xl font-semibold transition-colors',
-                  key === '⌫'
-                    ? 'text-text-secondary bg-white border border-border hover:bg-divider'
-                    : 'bg-white border border-border hover:bg-primary-pale hover:text-primary active:bg-primary-pale'
-                )}
-              >
-                {key}
-              </button>
-            )
-          })}
-        </div>
-
-        {loading && <p className="text-sm text-text-muted">Setting up your account…</p>}
+    <AuthShell title={step === 'enter' ? 'Create your PIN' : 'Confirm your PIN'}
+      subtitle={step === 'enter' ? 'Choose a 6-digit PIN to secure your account.' : 'Enter your PIN again to confirm.'}>
+      <div className="mb-8 flex justify-center gap-3">
+        {Array.from({ length: LEN }).map((_, i) => (
+          <div key={i} className={cn('h-3.5 w-3.5 rounded-full border-2 transition-colors',
+            i < current.length ? 'border-primary bg-primary' : 'border-border bg-transparent')} />
+        ))}
       </div>
-    </div>
+      {error && <p className="mb-4 text-center text-sm text-error">{error}</p>}
+      <div className="mx-auto grid max-w-[260px] grid-cols-3 gap-3">
+        {['1','2','3','4','5','6','7','8','9','','0','del'].map((k, i) => {
+          if (!k) return <div key={i} />
+          return (
+            <button key={k} onClick={() => k === 'del' ? back() : press(k)} disabled={loading}
+              className="flex h-16 items-center justify-center rounded-xl border border-border bg-white text-xl font-semibold text-text transition-colors hover:bg-primary-pale hover:text-primary disabled:opacity-50">
+              {k === 'del' ? <Delete size={20} /> : k}
+            </button>
+          )
+        })}
+      </div>
+      {loading && <p className="mt-5 text-center text-sm text-text-muted">Setting up your account…</p>}
+    </AuthShell>
   )
 }

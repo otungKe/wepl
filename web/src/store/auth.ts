@@ -1,14 +1,7 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 import { clearTokens, saveTokens } from '@/lib/auth'
-
-interface User {
-  id: string
-  phone_number: string
-  name: string
-  kyc_status: 'not_submitted' | 'pending' | 'approved' | 'rejected'
-  profile_photo?: string
-}
+import type { User } from '@/lib/api'
 
 interface AuthState {
   user: User | null
@@ -24,8 +17,8 @@ export const useAuthStore = create<AuthState>()(
     (set) => ({
       user: null,
       pendingPhone: '',
-      setUser:        (user)  => set({ user }),
-      setPendingPhone:(phone) => set({ pendingPhone: phone }),
+      setUser: (user) => set({ user }),
+      setPendingPhone: (phone) => set({ pendingPhone: phone }),
       login: (access, refresh, user) => {
         saveTokens(access, refresh)
         set({ user })
@@ -35,6 +28,6 @@ export const useAuthStore = create<AuthState>()(
         set({ user: null })
       },
     }),
-    { name: 'wepl-auth', partialize: (s) => ({ user: s.user }) }
+    { name: 'wepl-auth', partialize: (s) => ({ user: s.user }) },
   )
 )

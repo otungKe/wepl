@@ -1,133 +1,121 @@
 'use client'
 import { useEffect, useState, useCallback } from 'react'
-import { useParams, useRouter } from 'next/navigation'
-import { welfare as welfareApi } from '@/lib/api'
-import { Badge } from '@/components/ui/Badge'
+import { useParams } from 'next/navigation'
+import { HeartHandshake, Plus, Check, X, Smartphone } from 'lucide-react'
+import { welfare, payments, apiError, type WelfareFund, type WelfareClaim } from '@/lib/api'
+import { PageHeader } from '@/components/app/PageHeader'
+import { StatCard } from '@/components/ui/StatCard'
 import { Button } from '@/components/ui/Button'
-import { EmptyState } from '@/components/ui/EmptyState'
-import { PageLoader } from '@/components/ui/Spinner'
+import { Input, Textarea } from '@/components/ui/Input'
 import { Modal } from '@/components/ui/Modal'
-import { Input } from '@/components/ui/Input'
-import { ArrowLeft, HeartHandshake } from 'lucide-react'
+import { Badge, statusTone } from '@/components/ui/Badge'
+import { EmptyState } from '@/components/ui/EmptyState'
+import { PageLoader, Skeleton } from '@/components/ui/Spinner'
 import { formatMoney, formatDate } from '@/lib/utils'
 import { toast } from 'sonner'
 
-interface Claim {
-  id: string; amount: string; reason: string; status: string; created_at: string; claimant_name?: string
-}
-
 export default function WelfarePage() {
   const { communityId } = useParams<{ communityId: string }>()
-  const router          = useRouter()
-  const [fund, setFund]     = useState<{ balance?: string; monthly_amount?: string } | null>(null)
-  const [claims, setClaims] = useState<Claim[]>([])
+  const [fund, setFund] = useState<WelfareFund | null>(null)
+  const [claims, setClaims] = useState<WelfareClaim[]>([])
   const [loading, setLoading] = useState(true)
-  const [showClaim, setShowClaim] = useState(false)
+  const [claimOpen, setClaimOpen] = useState(false)
+  const [payOpen, setPayOpen] = useState(false)
+  const [busy, setBusy] = useState<number | null>(null)
 
-  const load = useCallback(async () => {
-    try {
-      const [f, c] = await Promise.all([welfareApi.get(communityId), welfareApi.claims(communityId)])
-      setFund(f.data)
-      setClaims(c.data.results ?? c.data)
-    } catch { toast.error('Failed to load welfare fund') }
-    finally { setLoading(false) }
+  const load = useCallback(() => {
+    Promise.all([welfare.get(communityId), welfare.claims(communityId)])
+      .then(([f, c]) => { setFund(f.data); setClaims(c) })
+      .catch(e => toast.error(apiError(e))).finally(() => setLoading(false))
   }, [communityId])
-
   useEffect(() => { load() }, [load])
 
+  async function vote(claimId: number, action: 'approve' | 'reject') {
+    setBusy(claimId)
+    try { await welfare.voteClaim(claimId, action); toast.success('Vote recorded'); load() }
+    catch (e) { toast.error(apiError(e)) } finally { setBusy(null) }
+  }
+
   if (loading) return <PageLoader />
+  if (!fund) return <EmptyState title="Welfare fund not found" />
 
   return (
-    <div className="max-w-2xl mx-auto px-4 py-6">
-      <div className="flex items-center gap-3 mb-6">
-        <button onClick={() => router.back()} className="p-1.5 rounded-lg hover:bg-divider text-text-secondary">
-          <ArrowLeft size={18} />
-        </button>
-        <HeartHandshake size={22} className="text-primary" />
-        <h1 className="text-2xl font-bold text-text">Welfare Fund</h1>
-        <Button size="sm" className="ml-auto" onClick={() => setShowClaim(true)}>Submit Claim</Button>
+    <div>
+      <PageHeader title="Welfare fund" subtitle={fund.name} back
+        action={<Button size="sm" onClick={() => setPayOpen(true)}><Smartphone size={15} /> Contribute</Button>} />
+
+      <div className="mb-5 grid gap-3 sm:grid-cols-2">
+        <StatCard accent label="Fund balance" value={formatMoney(fund.balance)} icon={HeartHandshake} />
+        <StatCard label="Monthly contribution" value={formatMoney(fund.monthly_contribution)} />
       </div>
 
-      {/* Fund stats */}
-      {fund && (
-        <div className="grid grid-cols-2 gap-3 mb-6">
-          <div className="bg-primary-pale rounded-lg px-4 py-4">
-            <p className="text-xs text-text-secondary mb-1">Fund Balance</p>
-            <p className="text-xl font-bold text-primary">{formatMoney(fund.balance ?? 0)}</p>
-          </div>
-          <div className="bg-white rounded-lg px-4 py-4 shadow-card">
-            <p className="text-xs text-text-secondary mb-1">Monthly Contribution</p>
-            <p className="text-xl font-bold text-text">{formatMoney(fund.monthly_amount ?? 0)}</p>
-          </div>
-        </div>
-      )}
+      <div className="mb-3 flex items-center justify-between">
+        <h2 className="font-semibold text-text">Claims</h2>
+        <Button size="sm" variant="outline" onClick={() => setClaimOpen(true)}><Plus size={15} /> Submit claim</Button>
+      </div>
 
-      {/* Claims */}
-      <h2 className="text-lg font-semibold text-text mb-3">Claims</h2>
       {claims.length === 0 ? (
-        <EmptyState icon={HeartHandshake} title="No claims yet" description="Members can submit claims when they need support." />
+        <EmptyState icon={HeartHandshake} title="No claims yet" description="Members can request support from the fund." />
       ) : (
-        <div className="space-y-2">
-          {claims.map(c => (
-            <div key={c.id} className="bg-white rounded-lg px-4 py-4 shadow-card flex items-start gap-4">
-              <div className="flex-1">
-                <p className="font-medium text-text">{c.claimant_name ?? 'Member'}</p>
-                <p className="text-sm text-text-secondary mt-0.5">{c.reason}</p>
-                <p className="text-xs text-text-muted mt-1">{formatDate(c.created_at)}</p>
+        <div className="space-y-3">
+          {claims.map(cl => (
+            <div key={cl.id} className="rounded-lg border border-border bg-surface p-4">
+              <div className="flex items-center justify-between">
+                <p className="text-lg font-bold text-text">{formatMoney(cl.amount_requested)}</p>
+                <Badge tone={statusTone(cl.status)}>{cl.status}</Badge>
               </div>
-              <div className="text-right shrink-0">
-                <p className="font-semibold text-text">{formatMoney(c.amount)}</p>
-                <Badge
-                  className="mt-1"
-                  variant={c.status === 'APPROVED' ? 'approved' : c.status === 'REJECTED' ? 'rejected' : 'pending'}
-                >
-                  {c.status}
-                </Badge>
-              </div>
+              <p className="mt-1 text-sm text-text-secondary">{cl.reason}</p>
+              <p className="mt-1 text-xs text-text-muted">{cl.claimant_phone} · {formatDate(cl.created_at)} · {cl.approve_count} approvals</p>
+              {cl.status === 'PENDING' && fund.is_admin && (
+                <div className="mt-3 flex gap-2">
+                  <Button size="sm" loading={busy === cl.id} onClick={() => vote(cl.id, 'approve')}><Check size={15} /> Approve</Button>
+                  <Button size="sm" variant="outline" onClick={() => vote(cl.id, 'reject')}><X size={15} /> Reject</Button>
+                </div>
+              )}
             </div>
           ))}
         </div>
       )}
 
-      <Modal open={showClaim} onClose={() => setShowClaim(false)} title="Submit Welfare Claim">
-        <ClaimForm communityId={communityId} onSuccess={() => { setShowClaim(false); load() }} />
-      </Modal>
+      <ClaimModal open={claimOpen} onClose={() => setClaimOpen(false)} communityId={communityId} onDone={load} />
+      <ContributeModal open={payOpen} onClose={() => setPayOpen(false)} communityId={Number(communityId)} />
     </div>
   )
 }
 
-function ClaimForm({ communityId, onSuccess }: { communityId: string; onSuccess: () => void }) {
-  const [amount, setAmount] = useState('')
-  const [reason, setReason] = useState('')
-  const [loading, setLoading] = useState(false)
-
-  async function handleSubmit(e: React.FormEvent) {
-    e.preventDefault()
-    setLoading(true)
-    try {
-      await welfareApi.submitClaim(communityId, { amount, reason })
-      toast.success('Claim submitted for review')
-      onSuccess()
-    } catch { toast.error('Submission failed') }
-    finally { setLoading(false) }
+function ClaimModal({ open, onClose, communityId, onDone }: { open: boolean; onClose: () => void; communityId: string; onDone: () => void }) {
+  const [amount, setAmount] = useState(''); const [reason, setReason] = useState(''); const [saving, setSaving] = useState(false)
+  async function submit() {
+    if (!amount || !reason.trim()) return toast.error('Enter amount and reason')
+    setSaving(true)
+    try { await welfare.submitClaim(communityId, { amount_requested: Number(amount), reason }); toast.success('Claim submitted'); setAmount(''); setReason(''); onClose(); onDone() }
+    catch (e) { toast.error(apiError(e)) } finally { setSaving(false) }
   }
-
   return (
-    <form onSubmit={handleSubmit} className="flex flex-col gap-4">
-      <Input label="Amount requested (KES)" type="number" value={amount} onChange={e => setAmount(e.target.value)} autoFocus />
-      <div className="flex flex-col gap-1.5">
-        <label className="text-sm font-medium">Reason</label>
-        <textarea
-          value={reason}
-          onChange={e => setReason(e.target.value)}
-          placeholder="Briefly explain the reason for this claim…"
-          rows={3}
-          className="rounded border border-border px-4 py-3 text-base text-text placeholder:text-text-muted focus:outline-none focus:border-primary resize-none"
-        />
+    <Modal open={open} onClose={onClose} title="Submit a claim">
+      <div className="flex flex-col gap-4">
+        <Input label="Amount (KES)" type="number" inputMode="decimal" value={amount} onChange={e => setAmount(e.target.value)} autoFocus />
+        <Textarea label="Reason" value={reason} onChange={e => setReason(e.target.value)} placeholder="Describe your situation" />
+        <Button onClick={submit} loading={saving} fullWidth>Submit claim</Button>
       </div>
-      <div className="flex justify-end gap-3">
-        <Button type="submit" loading={loading}>Submit Claim</Button>
+    </Modal>
+  )
+}
+
+function ContributeModal({ open, onClose, communityId }: { open: boolean; onClose: () => void; communityId: number }) {
+  const [amount, setAmount] = useState(''); const [loading, setLoading] = useState(false)
+  async function pay() {
+    const amt = Number(amount); if (!amt) return toast.error('Enter an amount')
+    setLoading(true)
+    try { await payments.stkPush({ payment_type: 'welfare', community_id: communityId, amount: amt }); toast.success('Check your phone to authorize payment'); setAmount(''); onClose() }
+    catch (e) { toast.error(apiError(e)) } finally { setLoading(false) }
+  }
+  return (
+    <Modal open={open} onClose={onClose} title="Contribute to welfare">
+      <div className="flex flex-col gap-4">
+        <Input label="Amount (KES)" type="number" inputMode="decimal" value={amount} onChange={e => setAmount(e.target.value)} autoFocus />
+        <Button onClick={pay} loading={loading} fullWidth><Smartphone size={16} /> Send STK push</Button>
       </div>
-    </form>
+    </Modal>
   )
 }

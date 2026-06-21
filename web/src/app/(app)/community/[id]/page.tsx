@@ -1,303 +1,216 @@
 'use client'
 import { useEffect, useState, useCallback } from 'react'
+import Link from 'next/link'
 import { useParams, useRouter } from 'next/navigation'
-import { communities as commApi, contributions as contribApi } from '@/lib/api'
+import { MessageSquare, Coins, HeartHandshake, Plus, Copy, LogOut, Crown } from 'lucide-react'
+import {
+  communities, contributions, conversations, apiError,
+  type Community, type CommunityMember, type Contribution, type Conversation,
+} from '@/lib/api'
+import { PageHeader } from '@/components/app/PageHeader'
+import { Tabs } from '@/components/ui/Tabs'
+import { Button } from '@/components/ui/Button'
+import { Input } from '@/components/ui/Input'
+import { Modal } from '@/components/ui/Modal'
 import { Avatar } from '@/components/ui/Avatar'
 import { Badge } from '@/components/ui/Badge'
-import { Button } from '@/components/ui/Button'
-import { Tabs } from '@/components/ui/Tabs'
 import { EmptyState } from '@/components/ui/EmptyState'
-import { PageLoader } from '@/components/ui/Spinner'
-import { Modal } from '@/components/ui/Modal'
-import { Input } from '@/components/ui/Input'
-import { ArrowLeft, MessageSquare, Users, Plus, DollarSign, HeartHandshake, TrendingUp, Settings, Lock, Globe } from 'lucide-react'
-import Link from 'next/link'
+import { Skeleton, PageLoader } from '@/components/ui/Spinner'
+import { formatMoney } from '@/lib/utils'
 import { toast } from 'sonner'
-import { truncate, formatRelative } from '@/lib/utils'
 
-const TABS = [
-  { id: 'conversations', label: 'Chats' },
-  { id: 'contributions', label: 'Contributions' },
-  { id: 'members',       label: 'Members' },
-]
+export default function CommunityDetailPage() {
+  const { id } = useParams<{ id: string }>()
+  const router = useRouter()
+  const [c, setC] = useState<Community | null>(null)
+  const [tab, setTab] = useState('chats')
+  const [loading, setLoading] = useState(true)
 
-export default function CommunityPage() {
-  const { id }   = useParams<{ id: string }>()
-  const router   = useRouter()
-  const [community, setCommunity]     = useState<Record<string, unknown> | null>(null)
-  const [conversations, setConversations] = useState<unknown[]>([])
-  const [contributions, setContributions] = useState<unknown[]>([])
-  const [members, setMembers]             = useState<unknown[]>([])
-  const [activeTab, setActiveTab]         = useState('conversations')
-  const [loading, setLoading]             = useState(true)
-  const [showContrib, setShowContrib]     = useState(false)
-
-  const load = useCallback(async () => {
-    try {
-      const [comm, convs, contribs, mems] = await Promise.all([
-        commApi.get(id),
-        commApi.conversations(id),
-        contribApi.list(id),
-        commApi.members(id),
-      ])
-      setCommunity(comm.data)
-      setConversations(convs.data.results ?? convs.data)
-      setContributions(contribs.data.results ?? contribs.data)
-      setMembers(mems.data.results ?? mems.data)
-    } catch {
-      toast.error('Failed to load community')
-    } finally {
-      setLoading(false)
-    }
+  useEffect(() => {
+    communities.get(id).then(r => setC(r.data)).catch(e => toast.error(apiError(e))).finally(() => setLoading(false))
   }, [id])
 
-  useEffect(() => { load() }, [load])
+  async function leave() {
+    if (!confirm('Leave this community?')) return
+    try { await communities.leave(id); toast.success('You left the community'); router.push('/communities') }
+    catch (e) { toast.error(apiError(e)) }
+  }
+  function copyInvite() { if (c) { navigator.clipboard.writeText(c.invite_code); toast.success('Invite code copied') } }
 
   if (loading) return <PageLoader />
-  if (!community) return null
-
-  const comm = community as {
-    name: string; description: string; is_private: boolean; community_photo?: string;
-    member_count: number; is_admin: boolean; welfare_fund?: boolean | null; shares_fund?: boolean | null
-  }
+  if (!c) return <EmptyState title="Community not found" />
 
   return (
-    <div className="h-full flex flex-col">
-      {/* Header */}
-      <div className="bg-white border-b border-divider px-6 py-4 flex items-center gap-4 sticky top-0 z-10">
-        <button onClick={() => router.back()} className="p-1.5 rounded-lg hover:bg-divider text-text-secondary">
-          <ArrowLeft size={18} />
+    <div>
+      <PageHeader title={c.name} subtitle={`${c.member_count} members`} back="/communities"
+        action={<Button variant="ghost" size="sm" onClick={leave}><LogOut size={15} /> Leave</Button>} />
+
+      <div className="mb-4 flex flex-wrap items-center gap-2">
+        <button onClick={copyInvite} className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-surface px-3 py-1.5 text-sm text-text-secondary hover:bg-divider">
+          <Copy size={14} /> Invite code: <span className="font-semibold text-text">{c.invite_code}</span>
         </button>
-        <Avatar name={comm.name} src={comm.community_photo} size="md" />
-        <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-2">
-            <h1 className="font-semibold text-text">{comm.name}</h1>
-            {comm.is_private
-              ? <Lock size={13} className="text-text-muted" />
-              : <Globe size={13} className="text-text-muted" />
-            }
-          </div>
-          <p className="text-sm text-text-secondary">{comm.member_count} members</p>
-        </div>
-        <div className="flex items-center gap-2">
-          {comm.welfare_fund && (
-            <Link href={`/welfare/${id}`} title="Welfare Fund">
-              <Button variant="ghost" size="sm"><HeartHandshake size={16} /></Button>
-            </Link>
-          )}
-          {comm.shares_fund && (
-            <Link href={`/shares/${id}`} title="Shares Fund">
-              <Button variant="ghost" size="sm"><TrendingUp size={16} /></Button>
-            </Link>
-          )}
-          {comm.is_admin && (
-            <Link href={`/community/${id}/settings`} title="Settings">
-              <Button variant="ghost" size="sm"><Settings size={16} /></Button>
-            </Link>
-          )}
-        </div>
-      </div>
-
-      {/* Tabs */}
-      <Tabs tabs={TABS} active={activeTab} onChange={setActiveTab} className="bg-white px-4 sticky top-[73px] z-10" />
-
-      {/* Tab content */}
-      <div className="flex-1 overflow-y-auto p-4">
-        {activeTab === 'conversations' && (
-          <ConversationsList convs={conversations as ConvItem[]} communityId={id} />
+        {c.has_welfare_fund && (
+          <Link href={`/welfare/${c.id}`} className="inline-flex items-center gap-1.5 rounded-lg bg-primary-pale px-3 py-1.5 text-sm font-medium text-primary hover:bg-primary-pale/70">
+            <HeartHandshake size={15} /> Welfare fund
+          </Link>
         )}
-        {activeTab === 'contributions' && (
-          <>
-            <div className="flex justify-between items-center mb-4">
-              <p className="text-sm text-text-secondary">{(contributions as unknown[]).length} contribution pools</p>
-              <Button size="sm" onClick={() => setShowContrib(true)}>
-                <Plus size={14} /> New
-              </Button>
-            </div>
-            <ContributionsList contribs={contributions as ContribItem[]} />
-          </>
-        )}
-        {activeTab === 'members' && (
-          <MembersList members={members as MemberItem[]} />
+        {c.has_shares_fund && (
+          <Link href={`/shares/${c.id}`} className="inline-flex items-center gap-1.5 rounded-lg bg-accent-pale px-3 py-1.5 text-sm font-medium text-accent hover:bg-accent-pale/70">
+            <Coins size={15} /> Shares fund
+          </Link>
         )}
       </div>
 
-      {/* Create contribution modal */}
-      <Modal open={showContrib} onClose={() => setShowContrib(false)} title="New Contribution Pool" size="lg">
-        <CreateContributionForm communityId={id} onSuccess={() => { setShowContrib(false); load() }} />
+      <Tabs active={tab} onChange={setTab} className="mb-4"
+        tabs={[{ key: 'chats', label: 'Chats' }, { key: 'contributions', label: 'Contributions' }, { key: 'members', label: 'Members' }]} />
+
+      {tab === 'chats' && <ChatsTab communityId={id} />}
+      {tab === 'contributions' && <ContributionsTab communityId={id} />}
+      {tab === 'members' && <MembersTab communityId={id} />}
+    </div>
+  )
+}
+
+function ChatsTab({ communityId }: { communityId: string }) {
+  const [items, setItems] = useState<Conversation[]>([])
+  const [loading, setLoading] = useState(true)
+  const [open, setOpen] = useState(false)
+  const [topic, setTopic] = useState('')
+  const [saving, setSaving] = useState(false)
+
+  const load = useCallback(() => {
+    setLoading(true)
+    conversations.forCommunity(communityId).then(setItems).catch(e => toast.error(apiError(e))).finally(() => setLoading(false))
+  }, [communityId])
+  useEffect(() => { load() }, [load])
+
+  async function create() {
+    if (!topic.trim()) return
+    setSaving(true)
+    try { await conversations.create(communityId, topic.trim()); setTopic(''); setOpen(false); load() }
+    catch (e) { toast.error(apiError(e)) } finally { setSaving(false) }
+  }
+
+  if (loading) return <div className="space-y-2">{Array.from({ length: 3 }).map((_, i) => <Skeleton key={i} className="h-16" />)}</div>
+
+  return (
+    <div>
+      <div className="mb-3 flex justify-end"><Button size="sm" onClick={() => setOpen(true)}><Plus size={15} /> New topic</Button></div>
+      {items.length === 0 ? (
+        <EmptyState icon={MessageSquare} title="No conversations yet" description="Start a topic to chat with members." />
+      ) : (
+        <div className="divide-y divide-divider overflow-hidden rounded-lg border border-border bg-surface">
+          {items.map(cv => (
+            <Link key={cv.id} href={`/conversation/${cv.id}`} className="flex items-center gap-3 p-4 hover:bg-divider/50">
+              <div className="flex h-10 w-10 items-center justify-center rounded-full bg-primary-pale text-primary"><MessageSquare size={18} /></div>
+              <div className="min-w-0 flex-1">
+                <p className="truncate font-semibold text-text">{cv.topic}</p>
+                <p className="truncate text-sm text-text-muted">{cv.last_message ? `${cv.last_message.sender}: ${cv.last_message.content}` : 'No messages yet'}</p>
+              </div>
+              {cv.unread_count > 0 && <span className="rounded-full bg-accent px-2 text-xs font-semibold text-white">{cv.unread_count}</span>}
+            </Link>
+          ))}
+        </div>
+      )}
+      <Modal open={open} onClose={() => setOpen(false)} title="New topic">
+        <div className="flex flex-col gap-4">
+          <Input label="Topic" value={topic} onChange={e => setTopic(e.target.value)} placeholder="e.g. Monthly meeting" autoFocus />
+          <Button onClick={create} loading={saving} fullWidth>Create</Button>
+        </div>
       </Modal>
     </div>
   )
 }
 
-// ── Sub-components ────────────────────────────────────────────────────────────
+function ContributionsTab({ communityId }: { communityId: string }) {
+  const [items, setItems] = useState<Contribution[]>([])
+  const [loading, setLoading] = useState(true)
+  const [open, setOpen] = useState(false)
 
-interface ConvItem {
-  id: string; name: string; last_message?: { content: string; created_at: string }; unread_count: number
-}
-
-function ConversationsList({ convs, communityId }: { convs: ConvItem[]; communityId: string }) {
-  if (!convs.length) return (
-    <EmptyState icon={MessageSquare} title="No conversations yet" description="Start a group chat to communicate with members." />
-  )
-  return (
-    <div className="space-y-1">
-      {convs.map(c => (
-        <Link key={c.id} href={`/conversation/${c.id}`}>
-          <div className="flex items-center gap-3 bg-white rounded-lg px-4 py-3 hover:shadow-card transition-shadow cursor-pointer">
-            <div className="w-10 h-10 rounded-full bg-primary-pale flex items-center justify-center flex-shrink-0">
-              <MessageSquare size={18} className="text-primary" />
-            </div>
-            <div className="flex-1 min-w-0">
-              <p className="font-medium text-text">{c.name}</p>
-              {c.last_message && (
-                <p className="text-sm text-text-secondary truncate">{truncate(c.last_message.content, 50)}</p>
-              )}
-            </div>
-            <div className="text-right shrink-0">
-              {c.last_message && <p className="text-xs text-text-muted">{formatRelative(c.last_message.created_at)}</p>}
-              {c.unread_count > 0 && (
-                <span className="inline-flex items-center justify-center bg-primary text-white text-xs font-bold rounded-full min-w-[18px] h-[18px] px-1 mt-1">
-                  {c.unread_count}
-                </span>
-              )}
-            </div>
-          </div>
-        </Link>
-      ))}
-    </div>
-  )
-}
-
-interface ContribItem {
-  id: string; title: string; amount_type: string; fixed_amount?: string; frequency: string; member_count?: number
-}
-
-function ContributionsList({ contribs }: { contribs: ContribItem[] }) {
-  if (!contribs.length) return (
-    <EmptyState icon={DollarSign} title="No contributions yet" description="Create the first contribution pool for this community." />
-  )
-  return (
-    <div className="grid gap-3 sm:grid-cols-2">
-      {contribs.map(c => (
-        <Link key={c.id} href={`/contribution/${c.id}`}>
-          <div className="bg-white rounded-lg p-4 shadow-card hover:shadow-md transition-shadow cursor-pointer">
-            <div className="flex items-start justify-between gap-2 mb-2">
-              <p className="font-semibold text-text">{c.title}</p>
-              <Badge variant="approved">{c.frequency}</Badge>
-            </div>
-            <p className="text-sm text-text-secondary">
-              {c.amount_type === 'fixed' && c.fixed_amount
-                ? `KES ${Number(c.fixed_amount).toLocaleString()} per member`
-                : 'Open amount'}
-            </p>
-            {c.member_count !== undefined && (
-              <p className="text-xs text-text-muted mt-2">{c.member_count} participants</p>
-            )}
-          </div>
-        </Link>
-      ))}
-    </div>
-  )
-}
-
-interface MemberItem {
-  id: string; name: string; phone_number: string; role: string; profile_photo?: string; kyc_status: string
-}
-
-function MembersList({ members }: { members: MemberItem[] }) {
-  if (!members.length) return (
-    <EmptyState icon={Users} title="No members" description="Members appear here once they join." />
-  )
-  return (
-    <div className="space-y-1">
-      {members.map(m => (
-        <div key={m.id} className="flex items-center gap-3 bg-white rounded-lg px-4 py-3">
-          <Avatar name={m.name} src={m.profile_photo} size="md" />
-          <div className="flex-1 min-w-0">
-            <p className="font-medium text-text truncate">{m.name}</p>
-            <p className="text-sm text-text-muted truncate">{m.phone_number}</p>
-          </div>
-          <div className="flex items-center gap-2">
-            {m.role === 'admin' && <Badge variant="approved">Admin</Badge>}
-            {m.kyc_status !== 'approved' && <Badge variant="pending">Unverified</Badge>}
-          </div>
-        </div>
-      ))}
-    </div>
-  )
-}
-
-function CreateContributionForm({ communityId, onSuccess }: { communityId: string; onSuccess: () => void }) {
-  const [data, setData] = useState({
-    title: '', description: '', amount_type: 'fixed', fixed_amount: '',
-    frequency: 'monthly', voting_threshold: 'admins', visibility: 'closed',
-    tenure_type: 'open',
-  })
-  const [loading, setLoading] = useState(false)
-
-  const upd = (k: string, v: string) => setData(d => ({ ...d, [k]: v }))
-
-  async function handleSubmit(e: React.FormEvent) {
-    e.preventDefault()
+  const load = useCallback(() => {
     setLoading(true)
+    contributions.forCommunity(communityId).then(setItems).catch(e => toast.error(apiError(e))).finally(() => setLoading(false))
+  }, [communityId])
+  useEffect(() => { load() }, [load])
+
+  if (loading) return <div className="space-y-2">{Array.from({ length: 3 }).map((_, i) => <Skeleton key={i} className="h-20" />)}</div>
+
+  return (
+    <div>
+      <div className="mb-3 flex justify-end"><Button size="sm" onClick={() => setOpen(true)}><Plus size={15} /> New contribution</Button></div>
+      {items.length === 0 ? (
+        <EmptyState icon={Coins} title="No contributions yet" description="Create a contribution pool for this community." />
+      ) : (
+        <div className="grid gap-3">
+          {items.map(ct => (
+            <Link key={ct.id} href={`/contribution/${ct.id}`} className="rounded-lg border border-border bg-surface p-4 hover:shadow-card">
+              <div className="flex items-center justify-between">
+                <p className="font-semibold text-text">{ct.title}</p>
+                <Badge tone={ct.status === 'active' ? 'success' : 'neutral'}>{ct.status}</Badge>
+              </div>
+              <p className="mt-1 text-sm text-text-muted">{ct.participant_count} members · {ct.frequency}</p>
+              <p className="mt-2 text-lg font-bold text-primary">{formatMoney(ct.current_amount)}</p>
+            </Link>
+          ))}
+        </div>
+      )}
+      <CreateContributionModal open={open} onClose={() => setOpen(false)} communityId={communityId} onCreated={load} />
+    </div>
+  )
+}
+
+function CreateContributionModal({ open, onClose, communityId, onCreated }: { open: boolean; onClose: () => void; communityId: string; onCreated: () => void }) {
+  const [title, setTitle] = useState('')
+  const [amount, setAmount] = useState('')
+  const [saving, setSaving] = useState(false)
+
+  async function submit() {
+    if (!title.trim()) return toast.error('Enter a title')
+    setSaving(true)
     try {
-      await contribApi.create({ ...data, community: communityId })
-      toast.success('Contribution pool created!')
-      onSuccess()
-    } catch {
-      toast.error('Failed to create contribution')
-    } finally {
-      setLoading(false)
-    }
+      await contributions.create({
+        title, community: Number(communityId), visibility: 'closed',
+        tenure_type: 'open', frequency: 'monthly',
+        amount_type: amount ? 'fixed' : 'open', fixed_amount: amount ? Number(amount) : null,
+        voting_threshold: 'admins', add_all_members: true,
+      })
+      toast.success('Contribution created'); setTitle(''); setAmount(''); onClose(); onCreated()
+    } catch (e) { toast.error(apiError(e)) } finally { setSaving(false) }
   }
 
   return (
-    <form onSubmit={handleSubmit} className="grid grid-cols-2 gap-4">
-      <div className="col-span-2">
-        <Input label="Title" value={data.title} onChange={e => upd('title', e.target.value)} placeholder="e.g. Monthly chama" autoFocus />
+    <Modal open={open} onClose={onClose} title="New contribution">
+      <div className="flex flex-col gap-4">
+        <Input label="Title" value={title} onChange={e => setTitle(e.target.value)} placeholder="e.g. Monthly savings" autoFocus />
+        <Input label="Fixed amount (optional)" type="number" inputMode="decimal" value={amount} onChange={e => setAmount(e.target.value)} placeholder="Leave blank for open amount" hint="Monthly · all community members added" />
+        <Button onClick={submit} loading={saving} fullWidth>Create contribution</Button>
       </div>
-      <div className="col-span-2">
-        <Input label="Description (optional)" value={data.description} onChange={e => upd('description', e.target.value)} />
-      </div>
+    </Modal>
+  )
+}
 
-      <div className="flex flex-col gap-1.5">
-        <label className="text-sm font-medium">Amount type</label>
-        <select value={data.amount_type} onChange={e => upd('amount_type', e.target.value)}
-          className="rounded border border-border px-3 py-3 text-base focus:outline-none focus:border-primary">
-          <option value="fixed">Fixed amount</option>
-          <option value="open">Open amount</option>
-        </select>
-      </div>
+function MembersTab({ communityId }: { communityId: string }) {
+  const [items, setItems] = useState<CommunityMember[]>([])
+  const [loading, setLoading] = useState(true)
+  useEffect(() => {
+    communities.members(communityId).then(setItems).catch(e => toast.error(apiError(e))).finally(() => setLoading(false))
+  }, [communityId])
 
-      {data.amount_type === 'fixed' && (
-        <Input label="Amount (KES)" type="number" value={data.fixed_amount} onChange={e => upd('fixed_amount', e.target.value)} placeholder="5000" />
-      )}
+  if (loading) return <div className="space-y-2">{Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-14" />)}</div>
+  if (items.length === 0) return <EmptyState title="No members" />
 
-      <div className="flex flex-col gap-1.5">
-        <label className="text-sm font-medium">Frequency</label>
-        <select value={data.frequency} onChange={e => upd('frequency', e.target.value)}
-          className="rounded border border-border px-3 py-3 text-base focus:outline-none focus:border-primary">
-          <option value="daily">Daily</option>
-          <option value="weekly">Weekly</option>
-          <option value="monthly">Monthly</option>
-          <option value="anytime">Anytime</option>
-        </select>
-      </div>
-
-      <div className="flex flex-col gap-1.5">
-        <label className="text-sm font-medium">Payout approval</label>
-        <select value={data.voting_threshold} onChange={e => upd('voting_threshold', e.target.value)}
-          className="rounded border border-border px-3 py-3 text-base focus:outline-none focus:border-primary">
-          <option value="admins">Admins only</option>
-          <option value="50">50% of members</option>
-          <option value="100">All members</option>
-        </select>
-      </div>
-
-      <div className="col-span-2 flex justify-end gap-3 pt-2">
-        <Button type="submit" loading={loading}>Create Pool</Button>
-      </div>
-    </form>
+  return (
+    <div className="divide-y divide-divider overflow-hidden rounded-lg border border-border bg-surface">
+      {items.map(m => (
+        <div key={m.id} className="flex items-center gap-3 p-3.5">
+          <Avatar name={m.name} src={m.profile_photo} size={40} />
+          <div className="min-w-0 flex-1">
+            <p className="truncate font-medium text-text">{m.name}</p>
+            <p className="truncate text-sm text-text-muted">{m.phone_number}</p>
+          </div>
+          {m.role !== 'member' && <Badge tone={m.role === 'admin' ? 'primary' : 'warning'}>{m.role === 'admin' && <Crown size={11} />}{m.role}</Badge>}
+        </div>
+      ))}
+    </div>
   )
 }

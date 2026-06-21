@@ -2,81 +2,53 @@
 import Link from 'next/link'
 import { useEffect } from 'react'
 import { useRouter } from 'next/navigation'
-import { getAccessToken, isTokenValid } from '@/lib/auth'
+import { Building2, Users, Banknote, ShieldCheck } from 'lucide-react'
 import { Button } from '@/components/ui/Button'
-import { Building2, Shield, Users, TrendingUp } from 'lucide-react'
+import { isAuthenticated } from '@/lib/auth'
 
 const FEATURES = [
-  { icon: Users,     text: 'Community savings groups & ROSCA' },
-  { icon: TrendingUp,text: 'Multi-sig disbursements & advances' },
-  { icon: Shield,    text: 'Welfare & shares funds' },
+  { icon: Users, title: 'Communities & chamas', desc: 'Create or join savings groups and stay in sync.' },
+  { icon: Banknote, title: 'Contributions & ROSCA', desc: 'Pool funds, rotate payouts, run welfare & shares.' },
+  { icon: ShieldCheck, title: 'Secure by design', desc: 'Phone + PIN auth, M-Pesa payments, audited ledger.' },
 ]
 
 export default function WelcomePage() {
   const router = useRouter()
-
-  useEffect(() => {
-    const token = getAccessToken()
-    if (token && isTokenValid(token)) router.replace('/communities')
-  }, [router])
+  useEffect(() => { if (isAuthenticated()) router.replace('/communities') }, [router])
 
   return (
-    <div className="min-h-screen flex">
-      {/* Left — branding panel */}
-      <div className="hidden lg:flex flex-col justify-between w-1/2 bg-primary px-12 py-16 text-white">
-        <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-xl bg-white/20 flex items-center justify-center">
+    <div className="min-h-screen bg-primary-bg">
+      <div className="mx-auto flex max-w-5xl flex-col items-center px-6 py-16 lg:py-24">
+        <div className="flex items-center gap-2.5">
+          <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-primary">
             <Building2 size={22} className="text-white" />
           </div>
-          <span className="text-2xl font-bold tracking-tight">WEPL</span>
+          <span className="text-2xl font-bold text-text">WEPL</span>
         </div>
 
-        <div>
-          <h1 className="text-4xl font-bold leading-tight mb-4">
-            Your community&apos;s financial OS
-          </h1>
-          <p className="text-primary-pale text-lg mb-10">
-            Contributions, rotations, welfare funds, and emergency advances — built for the way your community already works.
-          </p>
-          <ul className="space-y-4">
-            {FEATURES.map(({ icon: Icon, text }) => (
-              <li key={text} className="flex items-center gap-3 text-primary-pale">
-                <div className="w-8 h-8 rounded-lg bg-white/10 flex items-center justify-center">
-                  <Icon size={16} className="text-white" />
-                </div>
-                <span className="text-sm">{text}</span>
-              </li>
-            ))}
-          </ul>
-        </div>
-
-        <p className="text-xs text-primary-pale/60">
-          © {new Date().getFullYear()} WEPL. Powered by M-Pesa.
+        <h1 className="mt-10 max-w-2xl text-center text-3xl font-bold leading-tight text-text sm:text-4xl">
+          Community savings & contributions, <span className="text-primary">simplified.</span>
+        </h1>
+        <p className="mt-4 max-w-xl text-center text-text-secondary">
+          Run your chama, SACCO or welfare group end-to-end — contributions, ROSCA payouts,
+          emergency advances and shares, all over M-Pesa.
         </p>
-      </div>
 
-      {/* Right — auth panel */}
-      <div className="flex-1 flex flex-col items-center justify-center px-6 py-16">
-        {/* Mobile logo */}
-        <div className="lg:hidden flex items-center gap-3 mb-12">
-          <div className="w-10 h-10 rounded-xl bg-primary flex items-center justify-center">
-            <Building2 size={22} className="text-white" />
-          </div>
-          <span className="text-2xl font-bold text-text tracking-tight">WEPL</span>
+        <div className="mt-8 flex w-full max-w-xs flex-col gap-3">
+          <Link href="/login?mode=register"><Button size="lg" fullWidth>Create account</Button></Link>
+          <Link href="/login"><Button size="lg" variant="outline" fullWidth>Sign in</Button></Link>
         </div>
 
-        <div className="w-full max-w-sm">
-          <h2 className="text-2xl font-bold text-text mb-2">Welcome</h2>
-          <p className="text-text-secondary mb-8">Sign in or create your account</p>
-
-          <div className="flex flex-col gap-3">
-            <Link href="/login" className="block">
-              <Button className="w-full" size="lg">Sign In</Button>
-            </Link>
-            <Link href="/login?mode=register" className="block">
-              <Button variant="secondary" className="w-full" size="lg">Create Account</Button>
-            </Link>
-          </div>
+        <div className="mt-16 grid w-full gap-4 sm:grid-cols-3">
+          {FEATURES.map(({ icon: Icon, title, desc }) => (
+            <div key={title} className="rounded-lg border border-border bg-surface p-5">
+              <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-primary-pale text-primary">
+                <Icon size={20} />
+              </div>
+              <p className="mt-3 font-semibold text-text">{title}</p>
+              <p className="mt-1 text-sm text-text-muted">{desc}</p>
+            </div>
+          ))}
         </div>
       </div>
     </div>

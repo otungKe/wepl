@@ -1,56 +1,39 @@
 'use client'
-import { cn } from '@/lib/utils'
-import { X } from 'lucide-react'
 import { useEffect } from 'react'
+import { X } from 'lucide-react'
+import { cn } from '@/lib/utils'
 
-interface Props {
+interface ModalProps {
   open: boolean
   onClose: () => void
   title?: string
   children: React.ReactNode
-  size?: 'sm' | 'md' | 'lg'
   className?: string
 }
 
-const widths = { sm: 'max-w-sm', md: 'max-w-lg', lg: 'max-w-2xl' }
-
-export function Modal({ open, onClose, title, children, size = 'md', className }: Props) {
+export function Modal({ open, onClose, title, children, className }: ModalProps) {
   useEffect(() => {
     if (!open) return
     const onKey = (e: KeyboardEvent) => e.key === 'Escape' && onClose()
-    document.addEventListener('keydown', onKey)
-    return () => document.removeEventListener('keydown', onKey)
+    window.addEventListener('keydown', onKey)
+    document.body.style.overflow = 'hidden'
+    return () => { window.removeEventListener('keydown', onKey); document.body.style.overflow = '' }
   }, [open, onClose])
 
   if (!open) return null
-
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-      {/* Overlay */}
-      <div
-        className="absolute inset-0 bg-black/40 animate-fadeIn"
-        onClick={onClose}
-      />
-      {/* Panel */}
-      <div
-        className={cn(
-          'relative w-full bg-white rounded-lg shadow-modal animate-slideUp',
-          widths[size],
-          className
-        )}
-      >
+      <div className="absolute inset-0 bg-black/40 animate-fadeIn" onClick={onClose} />
+      <div className={cn('relative w-full max-w-md rounded-lg bg-surface shadow-modal animate-slideUp', className)}>
         {title && (
-          <div className="flex items-center justify-between px-6 py-4 border-b border-divider">
-            <h2 className="text-lg font-semibold text-text">{title}</h2>
-            <button
-              onClick={onClose}
-              className="p-1 rounded hover:bg-divider text-text-muted transition-colors"
-            >
-              <X size={18} />
+          <div className="flex items-center justify-between border-b border-divider px-5 py-4">
+            <h2 className="text-lg font-bold text-text">{title}</h2>
+            <button onClick={onClose} className="rounded-lg p-1 text-text-muted hover:bg-divider hover:text-text">
+              <X size={20} />
             </button>
           </div>
         )}
-        <div className="p-6">{children}</div>
+        <div className="p-5">{children}</div>
       </div>
     </div>
   )

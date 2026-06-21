@@ -1,28 +1,29 @@
 import { cn } from '@/lib/utils'
 
-type Variant = 'approved' | 'pending' | 'rejected' | 'default' | 'accent'
+type Tone = 'neutral' | 'success' | 'warning' | 'danger' | 'info' | 'primary'
 
-interface Props {
-  variant?: Variant
-  children: React.ReactNode
-  className?: string
+const tones: Record<Tone, string> = {
+  neutral: 'bg-divider text-text-secondary',
+  success: 'bg-primary-pale text-primary',
+  warning: 'bg-accent-pale text-accent',
+  danger:  'bg-red-50 text-error',
+  info:    'bg-blue-50 text-blue-700',
+  primary: 'bg-primary text-white',
 }
 
-const styles: Record<Variant, string> = {
-  approved: 'bg-primary-pale text-primary',
-  pending:  'bg-accent-pale text-accent',
-  rejected: 'bg-red-50 text-error',
-  default:  'bg-divider text-text-secondary',
-  accent:   'bg-accent text-white',
+/** Maps common backend statuses to a tone. */
+export function statusTone(status?: string | null): Tone {
+  switch ((status ?? '').toUpperCase()) {
+    case 'APPROVED': case 'EXECUTED': case 'DISBURSED': case 'SUCCESS': case 'ACTIVE': return 'success'
+    case 'PENDING': return 'warning'
+    case 'REJECTED': case 'FAILED': case 'WITHDRAWN': return 'danger'
+    default: return 'neutral'
+  }
 }
 
-export function Badge({ variant = 'default', children, className }: Props) {
+export function Badge({ children, tone = 'neutral', className }: { children: React.ReactNode; tone?: Tone; className?: string }) {
   return (
-    <span className={cn(
-      'inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-semibold',
-      styles[variant],
-      className
-    )}>
+    <span className={cn('inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-xs font-semibold', tones[tone], className)}>
       {children}
     </span>
   )

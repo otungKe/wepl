@@ -1,31 +1,52 @@
+import { InputHTMLAttributes, TextareaHTMLAttributes, SelectHTMLAttributes, forwardRef } from 'react'
 import { cn } from '@/lib/utils'
-import { forwardRef, type InputHTMLAttributes } from 'react'
 
-interface Props extends InputHTMLAttributes<HTMLInputElement> {
-  label?: string
-  error?: string
-  hint?: string
+const base =
+  'w-full rounded-lg border bg-white px-3.5 text-base text-text placeholder:text-text-muted ' +
+  'focus:outline-none focus:border-primary focus:ring-2 focus:ring-primary/20 transition-colors disabled:opacity-60'
+
+function Field({ label, error, hint, children }: { label?: string; error?: string; hint?: string; children: React.ReactNode }) {
+  return (
+    <label className="flex flex-col gap-1.5">
+      {label && <span className="text-sm font-medium text-text-secondary">{label}</span>}
+      {children}
+      {error ? <span className="text-xs text-error">{error}</span>
+        : hint ? <span className="text-xs text-text-muted">{hint}</span> : null}
+    </label>
+  )
 }
 
-export const Input = forwardRef<HTMLInputElement, Props>(
-  ({ label, error, hint, className, ...props }, ref) => (
-    <div className="flex flex-col gap-1.5">
-      {label && <label className="text-sm font-medium text-text">{label}</label>}
-      <input
-        ref={ref}
-        className={cn(
-          'w-full rounded border border-border px-4 py-3.5 text-base text-text',
-          'placeholder:text-text-muted bg-white',
-          'focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary/30',
-          'transition-colors',
-          error && 'border-error focus:border-error focus:ring-error/30',
-          className
-        )}
-        {...props}
-      />
-      {error && <span className="text-sm text-error">{error}</span>}
-      {!error && hint && <span className="text-sm text-text-muted">{hint}</span>}
-    </div>
+interface InputProps extends InputHTMLAttributes<HTMLInputElement> { label?: string; error?: string; hint?: string }
+export const Input = forwardRef<HTMLInputElement, InputProps>(function Input(
+  { label, error, hint, className, ...rest }, ref,
+) {
+  return (
+    <Field label={label} error={error} hint={hint}>
+      <input ref={ref} className={cn(base, 'h-11', error && 'border-error focus:border-error focus:ring-error/20', !error && 'border-border', className)} {...rest} />
+    </Field>
   )
-)
-Input.displayName = 'Input'
+})
+
+interface TextareaProps extends TextareaHTMLAttributes<HTMLTextAreaElement> { label?: string; error?: string; hint?: string }
+export const Textarea = forwardRef<HTMLTextAreaElement, TextareaProps>(function Textarea(
+  { label, error, hint, className, ...rest }, ref,
+) {
+  return (
+    <Field label={label} error={error} hint={hint}>
+      <textarea ref={ref} className={cn(base, 'py-2.5 min-h-[90px] resize-y', error ? 'border-error' : 'border-border', className)} {...rest} />
+    </Field>
+  )
+})
+
+interface SelectProps extends SelectHTMLAttributes<HTMLSelectElement> { label?: string; error?: string; hint?: string }
+export const Select = forwardRef<HTMLSelectElement, SelectProps>(function Select(
+  { label, error, hint, className, children, ...rest }, ref,
+) {
+  return (
+    <Field label={label} error={error} hint={hint}>
+      <select ref={ref} className={cn(base, 'h-11 appearance-none bg-no-repeat', error ? 'border-error' : 'border-border', className)} {...rest}>
+        {children}
+      </select>
+    </Field>
+  )
+})

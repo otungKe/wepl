@@ -1,61 +1,74 @@
 'use client'
+import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
+import { LogOut } from 'lucide-react'
+import { notificationsApi, apiError } from '@/lib/api'
 import { useAuthStore } from '@/store/auth'
+import { PageHeader } from '@/components/app/PageHeader'
 import { Button } from '@/components/ui/Button'
-import { LogOut, ShieldCheck, Bell, HelpCircle, FileText } from 'lucide-react'
+import { Skeleton } from '@/components/ui/Spinner'
+import { cn } from '@/lib/utils'
+import { toast } from 'sonner'
 
-interface SettingRow {
-  icon: React.ElementType
-  label: string
-  description: string
-  href?: string
-  danger?: boolean
-  action?: () => void
+type Prefs = { push_enabled: boolean; payments: boolean; contributions: boolean; reminders: boolean; communities: boolean; advances: boolean }
+
+const ROWS: { key: keyof Prefs; label: string; desc: string }[] = [
+  { key: 'push_enabled',  label: 'Push notifications', desc: 'Master switch for all alerts' },
+  { key: 'payments',      label: 'Payments',           desc: 'M-Pesa confirmations & payouts' },
+  { key: 'contributions', label: 'Contributions',      desc: 'Pool activity & governance' },
+  { key: 'communities',   label: 'Communities & chat', desc: 'Messages and member updates' },
+  { key: 'advances',      label: 'Advances & welfare', desc: 'Loan and welfare claim updates' },
+  { key: 'reminders',     label: 'Reminders',          desc: 'Scheduled contribution reminders' },
+]
+
+function Toggle({ on, onClick }: { on: boolean; onClick: () => void }) {
+  return (
+    <button onClick={onClick} className={cn('relative h-6 w-11 rounded-full transition-colors', on ? 'bg-primary' : 'bg-border')}>
+      <span className={cn('absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition-transform', on ? 'translate-x-[22px]' : 'translate-x-0.5')} />
+    </button>
+  )
 }
 
 export default function SettingsPage() {
-  const router  = useRouter()
-  const logout  = useAuthStore(s => s.logout)
+  const router = useRouter()
+  const logout = useAuthStore(s => s.logout)
+  const [prefs, setPrefs] = useState<Prefs | null>(null)
+  const [loading, setLoading] = useState(true)
 
-  const handleLogout = () => { logout(); router.push('/') }
+  useEffect(() => {
+    notificationsApi.prefs().then(r => setPrefs(r.data)).catch(e => toast.error(apiError(e))).finally(() => setLoading(false))
+  }, [])
 
-  const rows: SettingRow[] = [
-    { icon: ShieldCheck, label: 'Identity Verification', description: 'Manage your KYC documents and status', href: '/kyc' },
-    { icon: Bell,        label: 'Notifications',         description: 'Manage notification preferences' },
-    { icon: HelpCircle,  label: 'Help & Support',        description: 'Get help or contact support' },
-    { icon: FileText,    label: 'Terms & Privacy',       description: 'View our terms and privacy policy' },
-  ]
+  async function toggle(key: keyof Prefs) {
+    if (!prefs) return
+    const next = { ...prefs, [key]: !prefs[key] }
+    setPrefs(next)
+    try { await notificationsApi.updatePrefs({ [key]: next[key] }) } catch (e) { toast.error(apiError(e)); setPrefs(prefs) }
+  }
 
   return (
-    <div className="max-w-lg mx-auto px-4 py-8">
-      <h1 className="text-2xl font-bold text-text mb-6">Settings</h1>
+    <div className="max-w-lg">
+      <PageHeader title="Settings" subtitle="Notifications & account" />
 
-      <div className="bg-white rounded-lg shadow-card divide-y divide-divider mb-6">
-        {rows.map(({ icon: Icon, label, description, href, action }) => (
-          <button
-            key={label}
-            onClick={href ? () => router.push(href) : action}
-            className="w-full flex items-center gap-4 px-4 py-4 hover:bg-primary-bg transition-colors text-left"
-          >
-            <div className="w-9 h-9 rounded-lg bg-primary-pale flex items-center justify-center flex-shrink-0">
-              <Icon size={18} className="text-primary" />
+      <h2 className="mb-3 font-semibold text-text">Notifications</h2>
+      {loading ? (
+        <div className="space-y-2">{Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-14" />)}</div>
+      ) : prefs ? (
+        <div className="divide-y divide-divider overflow-hidden rounded-lg border border-border bg-surface">
+          {ROWS.map(r => (
+            <div key={r.key} className="flex items-center justify-between gap-4 p-4">
+              <div>
+                <p className="font-medium text-text">{r.label}</p>
+                <p className="text-sm text-text-muted">{r.desc}</p>
+              </div>
+              <Toggle on={!!prefs[r.key]} onClick={() => toggle(r.key)} />
             </div>
-            <div className="flex-1">
-              <p className="text-sm font-medium text-text">{label}</p>
-              <p className="text-xs text-text-muted mt-0.5">{description}</p>
-            </div>
-            <span className="text-text-muted">›</span>
-          </button>
-        ))}
-      </div>
+          ))}
+        </div>
+      ) : null}
 
-      <Button
-        variant="danger"
-        className="w-full"
-        onClick={handleLogout}
-      >
-        <LogOut size={16} /> Sign Out
-      </Button>
+      <h2 className="mb-3 mt-8 font-semibold text-text">Account</h2>
+      <Button variant="danger" onClick={() => { logout(); router.replace('/') }}><LogOut size={16} /> Log out</Button>
     </div>
   )
 }
