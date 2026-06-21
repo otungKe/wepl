@@ -19,6 +19,8 @@ constantly==23.10.4
 cryptography==48.0.0
 daphne==4.2.1
 django-cors-headers==4.9.0
+django-unfold==0.98.0
+whitenoise==6.12.0
 Django==6.0.5
 djangorestframework==3.17.1
 djangorestframework_simplejwt==5.5.1

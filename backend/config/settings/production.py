@@ -78,6 +78,18 @@ CSRF_COOKIE_SECURE = True
 # When USE_S3 is false, Django's default (local FileSystemStorage) is used, so
 # this is fully opt-in and dev/CI are unaffected.
 USE_S3 = config('USE_S3', default=False, cast=bool)
+
+# Static files are served by WhiteNoise (compressed + content-hashed for cache
+# busting). collectstatic runs in the Render build, generating the manifest.
+STORAGES = {
+    "default": {
+        "BACKEND": "django.core.files.storage.FileSystemStorage",
+    },
+    "staticfiles": {
+        "BACKEND": "whitenoise.storage.CompressedManifestStaticFilesStorage",
+    },
+}
+
 if USE_S3:
     AWS_STORAGE_BUCKET_NAME = config('AWS_STORAGE_BUCKET_NAME')
     AWS_S3_REGION_NAME      = config('AWS_S3_REGION_NAME', default='auto')
@@ -89,11 +101,5 @@ if USE_S3:
     AWS_QUERYSTRING_AUTH  = True
     AWS_S3_FILE_OVERWRITE = False
 
-    STORAGES = {
-        "default": {
-            "BACKEND": "storages.backends.s3.S3Storage",
-        },
-        "staticfiles": {
-            "BACKEND": "django.contrib.staticfiles.storage.StaticFilesStorage",
-        },
-    }
+    # User media → private S3; static stays on WhiteNoise.
+    STORAGES["default"] = {"BACKEND": "storages.backends.s3.S3Storage"}

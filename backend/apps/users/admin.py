@@ -2,6 +2,7 @@ from django.contrib import admin
 from django.contrib.auth.admin import UserAdmin as BaseUserAdmin
 from django.utils import timezone
 from django.utils.html import format_html
+from unfold.admin import ModelAdmin as UnfoldModelAdmin
 
 from .models import User, KYCProfile
 
@@ -29,7 +30,7 @@ def reset_pin(modeladmin, request, queryset):
 
 
 @admin.register(User)
-class UserAdmin(BaseUserAdmin):
+class UserAdmin(BaseUserAdmin, UnfoldModelAdmin):
     list_display  = ('phone_number', 'name', 'is_phone_verified', 'is_pin_set', 'is_active', 'is_staff', 'date_joined')
     list_filter   = ('is_active', 'is_phone_verified', 'is_pin_set', 'is_staff', 'is_superuser')
     search_fields = ('phone_number', 'name')
@@ -131,7 +132,7 @@ def _img(file):
 
 
 @admin.register(KYCProfile)
-class KYCProfileAdmin(admin.ModelAdmin):
+class KYCProfileAdmin(UnfoldModelAdmin):
     list_display  = ('user', 'full_name', 'id_number', 'county', 'status', 'submitted_at', 'reviewed_at')
     list_filter   = ('status', 'county', 'source_of_income', 'expected_monthly_income')
     search_fields = ('user__phone_number', 'given_names', 'surname', 'id_number')

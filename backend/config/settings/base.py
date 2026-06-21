@@ -1,6 +1,8 @@
 from pathlib import Path
 from datetime import timedelta
 from decouple import config, Csv
+from django.urls import reverse_lazy
+from django.utils.translation import gettext_lazy as _
 
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
 
@@ -35,6 +37,10 @@ INSTALLED_APPS = [
     'daphne',
     'channels',
 
+    # Unfold must precede the admin app — it overrides admin templates.
+    'unfold',
+    'unfold.contrib.filters',
+    'unfold.contrib.forms',
     'config.apps.WeplAdminConfig',  # custom admin site (overview dashboard)
     'django.contrib.auth',
     'django.contrib.contenttypes',
@@ -65,6 +71,9 @@ INSTALLED_APPS = [
 MIDDLEWARE = [
     'corsheaders.middleware.CorsMiddleware',
     'django.middleware.security.SecurityMiddleware',
+    # Serves collected static files (admin + unfold assets) under ASGI/Daphne
+    # with DEBUG=False — without this the admin CSS never loads in production.
+    'whitenoise.middleware.WhiteNoiseMiddleware',
     'apps.core.middleware.RequestIdMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
@@ -257,3 +266,95 @@ EMAIL_TIMEOUT       = config('EMAIL_TIMEOUT', default=15, cast=int)
 # Brevo's API instead of SMTP — required on hosts (e.g. Render free tier) that
 # block outbound SMTP. Leave blank to use the EMAIL_BACKEND above (dev/CI).
 BREVO_API_KEY       = config('BREVO_API_KEY', default='')
+
+
+# ─────────────────────────────────────────────────────────────
+# Django admin theme — django-unfold (WEPL brand: forest green / gold)
+# ─────────────────────────────────────────────────────────────
+UNFOLD = {
+    "SITE_TITLE": "WEPL Admin",
+    "SITE_HEADER": "WEPL Platform Admin",
+    "SITE_SUBHEADER": "Financial OS — operations console",
+    "SITE_SYMBOL": "account_balance",
+    "SHOW_HISTORY": True,
+    "SHOW_VIEW_ON_SITE": False,
+    "COLORS": {
+        # WEPL forest-green scale (#1A5C38 ≈ 600), R G B per Unfold/Tailwind.
+        "primary": {
+            "50":  "232 244 237",
+            "100": "209 233 220",
+            "200": "163 211 185",
+            "300": "116 189 150",
+            "400": "70 167 115",
+            "500": "46 125 79",
+            "600": "26 92 56",
+            "700": "21 74 45",
+            "800": "15 61 36",
+            "900": "10 46 27",
+            "950": "6 31 18",
+        },
+    },
+    "SIDEBAR": {
+        "show_search": True,
+        "show_all_applications": True,
+        "navigation": [
+            {
+                "title": _("Overview"),
+                "items": [
+                    {"title": _("Dashboard"), "icon": "dashboard", "link": reverse_lazy("admin:index")},
+                ],
+            },
+            {
+                "title": _("Identity & KYC"),
+                "items": [
+                    {"title": _("KYC profiles"), "icon": "badge", "link": reverse_lazy("admin:users_kycprofile_changelist"), "badge": "config.admin_site.kyc_pending_badge"},
+                    {"title": _("Users"), "icon": "person", "link": reverse_lazy("admin:users_user_changelist")},
+                    {"title": _("Role groups"), "icon": "groups", "link": reverse_lazy("admin:auth_group_changelist")},
+                ],
+            },
+            {
+                "title": _("Communities"),
+                "items": [
+                    {"title": _("Communities"), "icon": "diversity_3", "link": reverse_lazy("admin:communities_community_changelist")},
+                    {"title": _("Memberships"), "icon": "co_present", "link": reverse_lazy("admin:communities_communitymembership_changelist")},
+                    {"title": _("Join requests"), "icon": "how_to_reg", "link": reverse_lazy("admin:communities_communityjoinrequest_changelist")},
+                    {"title": _("Conversations"), "icon": "forum", "link": reverse_lazy("admin:conversations_conversation_changelist")},
+                ],
+            },
+            {
+                "title": _("Contributions & funds"),
+                "items": [
+                    {"title": _("Contributions"), "icon": "savings", "link": reverse_lazy("admin:contributions_contribution_changelist")},
+                    {"title": _("Disbursements"), "icon": "request_quote", "link": reverse_lazy("admin:contributions_disbursementrequest_changelist")},
+                    {"title": _("Welfare funds"), "icon": "volunteer_activism", "link": reverse_lazy("admin:contributions_welfarefund_changelist")},
+                    {"title": _("Welfare claims"), "icon": "medical_services", "link": reverse_lazy("admin:contributions_welfareclaim_changelist")},
+                    {"title": _("Emergency advances"), "icon": "emergency", "link": reverse_lazy("admin:contributions_emergencyadvance_changelist")},
+                ],
+            },
+            {
+                "title": _("Ledger (book of record)"),
+                "items": [
+                    {"title": _("Journal entries"), "icon": "menu_book", "link": reverse_lazy("admin:ledger_journalentry_changelist")},
+                    {"title": _("Accounts"), "icon": "account_tree", "link": reverse_lazy("admin:ledger_account_changelist")},
+                    {"title": _("Account balances"), "icon": "balance", "link": reverse_lazy("admin:ledger_accountbalance_changelist")},
+                    {"title": _("Financial transactions"), "icon": "receipt_long", "link": reverse_lazy("admin:ledger_financialtransaction_changelist")},
+                ],
+            },
+            {
+                "title": _("Payments (M-Pesa)"),
+                "items": [
+                    {"title": _("STK requests"), "icon": "smartphone", "link": reverse_lazy("admin:mpesa_mpesastkrequest_changelist")},
+                    {"title": _("C2B transactions"), "icon": "payments", "link": reverse_lazy("admin:mpesa_mpesac2btransaction_changelist")},
+                ],
+            },
+            {
+                "title": _("System"),
+                "items": [
+                    {"title": _("Notifications"), "icon": "notifications", "link": reverse_lazy("admin:notifications_notification_changelist")},
+                    {"title": _("Reminders"), "icon": "alarm", "link": reverse_lazy("admin:reminders_reminder_changelist")},
+                    {"title": _("Outbox events"), "icon": "outbox", "link": reverse_lazy("admin:core_outboxevent_changelist")},
+                ],
+            },
+        ],
+    },
+}

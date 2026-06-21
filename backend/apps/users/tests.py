@@ -156,18 +156,28 @@ class KYCAdminDecisionTests(TestCase):
 
 
 class AdminDashboardTests(TestCase):
-    """The custom admin index renders the platform overview."""
+    """The themed (django-unfold) admin renders with WEPL branding + sidebar."""
 
-    def test_index_shows_overview(self):
+    def setUp(self):
         staff = get_user_model().objects.create_user(phone_number="254700000099")
         staff.is_staff = True
         staff.is_superuser = True
         staff.save()
         self.client.force_login(staff)
+
+    def test_index_renders_with_branding_and_nav(self):
         resp = self.client.get("/admin/")
         self.assertEqual(resp.status_code, 200)
-        self.assertContains(resp, "Platform overview")
-        self.assertContains(resp, "KYC pending review")
+        self.assertContains(resp, "WEPL Platform Admin")   # Unfold SITE_HEADER
+        self.assertContains(resp, "KYC profiles")          # sidebar navigation item
+
+    def test_key_changelists_and_forms_render(self):
+        for url in [
+            "/admin/users/user/",
+            "/admin/users/kycprofile/",
+            "/admin/users/user/add/",
+        ]:
+            self.assertEqual(self.client.get(url).status_code, 200, url)
 
 
 class EnsureSuperuserTests(TestCase):
