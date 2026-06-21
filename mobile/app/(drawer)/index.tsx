@@ -38,7 +38,7 @@ export default function CommunitiesScreen() {
   const [preview, setPreview] = useState<Community | null>(null);
   const [joinError, setJoinError] = useState<string | null>(null);
 
-  const { kycStatus, requireKYC } = useKYCGate();
+  const { kycStatus, isVerified, requireKYC } = useKYCGate();
 
   const load = useCallback(async () => {
     try {
@@ -109,6 +109,23 @@ export default function CommunitiesScreen() {
       setJoinStep("preview");
     }
   };
+
+  // Unverified users must only see the Profile tab. They can still land on this
+  // screen (the post-login redirect targets the drawer root) — bounce them to
+  // Profile and don't render community content meanwhile.
+  useEffect(() => {
+    if (kycStatus !== "loading" && !isVerified) {
+      router.replace("/(drawer)/profile");
+    }
+  }, [kycStatus, isVerified]);
+
+  if (kycStatus === "loading" || !isVerified) {
+    return (
+      <SafeAreaView style={styles.safe} edges={["top", "left", "right"]}>
+        <View style={styles.center}><ActivityIndicator size="large" color={COLORS.primary} /></View>
+      </SafeAreaView>
+    );
+  }
 
   return (
     <SafeAreaView style={styles.safe} edges={["top", "left", "right"]}>

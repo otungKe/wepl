@@ -275,7 +275,7 @@ export default function TabsLayout() {
         listeners={{ tabPress: () => setUnreadChats(false) }}
         options={{
           title: "Communities",
-          href: isVerified === false ? null : undefined,
+          href: isVerified === true ? undefined : null,
           tabBarIcon: ({ focused }) => <TabIcon name="people" focused={focused} dot={unreadChats} />,
         }}
       />
@@ -285,7 +285,7 @@ export default function TabsLayout() {
         name="discover"
         options={{
           title: "Discover",
-          href: isVerified === false ? null : undefined,
+          href: isVerified === true ? undefined : null,
           tabBarIcon: ({ focused }) => <TabIcon name="compass" focused={focused} />,
         }}
       />
@@ -303,7 +303,7 @@ export default function TabsLayout() {
         listeners={{ tabPress: () => setUnread(false) }}
         options={{
           title: "Alerts",
-          href: isVerified === false ? null : undefined,
+          href: isVerified === true ? undefined : null,
           tabBarIcon: ({ focused }) => <NotifIcon focused={focused} unread={unread} />,
         }}
       />
