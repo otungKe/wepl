@@ -64,6 +64,13 @@ services:
         sync: false
       - key: DEFAULT_FROM_EMAIL
         value: WEPL <no-reply@wepl.app>
+      # Platform admin bootstrap (free tier has no shell). start.sh runs
+      # ensure_superuser on every deploy and creates/updates this account.
+      # Set both on the service; ADMIN_PHONE is the /admin/ login.
+      - key: ADMIN_PHONE
+        sync: false
+      - key: ADMIN_PASSWORD
+        sync: false
       - key: DB_NAME
         fromDatabase:
           name: wepl-db

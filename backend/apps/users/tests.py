@@ -170,6 +170,38 @@ class AdminDashboardTests(TestCase):
         self.assertContains(resp, "KYC pending review")
 
 
+class EnsureSuperuserTests(TestCase):
+    """ensure_superuser provisions the admin from env vars, non-interactively."""
+
+    def test_creates_and_updates_superuser_from_env(self):
+        from django.core.management import call_command
+        from django.test import override_settings  # noqa: F401  (kept for parity)
+
+        import os
+        os.environ["ADMIN_PHONE"] = "254700000555"
+        os.environ["ADMIN_PASSWORD"] = "first-pass"
+        try:
+            call_command("ensure_superuser")
+            u = get_user_model().objects.get(phone_number="254700000555")
+            self.assertTrue(u.is_superuser and u.is_staff and u.is_active)
+            self.assertTrue(u.check_password("first-pass"))
+
+            # Re-run rotates the password without creating a duplicate.
+            os.environ["ADMIN_PASSWORD"] = "second-pass"
+            call_command("ensure_superuser")
+            self.assertEqual(get_user_model().objects.filter(phone_number="254700000555").count(), 1)
+            u.refresh_from_db()
+            self.assertTrue(u.check_password("second-pass"))
+        finally:
+            os.environ.pop("ADMIN_PHONE", None)
+            os.environ.pop("ADMIN_PASSWORD", None)
+
+    def test_skips_when_env_unset(self):
+        from django.core.management import call_command
+        call_command("ensure_superuser")  # no env → no-op, must not raise
+        self.assertFalse(get_user_model().objects.filter(is_superuser=True).exists())
+
+
 class SeedAdminRolesTests(TestCase):
     """The seed_admin_roles command provisions scoped staff groups."""
 

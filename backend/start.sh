@@ -3,6 +3,13 @@ set -e
 
 python manage.py migrate --noinput
 
+# Provision platform admin on deploy (the free tier has no shell). Both are
+# idempotent and never fail the boot: seed_admin_roles creates the staff role
+# groups; ensure_superuser creates/updates the admin from ADMIN_PHONE /
+# ADMIN_PASSWORD env vars (skips quietly if they're unset).
+python manage.py seed_admin_roles
+python manage.py ensure_superuser
+
 # NOTE: Celery worker + beat run in the background of the web process. This is a
 # deliberate single-host arrangement for now (Render's free tier has no worker
 # plan, and the deployment platform is not yet fixed). Splitting them into
