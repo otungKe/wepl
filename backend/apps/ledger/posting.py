@@ -91,6 +91,16 @@ def post_journal(
             f"debit={debit_total} credit={credit_total}."
         )
 
+    # ── Controls: limits & risk gate (Phase 3, ADR-0007) ─────────────────────
+    # Evaluated here so every member-facing money movement passes through exactly
+    # one enforcement point. Reversals and journals with no FinancialTransaction
+    # (internal moves) bypass member-facing controls. Raises LimitExceeded (DENY)
+    # or ControlHeld (HOLD) before any journal is written. Imported lazily to keep
+    # the ledger core free of an import-time dependency on the controls app.
+    if financial_transaction is not None and reverses is None:
+        from apps.controls.engine import enforce_controls
+        enforce_controls(financial_transaction=financial_transaction, amount=debit_total)
+
     # ── Create the entry (idempotency_key unique → safe under races) ─────────
     defaults = dict(
         op_type=op_type,

@@ -64,6 +64,7 @@ INSTALLED_APPS = [
     'apps.notifications.apps.NotificationsConfig',
     'apps.mpesa.apps.MpesaConfig',
     'apps.ledger.apps.LedgerConfig',
+    'apps.controls.apps.ControlsConfig',
     'apps.reminders.apps.RemindersConfig',
     'django_celery_beat',
 ]

@@ -59,6 +59,25 @@ class RateLimitError(Exception):
     """
 
 
+class LimitExceeded(Exception):
+    """
+    Raised by the controls layer (apps.controls) at the posting chokepoint when a
+    money movement breaches a configured limit and the rule action is DENY.
+
+    Maps to HTTP 422 Unprocessable Entity — the request was well-formed but a
+    business control rejected it before any journal was written.
+    """
+
+
+class ControlHeld(Exception):
+    """
+    Raised by the controls layer when a money movement trips a rule whose action
+    is HOLD (e.g. velocity/anomaly). The movement is not posted; it is flagged for
+    manual review. Maps to HTTP 409 Conflict so the client knows the request is
+    parked rather than permanently rejected.
+    """
+
+
 def custom_exception_handler(exc, context):
     """
     Augments DRF's default handler to also handle Django-native exceptions
@@ -104,6 +123,14 @@ def custom_exception_handler(exc, context):
     # RateLimitError → 429 Too Many Requests
     if isinstance(exc, RateLimitError):
         return Response({'error': str(exc)}, status=status.HTTP_429_TOO_MANY_REQUESTS)
+
+    # LimitExceeded → 422 (control rejected the movement before posting)
+    if isinstance(exc, LimitExceeded):
+        return Response({'error': str(exc)}, status=status.HTTP_422_UNPROCESSABLE_ENTITY)
+
+    # ControlHeld → 409 (movement parked for manual review)
+    if isinstance(exc, ControlHeld):
+        return Response({'error': str(exc)}, status=status.HTTP_409_CONFLICT)
 
     # Everything else: let Django's 500 handler deal with it.
     # This ensures real bugs surface in Sentry rather than being swallowed as 400s.

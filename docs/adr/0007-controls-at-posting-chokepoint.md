@@ -1,6 +1,6 @@
 # ADR-0007: Limits & risk controls live at the posting chokepoint
 
-- **Status:** Proposed
+- **Status:** Accepted (implemented in `apps/controls/`, P3-01/02/03/05)
 - **Date:** 2026-06-19
 - **Phase:** 3 (depends on ADR-0004)
 
