@@ -48,3 +48,6 @@ mobile/ios/
 .coverage
 htmlcov/
 coverage.xml
+
+# Redis snapshot (created when running redis locally)
+dump.rdb
