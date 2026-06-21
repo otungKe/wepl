@@ -15,6 +15,8 @@ services:
     runtime: python
     rootDir: backend
     plan: free
+    # Pin the interpreter — Render otherwise defaults to its latest Python (3.14+),
+    # which drifts from CI (3.12). Also pinned via backend/.python-version.
     buildCommand: pip install -r requirements.txt && python manage.py collectstatic --noinput
     # start.sh also launches Celery worker + beat in-process. Splitting them into
     # dedicated services is the target (P0-01) but needs a paid worker plan / a
@@ -22,6 +24,8 @@ services:
     startCommand: bash start.sh
     healthCheckPath: /health/
     envVars:
+      - key: PYTHON_VERSION
+        value: "3.12"
       - key: DJANGO_SETTINGS_MODULE
         value: config.settings.production
       - key: SECRET_KEY
@@ -31,8 +35,12 @@ services:
       - key: CORS_ALLOWED_ORIGINS
         value: https://wepl-api.onrender.com
       # OTP delivery: 'console' logs the code (visible in logs) instead of sending
-      # real SMS. STAGING_OTP_BYPASS is intentionally absent — production refuses
-      # to boot with it enabled (see config/settings/production.py).
+      # real SMS. STAGING_OTP_BYPASS is forced off here — production refuses to boot
+      # with it enabled (see config/settings/production.py). Setting it explicitly
+      # (rather than just omitting it) means a blueprint re-sync actively clears any
+      # leftover STAGING_OTP_BYPASS=true that was set directly on the service.
+      - key: STAGING_OTP_BYPASS
+        value: "false"
       - key: SMS_BACKEND
         value: console
       - key: DB_NAME
