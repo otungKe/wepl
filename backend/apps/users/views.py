@@ -356,11 +356,15 @@ class KYCView(APIView):
 
 
 def _send_kyc_verification_email(kyc, request):
-    """Generate a verification token and email it to the user."""
+    """Generate a verification token and queue the email for out-of-band delivery.
+
+    The SMTP send runs in a Celery task (apps.users.tasks) so the request returns
+    immediately — sending inline previously blocked the ASGI worker until Daphne
+    killed it whenever SMTP was slow.
+    """
     import secrets
     from django.utils import timezone
-    from django.core.mail import send_mail
-    from django.conf import settings as conf
+    from .tasks import send_kyc_verification_email
 
     token = secrets.token_urlsafe(32)
     kyc.email_verification_token   = token
@@ -371,29 +375,12 @@ def _send_kyc_verification_email(kyc, request):
     # Build verification URL — works for both dev (console email) and production
     verify_url = request.build_absolute_uri(f"/api/users/kyc/verify-email/?token={token}")
 
-    subject = "Verify your email — WEPL KYC"
-    body = (
-        f"Hi {kyc.given_names},\n\n"
-        f"Thank you for submitting your identity verification on WEPL.\n\n"
-        f"Please click the link below to verify your email address and complete "
-        f"the verification process:\n\n"
-        f"  {verify_url}\n\n"
-        f"This link is valid for 48 hours.\n\n"
-        f"If you did not submit a KYC application on WEPL, please ignore this email.\n\n"
-        f"— The WEPL Team"
+    send_kyc_verification_email.delay(
+        email=kyc.email,
+        given_names=kyc.given_names,
+        verify_url=verify_url,
+        user_id=kyc.user_id,
     )
-
-    try:
-        send_mail(
-            subject,
-            body,
-            getattr(conf, 'DEFAULT_FROM_EMAIL', 'noreply@wepl.app'),
-            [kyc.email],
-            fail_silently=False,
-        )
-        logger.info("KYC verification email sent to %s for user %s", kyc.email, kyc.user_id)
-    except Exception:
-        logger.exception("Failed to send KYC verification email to %s", kyc.email)
 
 
 class KYCCheckEmailView(APIView):

@@ -4,11 +4,13 @@ import sys
 from pathlib import Path
 
 from django.contrib.auth import get_user_model
-from django.test import SimpleTestCase, TestCase
+from django.core import mail
+from django.test import SimpleTestCase, TestCase, override_settings
 from rest_framework.test import APIClient
 from rest_framework_simplejwt.tokens import AccessToken
 
 from apps.users.auth import STAGE_ACTIVE, STAGE_CLAIM, issue_tokens
+from apps.users.tasks import send_kyc_verification_email
 
 # .../backend — the directory that contains the importable `config` package.
 BACKEND_DIR = Path(__file__).resolve().parents[2]
@@ -84,3 +86,21 @@ class TokenRefreshEndpointTests(TestCase):
     def test_invalid_refresh_token_is_rejected(self):
         resp = self.client.post(self.URL, {"refresh": "not-a-real-token"}, format="json")
         self.assertEqual(resp.status_code, 401)
+
+
+@override_settings(EMAIL_BACKEND="django.core.mail.backends.locmem.EmailBackend")
+class KYCVerificationEmailTaskTests(TestCase):
+    """The KYC email send runs in a Celery task so it never blocks the request."""
+
+    def test_task_sends_email_with_verification_link(self):
+        verify_url = "https://wepl-api.onrender.com/api/users/kyc/verify-email/?token=abc123"
+        send_kyc_verification_email.apply(kwargs={
+            "email": "tester@example.com",
+            "given_names": "Tester",
+            "verify_url": verify_url,
+            "user_id": 1,
+        })
+        self.assertEqual(len(mail.outbox), 1)
+        msg = mail.outbox[0]
+        self.assertEqual(msg.to, ["tester@example.com"])
+        self.assertIn(verify_url, msg.body)
