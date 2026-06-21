@@ -29,7 +29,7 @@ api.interceptors.response.use(
       const refresh = localStorage.getItem('refresh_token')
       if (refresh) {
         try {
-          const { data } = await axios.post(`${BASE_URL}/auth/token/refresh/`, { refresh })
+          const { data } = await axios.post(`${BASE_URL}/users/token/refresh/`, { refresh })
           localStorage.setItem('access_token', data.access)
           orig.headers['Authorization'] = `Bearer ${data.access}`
           return api(orig)
@@ -46,11 +46,12 @@ api.interceptors.response.use(
 
 // ── Auth ─────────────────────────────────────────────────────────────────────
 export const auth = {
-  requestOtp:    (phone_number: string) => api.post('/auth/request-otp/', { phone_number }),
-  verifyOtp:     (phone_number: string, otp: string) => api.post('/auth/otp-verify/', { phone_number, otp }),
-  setPin:        (pin: string) => api.post('/auth/pin/', { pin }),
-  login:         (phone_number: string, pin: string) => api.post('/auth/login/', { phone_number, pin }),
-  profile:       () => api.get('/auth/profile/'),
+  requestOtp:    (phone_number: string) => api.post('/users/otp/request/', { phone_number }),
+  verifyOtp:     (phone_number: string, otp: string) => api.post('/users/otp/verify/', { phone_number, otp }),
+  setPin:        (pin: string) => api.post('/users/pin/set/', { pin }),
+  resetPin:      (pin: string) => api.post('/users/pin/reset/', { pin }),
+  login:         (phone_number: string, pin: string) => api.post('/users/pin/login/', { phone_number, pin }),
+  profile:       () => api.get('/users/profile/'),
   kycSubmit:     (data: FormData) => api.post('/users/kyc/', data, { headers: { 'Content-Type': 'multipart/form-data' } }),
 }
 

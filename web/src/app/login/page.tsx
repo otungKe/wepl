@@ -6,6 +6,7 @@ import { Input } from '@/components/ui/Input'
 import { Button } from '@/components/ui/Button'
 import { Building2, ArrowLeft } from 'lucide-react'
 import { auth } from '@/lib/api'
+import { saveTokens } from '@/lib/auth'
 import { useAuthStore } from '@/store/auth'
 import { toast } from 'sonner'
 
@@ -57,6 +58,8 @@ function LoginForm() {
     setLoading(true)
     try {
       const { data } = await auth.login(phone, pin)
+      // Save tokens before the profile call — it requires the bearer token.
+      saveTokens(data.access, data.refresh)
       const profile  = await auth.profile()
       login(data.access, data.refresh, profile.data)
       router.push('/communities')

@@ -6,7 +6,7 @@ import { Button } from '@/components/ui/Button'
 import { ArrowLeft } from 'lucide-react'
 import { auth } from '@/lib/api'
 import { useAuthStore } from '@/store/auth'
-import { getStage } from '@/lib/auth'
+import { getStage, saveTokens } from '@/lib/auth'
 import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
 
@@ -61,6 +61,8 @@ export default function OtpPage() {
       const { data } = await auth.verifyOtp(pendingPhone, otp)
       const stage = getStage(data.access)
       if (stage === 'otp_verified') {
+        // Persist the otp_verified token so the next call (set PIN) is authorized.
+        saveTokens(data.access, data.refresh)
         router.push('/pin')
       } else if (stage === 'active') {
         const profile = await auth.profile()

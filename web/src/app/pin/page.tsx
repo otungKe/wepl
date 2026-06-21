@@ -4,6 +4,7 @@ import { useRouter } from 'next/navigation'
 import { Button } from '@/components/ui/Button'
 import { cn } from '@/lib/utils'
 import { auth } from '@/lib/api'
+import { saveTokens } from '@/lib/auth'
 import { useAuthStore } from '@/store/auth'
 import { toast } from 'sonner'
 
@@ -41,13 +42,12 @@ export default function PinPage() {
     if (p !== c) { setError('PINs do not match. Try again.'); setConfirm(''); return }
     setLoading(true)
     try {
-      await auth.setPin(p)
+      // setPin returns fresh active-stage tokens — save them before any
+      // authenticated call (profile requires an active session).
+      const { data } = await auth.setPin(p)
+      saveTokens(data.access, data.refresh)
       const profile = await auth.profile()
-      useAuthStore.getState().login(
-        localStorage.getItem('access_token') ?? '',
-        localStorage.getItem('refresh_token') ?? '',
-        profile.data
-      )
+      useAuthStore.getState().login(data.access, data.refresh, profile.data)
       router.push('/communities')
     } catch {
       toast.error('Failed to set PIN. Please try again.')

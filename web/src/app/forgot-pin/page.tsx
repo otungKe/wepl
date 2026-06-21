@@ -5,6 +5,7 @@ import { Button } from '@/components/ui/Button'
 import { Input } from '@/components/ui/Input'
 import { ArrowLeft } from 'lucide-react'
 import { auth } from '@/lib/api'
+import { saveTokens } from '@/lib/auth'
 import { useAuthStore } from '@/store/auth'
 import { toast } from 'sonner'
 
@@ -33,7 +34,9 @@ export default function ForgotPinPage() {
   async function verifyOtp(e: React.FormEvent) {
     e.preventDefault(); setLoading(true)
     try {
-      await auth.verifyOtp(phone, otp)
+      const { data } = await auth.verifyOtp(phone, otp)
+      // Persist the otp_recovery token so the reset-PIN call is authorized.
+      saveTokens(data.access, data.refresh)
       setStep('pin')
     } catch { toast.error('Invalid OTP') }
     finally { setLoading(false) }
@@ -45,7 +48,7 @@ export default function ForgotPinPage() {
     if (pin !== confirm) { toast.error('PINs do not match'); return }
     setLoading(true)
     try {
-      await auth.setPin(pin)
+      await auth.resetPin(pin)
       toast.success('PIN reset successfully. Please sign in.')
       router.push('/login')
     } catch { toast.error('Failed to reset PIN') }
