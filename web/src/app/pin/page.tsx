@@ -7,7 +7,7 @@ import { auth } from '@/lib/api'
 import { useAuthStore } from '@/store/auth'
 import { toast } from 'sonner'
 
-const PIN_LENGTH = 4
+const PIN_LENGTH = 6
 
 export default function PinPage() {
   const router = useRouter()
@@ -67,7 +67,7 @@ export default function PinPage() {
         </h1>
         <p className="text-text-secondary mb-10 text-sm">
           {step === 'enter'
-            ? 'Choose a 4-digit PIN to secure your account.'
+            ? 'Choose a 6-digit PIN to secure your account.'
             : 'Enter your PIN again to confirm.'}
         </p>
 

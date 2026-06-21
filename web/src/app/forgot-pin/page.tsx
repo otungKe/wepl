@@ -41,6 +41,7 @@ export default function ForgotPinPage() {
 
   async function resetPin(e: React.FormEvent) {
     e.preventDefault()
+    if (pin.length !== 6) { toast.error('PIN must be 6 digits'); return }
     if (pin !== confirm) { toast.error('PINs do not match'); return }
     setLoading(true)
     try {
@@ -77,8 +78,8 @@ export default function ForgotPinPage() {
 
         {step === 'pin' && (
           <form onSubmit={resetPin} className="flex flex-col gap-4 mt-6">
-            <Input label="New PIN" type="password" inputMode="numeric" maxLength={4} value={pin} onChange={e => setPin(e.target.value)} autoFocus />
-            <Input label="Confirm new PIN" type="password" inputMode="numeric" maxLength={4} value={confirm} onChange={e => setConfirm(e.target.value)} />
+            <Input label="New PIN" type="password" inputMode="numeric" maxLength={6} value={pin} onChange={e => setPin(e.target.value.replace(/\D/g, ''))} autoFocus />
+            <Input label="Confirm new PIN" type="password" inputMode="numeric" maxLength={6} value={confirm} onChange={e => setConfirm(e.target.value.replace(/\D/g, ''))} />
             <Button type="submit" loading={loading} size="lg">Reset PIN</Button>
           </form>
         )}

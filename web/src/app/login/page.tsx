@@ -53,7 +53,7 @@ function LoginForm() {
 
   async function handlePin(e: React.FormEvent) {
     e.preventDefault(); setError('')
-    if (pin.length !== 4) { setError('Enter your 4-digit PIN'); return }
+    if (pin.length !== 6) { setError('Enter your 6-digit PIN'); return }
     setLoading(true)
     try {
       const { data } = await auth.login(phone, pin)
@@ -119,14 +119,14 @@ function LoginForm() {
               <ArrowLeft size={16} /> {phone}
             </button>
             <h1 className="text-2xl font-bold mb-1">Enter your PIN</h1>
-            <p className="text-text-secondary mb-8">Use your 4-digit security PIN.</p>
+            <p className="text-text-secondary mb-8">Use your 6-digit security PIN.</p>
             <form onSubmit={handlePin} className="flex flex-col gap-5">
               <Input
                 label="PIN"
                 type="password"
                 inputMode="numeric"
-                maxLength={4}
-                placeholder="••••"
+                maxLength={6}
+                placeholder="••••••"
                 value={pin}
                 onChange={e => setPin(e.target.value.replace(/\D/g, ''))}
                 error={error}
