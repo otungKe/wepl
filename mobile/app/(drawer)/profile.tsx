@@ -89,7 +89,7 @@ export default function ProfileScreen() {
       setProfile(updated);
       // Keep SecureStore in sync so the welcome-back screen shows the latest name.
       if (editName.trim()) {
-        const { default: storage } = await import("../../utils/secureStorage");
+        const storage = await import("../../utils/secureStorage");
         await storage.setItem("name", editName.trim());
       }
       setShowEdit(false);

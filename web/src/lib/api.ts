@@ -336,7 +336,7 @@ export const communities = {
   requestByInvite: (code: string) => api.post(`/communities/invite/${code}/request/`),
   assignRole: (cid: number | string, mid: number, role: string) => api.post(`/communities/${cid}/members/${mid}/role/`, { role }),
   removeMember: (cid: number | string, mid: number) => api.delete(`/communities/${cid}/members/${mid}/`),
-  joinRequests: async (cid: number | string) => unwrap<CommunityMember & { request_id: number }>((await api.get(`/communities/${cid}/join-requests/`)).data),
+  myRequests: async () => unwrap<{ id: number; community_id: number; community_name: string }>((await api.get('/communities/my-requests/')).data),
   actionRequest: (reqId: number, action: 'approve' | 'reject') => api.post(`/communities/join-requests/${reqId}/action/`, { action }),
 }
 
