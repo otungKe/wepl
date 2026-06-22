@@ -1,6 +1,8 @@
 # ADR-0008: Multi-tenancy via shared schema + `tenant_id` (+ Postgres RLS)
 
-- **Status:** Accepted (foundation implemented; RLS + full threading in progress)
+- **Status:** Accepted & implemented (P6-01→05: tenant model + dimension, RLS
+  isolation, per-request enforcement, per-tenant CoA/limits, cross-tenant audit;
+  `Community.tenant` NOT NULL). Schema/DB-per-tenant remains a future option.
 - **Date:** 2026-06-22
 - **Phase:** 6 (depends on ADR-0001/0004; Phases 0, 3, 4)
 

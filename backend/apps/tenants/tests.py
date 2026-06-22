@@ -222,3 +222,42 @@ class RowLevelSecurityTests(TestCase):
         # → system access sees both tenants' rows.
         codes = set(Account.objects.filter(code__startswith='R').values_list('code', flat=True))
         self.assertEqual(codes, {'R1-A', 'R2-A'})
+
+
+class CrossTenantGuardTests(TestCase):
+    """P6-05 — guard_tenant blocks + audits cross-tenant access; allows same/unset."""
+
+    def setUp(self):
+        self.t1 = Tenant.objects.create(name='Guard One', slug='guard-one')
+        self.t2 = Tenant.objects.create(name='Guard Two', slug='guard-two')
+
+    def test_blocks_and_audits_cross_tenant(self):
+        from django.core.exceptions import PermissionDenied
+        from apps.tenants.guards import guard_tenant
+        from apps.tenants.models import CrossTenantAccessAttempt
+        from apps.tenants.rls import clear_current_tenant, set_current_tenant
+        set_current_tenant(self.t1.id)
+        try:
+            with self.assertRaises(PermissionDenied):
+                guard_tenant(self.t2.id, resource_type='community', resource_id=5)
+        finally:
+            clear_current_tenant()
+        self.assertEqual(
+            CrossTenantAccessAttempt.objects.filter(resource_type='community', resource_id='5').count(), 1)
+
+    def test_allows_same_tenant(self):
+        from apps.tenants.guards import guard_tenant
+        from apps.tenants.models import CrossTenantAccessAttempt
+        from apps.tenants.rls import clear_current_tenant, set_current_tenant
+        set_current_tenant(self.t1.id)
+        try:
+            guard_tenant(self.t1.id, resource_type='community', resource_id=9)  # no raise
+        finally:
+            clear_current_tenant()
+        self.assertFalse(CrossTenantAccessAttempt.objects.exists())
+
+    def test_allows_when_no_tenant_pinned(self):
+        from apps.tenants.guards import guard_tenant
+        from apps.tenants.rls import clear_current_tenant
+        clear_current_tenant()
+        guard_tenant(self.t2.id, resource_type='community', resource_id=1)  # system context → allowed

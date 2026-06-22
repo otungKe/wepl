@@ -143,6 +143,11 @@ class CommunityDetailView(APIView):
 
     def get(self, request, community_id):
         community = get_object_or_404(Community, id=community_id)
+        # Cross-tenant guardrail (P6-05): refuse + audit access to another
+        # tenant's community when the request is pinned to a tenant.
+        from apps.tenants.guards import guard_tenant
+        guard_tenant(community.tenant_id, request=request,
+                     resource_type='community', resource_id=community.id)
         # Private communities are only visible to active members.
         if community.is_private and not CommunityService.is_member(request.user, community):
             raise PermissionDenied("This community is private.")

@@ -27,6 +27,14 @@ def clear_current_tenant() -> None:
         cur.execute("RESET app.tenant_id")
 
 
+def current_tenant_id() -> int | None:
+    """The tenant pinned for this session, or None when unset (system context)."""
+    with connection.cursor() as cur:
+        cur.execute("SELECT NULLIF(current_setting('app.tenant_id', true), '')")
+        val = cur.fetchone()[0]
+    return int(val) if val else None
+
+
 @contextmanager
 def tenant_context(tenant_id):
     """Scope a block to one tenant, always resetting afterwards.

@@ -28,10 +28,11 @@ class Community(models.Model):
         related_name="created_communities",
     )
 
-    # Multi-tenancy boundary (Phase 6, ADR-0008). Nullable during rollout; a
-    # community belongs to exactly one tenant (a SACCO / hosted institution).
+    # Multi-tenancy boundary (Phase 6, ADR-0008). Every community belongs to
+    # exactly one tenant (a SACCO / hosted institution); stamped on create and
+    # backfilled, so the column is now mandatory (P6-05).
     tenant = models.ForeignKey(
-        'tenants.Tenant', null=True, blank=True,
+        'tenants.Tenant',
         on_delete=models.PROTECT, related_name='communities',
     )
 

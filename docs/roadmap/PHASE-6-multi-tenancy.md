@@ -1,9 +1,13 @@
 # Phase 6 — Multi-Tenancy
 
-**Status:** 🟡 In progress (foundation) · **Depends on:** Phases 0, 3, 4 · **ADR:** [0008](../adr/0008-multi-tenancy.md)
+**Status:** 🟢 Done · **Depends on:** Phases 0, 3, 4 · **ADR:** [0008](../adr/0008-multi-tenancy.md)
 
-Isolation model decided in ADR-0008: **shared schema + `tenant_id` + Postgres RLS**.
-This increment lands the additive foundation; RLS and full threading follow.
+Isolation model (ADR-0008): **shared schema + `tenant_id` + Postgres RLS**. Tenant
+model + dimension, RLS isolation, per-request enforcement, per-tenant chart of
+accounts/limits, and cross-tenant audit are all in place.
+
+> Operational requirement: RLS only enforces when `wepl-api` connects with a
+> **non-superuser** Postgres role (superusers bypass RLS). Confirm the deploy role.
 
 ## Objective
 Introduce a first-class tenant boundary so WEPL can host multiple institutions with
@@ -40,7 +44,13 @@ BaaS (Phase 7).
   stays platform-wide). Reporting functions + the staff reports API accept
   `tenant_id`. *Remaining:* per-tenant admin **operator** scoping (a non-staff
   tenant-admin role) is a follow-up.
-- [ ] **P6-05** Cross-tenant access audit + guardrails.
+- [x] **P6-05** Cross-tenant access audit + guardrails. `guards.guard_tenant`
+  refuses + audits (`CrossTenantAccessAttempt`) access to another tenant's
+  aggregate when a request is pinned to a tenant (wired into the community detail
+  view; system/staff contexts unrestricted by design). `Community.tenant` is now
+  NOT NULL (backfilled + stamped on create). `Account.tenant` /
+  `FinancialTransaction.tenant` remain nullable **by design** — null = shared GL
+  / system movement, which the RLS policy treats as globally visible.
 
 ## What landed (foundation)
 - `apps/tenants`: `Tenant` model, `default_tenant()`, `tenant_for_user()`,
@@ -59,4 +69,5 @@ BaaS (Phase 7).
 - [x] Trial balance and reports are correct per tenant.
 
 ## Exit criteria
-- [ ] Hard tenant isolation verified (RLS); per-tenant configuration live.
+- [x] Hard tenant isolation verified (RLS-proven test, non-superuser role);
+  per-tenant configuration live (per-tenant limit rules + `Tenant.config`).
