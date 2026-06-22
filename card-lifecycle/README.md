@@ -1,12 +1,44 @@
-# Card Lifecycle Management Workbook (90-Day Destruction Rule)
-
-A standalone Excel deliverable implementing the card-lifetime compliance control:
-**every card has a maximum holding period of 90 days from its Date Received**, and the
-system must always be able to answer *which cards are safe, which are nearing expiry, and
-which are overdue for destruction.*
+# Card Lifecycle Management (90-Day Destruction Rule)
 
 This folder is self-contained and unrelated to the rest of the WEPL backend — it was added
-on request to satisfy an Excel/VBA-based specification.
+on request to satisfy an Excel/VBA card-register specification.
+
+---
+
+## ⭐ Application-grade dashboard for the I&M card register
+
+Built around your real register and the three-stage cycle:
+**① RECORD** (a card is logged on arrival) → **② LIFECYCLE** (Days in Branch ages it under
+the 90-day rule: New / Normal / Warning / Due) → **③ REMIND** (collection & destruction
+reminders fire from your existing Outlook macros).
+
+| File | What it is |
+|------|------------|
+| `CardOps_Dashboard.xlsx` | A **working preview** built from your actual 49 records, so you can see the design immediately (status donut, ageing distribution, recording-trend line, branch-health bar, KPI tiles, cycle pipeline, alert ribbon, oldest-in-branch action queue). |
+| `CardOps_Dashboard.bas` | A **native VBA generator** that paints the same dashboard into your real `.xlsm` as a new `Dashboard` sheet, with buttons wired to `RecordNewCard`, your `SendCardEmails`, and `GenerateDestructionRegister`. |
+| `build_dashboard_app.py` | Regenerates `CardOps_Dashboard.xlsx` from the source register. |
+
+**Why a generator instead of editing your file directly?** Your register relies on x14
+conditional formatting, the Status dropdown, cell-control checkboxes and a full VBA project.
+Saving it through a Python library would silently strip several of those. The `.bas` runs
+*inside* Excel, so it adds the `Dashboard` sheet with **zero loss** — it never touches
+`Dashboard_2026`, the Card Register data, your formatting, or your other macros.
+
+**To apply it to your register:** open the `.xlsm` → `Alt+F11` → *File ▸ Import File…* →
+`CardOps_Dashboard.bas` → back in Excel run macro **`BuildDashboard`**. Re-run any time (the
+Refresh button does this); `RecordNewCard` handles stage-1 intake.
+
+> Notes on your current file: `cards_type` is empty, so the Card Type `XLOOKUP` returns
+> `#N/A` — fill in the BIN→name map to light up card-type breakdowns. This copy also has no
+> `Held` cards (all Issued/Destroyed/Pend), so the destruction KPIs read 0 until cards are
+> held; the ageing distribution uses *days in branch* so it stays meaningful regardless.
+
+---
+
+## Standalone template (generic, not tied to your register)
+
+The files below are an earlier **self-contained** workbook implementing the same 90-day rule
+from scratch — useful as a clean reference or starting point.
 
 ## Files
 
