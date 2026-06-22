@@ -92,11 +92,35 @@ def interest_income_account() -> Account:
     return gl_account(INTEREST_INCOME)
 
 
+def _tenant_for_fund(fund_type: str, fund_id: int):
+    """Resolve the tenant that owns a fund's community (Phase 6, P6-03).
+
+    Lazy imports avoid a ledger→contributions dependency at module load. Returns
+    None (shared) when not resolvable — safe under RLS (null tenant is visible).
+    """
+    try:
+        from apps.contributions.models import Contribution, SharesFund, WelfareFund
+        model = {
+            'contribution': Contribution,
+            'welfare':      WelfareFund,
+            'shares':       SharesFund,
+        }.get(fund_type)
+        if model is None:
+            return None
+        obj = model.objects.filter(pk=fund_id).first()
+        return getattr(getattr(obj, 'community', None), 'tenant', None)
+    except Exception:
+        return None
+
+
 def member_receivable_account(*, user, fund_id: int) -> Account:
     """Resolve (get-or-create) the member's ASSET sub-ledger for emergency
     advances, rolling up into 1200 Advances Receivable. The member owes the
     advance back, so this is an asset of the platform/pool."""
     code = f"AR-{fund_id}-U{user.pk}"
+    existing = Account.objects.filter(code=code).first()
+    if existing is not None:
+        return existing
     acct, _ = Account.objects.get_or_create(
         code=code,
         defaults={
@@ -116,13 +140,17 @@ def member_fund_account(*, user, fund_type: str, fund_id: int) -> Account:
     Resolve (get-or-create) the member's sub-ledger LIABILITY account for a fund.
 
     The platform owes contributed funds back to the member, hence LIABILITY.
-    Rolls up into the fund_type's payable GL account.
+    Rolls up into the fund_type's payable GL account. New sub-ledgers are stamped
+    with the fund's tenant (Phase 6); GL parents stay shared (tenant null).
     """
     parent_code = _FUND_PAYABLE_PARENT.get(fund_type)
     if parent_code is None:
         raise ValueError(f"Unknown fund_type {fund_type!r} for sub-ledger resolution.")
 
     code = f"SL-{fund_type.upper()}-{fund_id}-U{user.pk}"
+    existing = Account.objects.filter(code=code).first()
+    if existing is not None:
+        return existing
     acct, _ = Account.objects.get_or_create(
         code=code,
         defaults={
@@ -132,6 +160,7 @@ def member_fund_account(*, user, fund_type: str, fund_id: int) -> Account:
             'owner':     user,
             'fund_type': fund_type,
             'fund_id':   fund_id,
+            'tenant':    _tenant_for_fund(fund_type, fund_id),
         },
     )
     return acct

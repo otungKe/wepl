@@ -35,6 +35,15 @@ def create_fin_transaction(
     Get-or-create a FinancialTransaction by idempotency_key.
     Returns (ft, created).  Safe to call on retry.
     """
+    # Stamp the tenant from the owning fund's community (Phase 6, P6-03). Null
+    # when not resolvable — safe under RLS (shared) and replaced once threaded.
+    tenant = None
+    for fund in (contribution, welfare_fund, shares_fund):
+        if fund is not None:
+            tenant = getattr(getattr(fund, 'community', None), 'tenant', None)
+            if tenant is not None:
+                break
+
     ft, created = FinancialTransaction.objects.get_or_create(
         idempotency_key=idempotency_key,
         defaults=dict(
@@ -49,6 +58,7 @@ def create_fin_transaction(
             context_type=context_type,
             context_id=context_id,
             note=note,
+            tenant=tenant,
         ),
     )
     return ft, created

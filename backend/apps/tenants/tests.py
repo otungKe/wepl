@@ -125,6 +125,63 @@ class TenantContextWiringTests(TestCase):
         self.assertEqual(self._guc(), '')
 
 
+class PerTenantChartOfAccountsTests(TestCase):
+    """P6-03 — member sub-ledgers and financial transactions inherit the fund's tenant."""
+
+    def setUp(self):
+        from django.contrib.auth import get_user_model
+        from apps.communities.models import Community
+        from apps.contributions.models import WelfareFund
+        self.t1 = Tenant.objects.create(name='Coa Tenant', slug='coa-tenant')
+        self.user = get_user_model().objects.create_user(phone_number='254700000040')
+        self.community = Community.objects.create(created_by=self.user, name='Coa C', tenant=self.t1)
+        self.fund = WelfareFund.objects.create(community=self.community, monthly_contribution=Decimal('0'))
+
+    def test_member_subledger_inherits_tenant(self):
+        from apps.ledger.coa import member_fund_account
+        acct = member_fund_account(user=self.user, fund_type='welfare', fund_id=self.fund.id)
+        self.assertEqual(acct.tenant_id, self.t1.id)
+
+    def test_financial_transaction_inherits_tenant(self):
+        from apps.ledger.writer import create_fin_transaction
+        ft, _ = create_fin_transaction(
+            idempotency_key='coa-ft-1', op_type='WELFARE_CONTRIBUTION',
+            amount=Decimal('100'), initiated_by=self.user, welfare_fund=self.fund,
+        )
+        self.assertEqual(ft.tenant_id, self.t1.id)
+
+
+class PerTenantLimitsTests(TestCase):
+    """P6-03 — limit rules can be scoped to a tenant; global rules apply to all."""
+
+    def setUp(self):
+        from django.contrib.auth import get_user_model
+        self.t1 = Tenant.objects.create(name='Lim One', slug='lim-one')
+        self.t2 = Tenant.objects.create(name='Lim Two', slug='lim-two')
+        self.user = get_user_model().objects.create_user(phone_number='254700000041')
+
+    def test_tenant_rule_applies_only_to_its_tenant(self):
+        from apps.controls.engine import evaluate
+        from apps.controls.models import ControlDecision, LimitRule
+        LimitRule.objects.create(name='t1 cap', tenant=self.t1, direction='PAYOUT',
+                                 period='TXN', max_amount=Decimal('100'), action='DENY')
+        d1 = evaluate(subject_user_id=self.user.id, op_type='DISBURSEMENT', direction='PAYOUT',
+                      amount=Decimal('500'), tenant_id=self.t1.id)
+        self.assertEqual(d1.decision, ControlDecision.Outcome.DENY)
+        d2 = evaluate(subject_user_id=self.user.id, op_type='DISBURSEMENT', direction='PAYOUT',
+                      amount=Decimal('500'), tenant_id=self.t2.id)
+        self.assertEqual(d2.decision, ControlDecision.Outcome.ALLOW)
+
+    def test_global_rule_applies_to_all_tenants(self):
+        from apps.controls.engine import evaluate
+        from apps.controls.models import ControlDecision, LimitRule
+        LimitRule.objects.create(name='global cap', direction='PAYOUT', period='TXN',
+                                 max_amount=Decimal('100'), action='DENY')
+        d = evaluate(subject_user_id=self.user.id, op_type='DISBURSEMENT', direction='PAYOUT',
+                     amount=Decimal('500'), tenant_id=self.t2.id)
+        self.assertEqual(d.decision, ControlDecision.Outcome.DENY)
+
+
 class RowLevelSecurityTests(TestCase):
     """P6-02 — prove RLS isolates tenants at the database, not just the ORM.
 

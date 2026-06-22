@@ -26,8 +26,13 @@ BaaS (Phase 7).
   *Remaining:* set `app.tenant_id` per authenticated request (lands with P6-04,
   since the app uses JWT — tenant comes from the user, resolved in DRF, not the
   Django session middleware).
-- [ ] **P6-03** Tenant-scoped chart of accounts + per-tenant config/limits
-  (`Tenant.config` JSON is the seam; limits engine to read tenant config).
+- [x] **P6-03** Tenant-scoped chart of accounts + per-tenant config/limits.
+  Member sub-ledger accounts (`coa.member_fund_account`) and `FinancialTransaction`
+  rows are stamped with the fund's community tenant on creation (GL parents stay
+  shared/null). `LimitRule` gained a nullable `tenant` FK — global rules apply to
+  all tenants, tenant-scoped rules only to that tenant; the controls engine filters
+  by the movement's tenant. `Tenant.config` JSON is the seam for further per-tenant
+  settings.
 - [x] **P6-04** Tenant-aware auth + reporting. `TenantJWTAuthentication` sets the
   per-request RLS context (`app.tenant_id`) for member users; `TenantRLSMiddleware`
   resets it after every request (safe under connection pooling). Platform staff /

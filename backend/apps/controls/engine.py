@@ -81,8 +81,14 @@ def _window_totals(*, rule, direction, op_type, subject_user_id, now, exclude_ft
     return (agg['total'] or Decimal('0')), (agg['cnt'] or 0)
 
 
-def evaluate(*, subject_user_id, op_type, direction, amount, financial_transaction=None) -> ControlDecision:
-    """Evaluate all active rules and persist + return a ControlDecision."""
+def evaluate(*, subject_user_id, op_type, direction, amount, financial_transaction=None, tenant_id=None) -> ControlDecision:
+    """Evaluate all active rules and persist + return a ControlDecision.
+
+    Rule scope by tenant (P6-03): global rules (tenant IS NULL) always apply;
+    tenant-specific rules apply only to that tenant's movements.
+    """
+    from django.db.models import Q
+
     amount = amount if isinstance(amount, Decimal) else Decimal(str(amount))
     now = timezone.now()
     ft_id = getattr(financial_transaction, 'pk', None)
@@ -95,6 +101,8 @@ def evaluate(*, subject_user_id, op_type, direction, amount, financial_transacti
 
     rules = LimitRule.objects.filter(is_active=True).filter(
         direction__in=[LimitRule.Direction.ANY, direction]
+    ).filter(
+        Q(tenant__isnull=True) | Q(tenant_id=tenant_id)
     ).order_by('priority', 'id')
 
     for rule in rules:
@@ -154,6 +162,7 @@ def enforce_controls(*, financial_transaction, amount) -> ControlDecision | None
         subject_user_id=financial_transaction.initiated_by_id,
         op_type=op_type, direction=direction, amount=amount,
         financial_transaction=financial_transaction,
+        tenant_id=financial_transaction.tenant_id,
     )
     if decision.decision in (ControlDecision.Outcome.DENY, ControlDecision.Outcome.HOLD):
         # Build a context snapshot now — the FinancialTransaction will be rolled

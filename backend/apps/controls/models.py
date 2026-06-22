@@ -39,6 +39,11 @@ class LimitRule(models.Model):
         HOLD = 'HOLD', 'Hold for review'
 
     name      = models.CharField(max_length=120)
+    # Null = global rule (all tenants); set = applies only to that tenant (P6-03).
+    tenant    = models.ForeignKey(
+        'tenants.Tenant', null=True, blank=True,
+        on_delete=models.CASCADE, related_name='limit_rules',
+    )
     scope     = models.CharField(max_length=10, choices=Scope.choices, default=Scope.PER_USER)
     direction = models.CharField(max_length=6, choices=Direction.choices, default=Direction.PAYOUT)
     # Blank = applies to all op_types in the direction.
