@@ -78,6 +78,53 @@ class CommunityGetsTenantOnCreateTests(TestCase):
         self.assertEqual(community.tenant.slug, 'default')
 
 
+class TenantContextWiringTests(TestCase):
+    """P6-04 — JWT auth pins the RLS context for members; middleware resets it."""
+
+    def _guc(self):
+        from django.db import connection
+        with connection.cursor() as c:
+            c.execute("SELECT current_setting('app.tenant_id', true)")
+            return c.fetchone()[0]
+
+    def _request_with_token(self, user):
+        from rest_framework.test import APIRequestFactory
+        from rest_framework_simplejwt.tokens import AccessToken
+        token = str(AccessToken.for_user(user))
+        return APIRequestFactory().get('/', HTTP_AUTHORIZATION=f'Bearer {token}')
+
+    def test_member_request_pins_tenant(self):
+        from django.contrib.auth import get_user_model
+        from apps.tenants.auth import TenantJWTAuthentication
+        from apps.tenants.rls import clear_current_tenant
+        from apps.tenants.resolve import default_tenant
+        clear_current_tenant()
+        user = get_user_model().objects.create_user(phone_number='254700000030')
+        TenantJWTAuthentication().authenticate(self._request_with_token(user))
+        self.assertEqual(self._guc(), str(default_tenant().id))
+
+    def test_staff_request_not_pinned(self):
+        from django.contrib.auth import get_user_model
+        from apps.tenants.auth import TenantJWTAuthentication
+        from apps.tenants.rls import clear_current_tenant
+        clear_current_tenant()
+        staff = get_user_model().objects.create_user(phone_number='254700000031')
+        staff.is_staff = True
+        staff.save()
+        TenantJWTAuthentication().authenticate(self._request_with_token(staff))
+        self.assertEqual(self._guc(), '')  # left unset → cross-tenant operator
+
+    def test_middleware_resets_context(self):
+        from django.http import HttpResponse
+        from apps.tenants.middleware import TenantRLSMiddleware
+        from apps.tenants.rls import set_current_tenant
+        from apps.tenants.resolve import default_tenant
+        set_current_tenant(default_tenant().id)
+        mw = TenantRLSMiddleware(lambda req: HttpResponse('ok'))
+        mw(self._request_with_token(None) if False else object())  # request unused by middleware
+        self.assertEqual(self._guc(), '')
+
+
 class RowLevelSecurityTests(TestCase):
     """P6-02 — prove RLS isolates tenants at the database, not just the ORM.
 

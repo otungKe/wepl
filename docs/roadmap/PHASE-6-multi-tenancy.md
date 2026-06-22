@@ -28,9 +28,13 @@ BaaS (Phase 7).
   Django session middleware).
 - [ ] **P6-03** Tenant-scoped chart of accounts + per-tenant config/limits
   (`Tenant.config` JSON is the seam; limits engine to read tenant config).
-- [~] **P6-04** Tenant-aware reporting — every reporting function + the staff
-  reports API accept `tenant_id` (per-tenant trial balance / balance sheet /
-  income statement). *Remaining:* tenant-aware auth + admin scoping.
+- [x] **P6-04** Tenant-aware auth + reporting. `TenantJWTAuthentication` sets the
+  per-request RLS context (`app.tenant_id`) for member users; `TenantRLSMiddleware`
+  resets it after every request (safe under connection pooling). Platform staff /
+  superusers are intentionally NOT pinned (cross-tenant operators; Django admin
+  stays platform-wide). Reporting functions + the staff reports API accept
+  `tenant_id`. *Remaining:* per-tenant admin **operator** scoping (a non-staff
+  tenant-admin role) is a follow-up.
 - [ ] **P6-05** Cross-tenant access audit + guardrails.
 
 ## What landed (foundation)

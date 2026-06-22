@@ -83,6 +83,8 @@ MIDDLEWARE = [
     'django.contrib.auth.middleware.AuthenticationMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
+    # Resets the per-request RLS tenant context (set in TenantJWTAuthentication).
+    'apps.tenants.middleware.TenantRLSMiddleware',
 ]
 
 ROOT_URLCONF = 'config.urls'
@@ -122,7 +124,8 @@ SIMPLE_JWT = {
 
 REST_FRAMEWORK = {
     'DEFAULT_AUTHENTICATION_CLASSES': (
-        'rest_framework_simplejwt.authentication.JWTAuthentication',
+        # Tenant-aware JWT: pins the RLS tenant context for member requests.
+        'apps.tenants.auth.TenantJWTAuthentication',
     ),
     'EXCEPTION_HANDLER': 'apps.core.exceptions.custom_exception_handler',
     'DEFAULT_THROTTLE_CLASSES': [
