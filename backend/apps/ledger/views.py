@@ -109,3 +109,43 @@ class AuditExportView(APIView):
     def get(self, request):
         rows = list(reporting.export_journal_rows(start=_dt(request, 'start'), end=_dt(request, 'end')))
         return Response({'columns': list(reporting.EXPORT_COLUMNS), 'count': len(rows), 'rows': rows})
+
+
+class TenancyCheckView(APIView):
+    """Is multi-tenant RLS actually enforcing in this deployment? (P6 ops check)
+
+    Reports the DB role's superuser/bypass flags and whether RLS is enabled +
+    forced on the financial tables. RLS only isolates tenant-pinned sessions when
+    the role is NOT a superuser/bypassrls AND the tables are forced.
+    """
+    permission_classes = [IsAdminUser]
+
+    RLS_TABLES = ('ledger_account', 'ledger_financialtransaction')
+
+    def get(self, request):
+        from django.db import connection
+        with connection.cursor() as cur:
+            cur.execute("SELECT current_user, rolsuper, rolbypassrls FROM pg_roles WHERE rolname = current_user")
+            db_user, rolsuper, rolbypassrls = cur.fetchone()
+            cur.execute(
+                "SELECT relname, relrowsecurity, relforcerowsecurity "
+                "FROM pg_class WHERE relname = ANY(%s)", [list(self.RLS_TABLES)],
+            )
+            tables = {r[0]: {'rls_enabled': r[1], 'rls_forced': r[2]} for r in cur.fetchall()}
+
+        all_forced = all(tables.get(t, {}).get('rls_enabled') and tables.get(t, {}).get('rls_forced')
+                         for t in self.RLS_TABLES)
+        enforcing = (not rolsuper) and (not rolbypassrls) and all_forced
+        return Response({
+            'db_user': db_user,
+            'is_superuser': rolsuper,
+            'bypass_rls': rolbypassrls,
+            'tables': tables,
+            'rls_enforcing': enforcing,
+            'note': (
+                'RLS is enforcing: tenant-pinned sessions are isolated at the database.'
+                if enforcing else
+                'RLS is DORMANT — the DB role is a superuser/bypassrls or the tables are '
+                'not forced. Deploy with a non-superuser DB role for isolation to take effect.'
+            ),
+        })

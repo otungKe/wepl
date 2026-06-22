@@ -103,3 +103,13 @@ class ReportingApiTests(TestCase):
         client.force_authenticate(user=u)
         r = client.get('/api/ledger/reports/trial-balance/')
         self.assertEqual(r.status_code, 403)
+
+    def test_tenancy_check_endpoint(self):
+        r = self.client.get('/api/ledger/reports/tenancy-check/')
+        self.assertEqual(r.status_code, 200)
+        body = r.json()
+        self.assertIn('rls_enforcing', body)
+        self.assertIn('is_superuser', body)
+        # Financial tables are reported with their RLS flags.
+        self.assertIn('ledger_account', body['tables'])
+        self.assertTrue(body['tables']['ledger_account']['rls_forced'])
