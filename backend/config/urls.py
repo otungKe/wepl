@@ -37,4 +37,5 @@ urlpatterns = [
     path('api/notifications/', include('apps.notifications.urls')),
     path('api/mpesa/',     include('apps.mpesa.urls')),
     path('api/reminders/', include('apps.reminders.urls')),
+    path('api/ledger/',    include('apps.ledger.urls')),
 ]
