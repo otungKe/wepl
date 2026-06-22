@@ -114,6 +114,51 @@ class ChokepointEnforcementTests(TestCase):
         self.assertTrue(JournalEntry.objects.filter(pk=je.pk).exists())
 
 
+class HeldMovementReviewTests(TestCase):
+    """P3-04 — blocked movements are durably recorded and reviewable."""
+
+    def setUp(self):
+        self.user = User.objects.create_user(phone_number='254700000003')
+
+    def test_held_exception_carries_context_and_records(self):
+        from apps.controls.models import HeldMovement
+        from apps.controls.review import record_blocked_movement
+        LimitRule.objects.create(name='hold', direction='PAYOUT', period='TXN', max_amount=Decimal('100'), action='HOLD')
+        ft = _ft(self.user, 'DISBURSEMENT', '500')
+        with self.assertRaises(ControlHeld) as cm:
+            enforce_controls(financial_transaction=ft, amount=Decimal('500'))
+        self.assertEqual(cm.exception.context['decision'], 'HOLD')
+        item = record_blocked_movement(cm.exception)
+        self.assertEqual(item.status, HeldMovement.Status.OPEN)
+        self.assertEqual(item.decision, 'HOLD')
+        self.assertEqual(item.amount, Decimal('500'))
+        self.assertEqual(item.subject_user_id, self.user.id)
+
+    def test_denied_movement_recorded(self):
+        from apps.controls.models import HeldMovement
+        from apps.controls.review import record_blocked_movement
+        LimitRule.objects.create(name='deny', direction='PAYOUT', period='TXN', max_amount=Decimal('100'), action='DENY')
+        ft = _ft(self.user, 'DISBURSEMENT', '500')
+        with self.assertRaises(LimitExceeded) as cm:
+            enforce_controls(financial_transaction=ft, amount=Decimal('500'))
+        item = record_blocked_movement(cm.exception)
+        self.assertEqual(item.decision, HeldMovement.Decision.DENY)
+
+    def test_release_action_marks_released(self):
+        from apps.controls.admin import release_movements
+        from apps.controls.models import HeldMovement
+        item = HeldMovement.objects.create(decision='HOLD', op_type='DISBURSEMENT', direction='PAYOUT', amount=Decimal('5'))
+
+        class _MA:
+            def message_user(self, *a, **k): pass
+        class _Req:
+            user = self.user
+        release_movements(_MA(), _Req(), HeldMovement.objects.filter(pk=item.pk))
+        item.refresh_from_db()
+        self.assertEqual(item.status, HeldMovement.Status.RELEASED)
+        self.assertEqual(item.reviewed_by_id, self.user.id)
+
+
 class SeedControlsCommandTests(TestCase):
     def test_seed_creates_rules(self):
         from django.core.management import call_command

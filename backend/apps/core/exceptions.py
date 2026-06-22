@@ -65,8 +65,12 @@ class LimitExceeded(Exception):
     money movement breaches a configured limit and the rule action is DENY.
 
     Maps to HTTP 422 Unprocessable Entity — the request was well-formed but a
-    business control rejected it before any journal was written.
+    business control rejected it before any journal was written. Carries a
+    ``context`` dict describing the blocked movement (recorded for review).
     """
+    def __init__(self, message, context=None):
+        super().__init__(message)
+        self.context = context or {}
 
 
 class ControlHeld(Exception):
@@ -74,8 +78,11 @@ class ControlHeld(Exception):
     Raised by the controls layer when a money movement trips a rule whose action
     is HOLD (e.g. velocity/anomaly). The movement is not posted; it is flagged for
     manual review. Maps to HTTP 409 Conflict so the client knows the request is
-    parked rather than permanently rejected.
+    parked rather than permanently rejected. Carries a ``context`` dict.
     """
+    def __init__(self, message, context=None):
+        super().__init__(message)
+        self.context = context or {}
 
 
 def custom_exception_handler(exc, context):
@@ -123,6 +130,18 @@ def custom_exception_handler(exc, context):
     # RateLimitError → 429 Too Many Requests
     if isinstance(exc, RateLimitError):
         return Response({'error': str(exc)}, status=status.HTTP_429_TOO_MANY_REQUESTS)
+
+    # Controls (Phase 3): durably record the blocked movement to the review queue.
+    # This runs AFTER the service's @transaction.atomic has rolled back, so the
+    # record persists even though the FinancialTransaction did not. Best-effort —
+    # a recording failure must never mask the original control response.
+    if isinstance(exc, (LimitExceeded, ControlHeld)):
+        try:
+            from apps.controls.review import record_blocked_movement
+            record_blocked_movement(exc)
+        except Exception:  # pragma: no cover - audit must not break the response
+            import logging
+            logging.getLogger(__name__).exception("Failed to record held/denied movement")
 
     # LimitExceeded → 422 (control rejected the movement before posting)
     if isinstance(exc, LimitExceeded):

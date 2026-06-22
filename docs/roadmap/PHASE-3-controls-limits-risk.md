@@ -1,6 +1,10 @@
 # Phase 3 — Controls: Limits & Risk
 
-**Status:** 🟡 In progress · **Depends on:** Phase 0 (single posting chokepoint) · **ADR:** [0007](../adr/0007-controls-at-posting-chokepoint.md)
+**Status:** 🟢 Done (core) · **Depends on:** Phase 0 (single posting chokepoint) · **ADR:** [0007](../adr/0007-controls-at-posting-chokepoint.md)
+
+> Both exit criteria met. Remaining P3-03 anomaly heuristics (new-recipient,
+> duplicate-amount bursts) and auto-replay-on-release are tracked as future
+> enhancements, not blockers.
 
 Implemented in `apps/controls/`: a config-driven `LimitRule` engine and an
 append-only `ControlDecision` audit log, enforced from a single pre-posting hook
@@ -24,10 +28,15 @@ This is the capability that separates a finance *app* from a finance *platform*.
   decision (`ControlHeld` → 409). New-recipient / duplicate-burst heuristics: TODO.
 - [x] **P3-05** Audit log of every control decision (`ControlDecision`:
   allow/deny/hold + reason + window totals), queryable + read-only in admin.
-- [ ] **P3-04** Manual review **queue + `HELD` state on `FinancialTransaction`**.
-  Interim: HOLD decisions are recorded and queryable (admin) but the movement is
-  blocked, not parked on the FT. Durable deny/hold audit on caller rollback also
-  pending (route through a separate connection / outbox).
+- [x] **P3-04** Manual review **queue** for blocked movements (`HeldMovement`):
+  HOLD and DENY movements are recorded durably by the DRF exception handler
+  *after* the service's `@transaction.atomic` rolls back (this also resolves the
+  earlier deny/hold-audit durability gap), with admin **Release / Reject**
+  actions and a full context snapshot. Design note: held movements are tracked as
+  `HeldMovement` records rather than a `HELD` state on `FinancialTransaction` —
+  money services post atomically, so a held movement's FT rolls back and there is
+  no committed FT to mark. Auto-replay on release is a follow-up; release clears
+  the hold so a re-initiated action proceeds.
 
 ## Acceptance criteria
 - [x] A payout exceeding a configured limit is rejected before posting, with a clear error.
@@ -36,4 +45,4 @@ This is the capability that separates a finance *app* from a finance *platform*.
 
 ## Exit criteria
 - [x] Limits + velocity gate live on all money paths via the single chokepoint.
-- [ ] Held-transaction review workflow operational (`HELD` FT state — P3-04).
+- [x] Held-transaction review workflow operational (`HeldMovement` queue — P3-04).

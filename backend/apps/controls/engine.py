@@ -155,8 +155,25 @@ def enforce_controls(*, financial_transaction, amount) -> ControlDecision | None
         op_type=op_type, direction=direction, amount=amount,
         financial_transaction=financial_transaction,
     )
-    if decision.decision == ControlDecision.Outcome.DENY:
-        raise LimitExceeded(decision.reason)
-    if decision.decision == ControlDecision.Outcome.HOLD:
-        raise ControlHeld(decision.reason)
+    if decision.decision in (ControlDecision.Outcome.DENY, ControlDecision.Outcome.HOLD):
+        # Build a context snapshot now — the FinancialTransaction will be rolled
+        # back with the service's transaction, so the review queue is rebuilt from
+        # these primitives by the exception handler (see apps/controls/review.py).
+        ft = financial_transaction
+        context = {
+            'decision': decision.decision,
+            'op_type': op_type,
+            'direction': direction,
+            'amount': str(amount),
+            'subject_user_id': ft.initiated_by_id,
+            'recipient_phone': ft.recipient_phone or '',
+            'idempotency_key': ft.idempotency_key or '',
+            'context_type': ft.context_type or '',
+            'context_id': ft.context_id,
+            'rule_id': decision.rule_id,
+            'reason': decision.reason,
+        }
+        if decision.decision == ControlDecision.Outcome.DENY:
+            raise LimitExceeded(decision.reason, context=context)
+        raise ControlHeld(decision.reason, context=context)
     return decision

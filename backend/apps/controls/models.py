@@ -98,3 +98,61 @@ class ControlDecision(models.Model):
 
     def __str__(self):
         return f"{self.decision} {self.op_type} {self.amount} ({self.created_at:%Y-%m-%d %H:%M})"
+
+
+class HeldMovement(models.Model):
+    """Durable manual-review queue for blocked movements (P3-04).
+
+    A held (HOLD) or denied (DENY) movement leaves no FinancialTransaction behind
+    — the service's atomic block rolls back when the control exception propagates.
+    This row is written by the DRF exception handler *after* that rollback, so it
+    persists and is reviewable. It captures enough context (idempotency_key, fund,
+    parties) for an operator to understand and act on the blocked movement.
+    """
+
+    class Decision(models.TextChoices):
+        DENY = 'DENY', 'Denied'
+        HOLD = 'HOLD', 'Held'
+
+    class Status(models.TextChoices):
+        OPEN     = 'OPEN',     'Open'
+        RELEASED = 'RELEASED', 'Released'
+        REJECTED = 'REJECTED', 'Rejected'
+
+    created_at   = models.DateTimeField(auto_now_add=True, db_index=True)
+    decision     = models.CharField(max_length=5, choices=Decision.choices)
+    status       = models.CharField(max_length=10, choices=Status.choices, default=Status.OPEN)
+    op_type      = models.CharField(max_length=30)
+    direction    = models.CharField(max_length=6)
+    amount       = models.DecimalField(max_digits=14, decimal_places=2)
+    subject_user = models.ForeignKey(
+        settings.AUTH_USER_MODEL, null=True, blank=True,
+        on_delete=models.SET_NULL, related_name='held_movements',
+    )
+    recipient_phone = models.CharField(max_length=20, blank=True)
+    idempotency_key = models.CharField(max_length=128, blank=True, db_index=True)
+    context_type = models.CharField(max_length=30, blank=True)
+    context_id   = models.PositiveIntegerField(null=True, blank=True)
+    rule = models.ForeignKey(
+        LimitRule, null=True, blank=True,
+        on_delete=models.SET_NULL, related_name='held_movements',
+    )
+    reason       = models.TextField(blank=True)
+
+    # Review trail
+    reviewed_by  = models.ForeignKey(
+        settings.AUTH_USER_MODEL, null=True, blank=True,
+        on_delete=models.SET_NULL, related_name='reviewed_held_movements',
+    )
+    reviewed_at  = models.DateTimeField(null=True, blank=True)
+    review_note  = models.TextField(blank=True)
+
+    class Meta:
+        ordering = ('-created_at',)
+        indexes = [
+            models.Index(fields=['status', 'created_at'], name='held_status_idx'),
+        ]
+
+    def __str__(self):
+        return f"[{self.status}] {self.decision} {self.op_type} {self.amount}"
+
