@@ -53,6 +53,14 @@ class TrialBalanceView(APIView):
         return Response(_jsonify(reporting.trial_balance(as_of=_dt(request, 'as_of'), **_dimensions(request))))
 
 
+class TrialBalanceByCurrencyView(APIView):
+    permission_classes = [IsAdminUser]
+
+    def get(self, request):
+        return Response(_jsonify(reporting.trial_balance_by_currency(
+            as_of=_dt(request, 'as_of'), **_dimensions(request))))
+
+
 class BalanceSheetView(APIView):
     permission_classes = [IsAdminUser]
 

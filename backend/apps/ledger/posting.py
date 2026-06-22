@@ -69,27 +69,34 @@ def post_journal(
         )
 
     debit_total = Decimal('0')
-    credit_total = Decimal('0')
+    # Balance is enforced PER CURRENCY (Phase 5, P5-01): every currency in a
+    # journal must have Σdebit == Σcredit independently. Single-currency journals
+    # (the common case) behave exactly as before; cross-currency moves must square
+    # each currency via FX/clearing accounts (see apps/ledger/fx.py).
+    per_currency: dict[str, list[Decimal]] = defaultdict(lambda: [Decimal('0'), Decimal('0')])
     for ln in lines:
         amt = _q(ln.amount)
         if amt <= 0:
             raise UnbalancedJournalError(
                 f"Journal {idempotency_key!r}: line amounts must be > 0, got {amt}."
             )
+        ccy = ln.account.currency
         if ln.direction == JournalLine.Direction.DEBIT:
+            per_currency[ccy][0] += amt
             debit_total += amt
         elif ln.direction == JournalLine.Direction.CREDIT:
-            credit_total += amt
+            per_currency[ccy][1] += amt
         else:
             raise UnbalancedJournalError(
                 f"Journal {idempotency_key!r}: invalid direction {ln.direction!r}."
             )
 
-    if debit_total != credit_total:
-        raise UnbalancedJournalError(
-            f"Journal {idempotency_key!r} is unbalanced: "
-            f"debit={debit_total} credit={credit_total}."
-        )
+    for ccy, (d, c) in per_currency.items():
+        if d != c:
+            raise UnbalancedJournalError(
+                f"Journal {idempotency_key!r} is unbalanced in {ccy}: "
+                f"debit={d} credit={c}."
+            )
 
     # ── Controls: limits & risk gate (Phase 3, ADR-0007) ─────────────────────
     # Evaluated here so every member-facing money movement passes through exactly

@@ -141,6 +141,14 @@ TIME_ZONE = 'Africa/Nairobi'
 USE_I18N = True
 USE_TZ = True
 
+# ─── Currency (Phase 5) ───────────────────────────────────────────────────────
+# Default transaction currency and the presentation currency used to consolidate
+# multi-currency reports. Kept in config (not hardcoded in logic) so deployments
+# in other markets need no code change. The Money value object still defaults to
+# KES; set these to drive app-level currency behaviour and consolidated reporting.
+DEFAULT_CURRENCY      = config('DEFAULT_CURRENCY', default='KES')
+PRESENTATION_CURRENCY = config('PRESENTATION_CURRENCY', default=DEFAULT_CURRENCY)
+
 STATIC_URL = 'static/'
 STATIC_ROOT = BASE_DIR / 'staticfiles'
 

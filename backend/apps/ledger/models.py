@@ -421,3 +421,31 @@ class AccountBalance(models.Model):
 
     def __str__(self):
         return f"Bal({self.account.code}) = {self.balance}"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# ExchangeRate — effective-dated FX rates (Phase 5, P5-02)
+# ─────────────────────────────────────────────────────────────────────────────
+class ExchangeRate(models.Model):
+    """An effective-dated conversion rate: 1 ``base`` = ``rate`` × ``quote``.
+
+    Rates are append-only and timestamped, so any past conversion is reproducible
+    by looking up the rate effective at the transaction time. ``apps.ledger.fx``
+    resolves rates (and inverts when only the opposite pair is stored).
+    """
+    base_currency  = models.CharField(max_length=3)
+    quote_currency = models.CharField(max_length=3)
+    rate           = models.DecimalField(max_digits=20, decimal_places=10)
+    effective_at   = models.DateTimeField(db_index=True)
+    source         = models.CharField(max_length=60, blank=True)
+    created_at     = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ('-effective_at',)
+        indexes = [
+            models.Index(fields=['base_currency', 'quote_currency', 'effective_at'],
+                         name='ledger_fx_pair_eff_idx'),
+        ]
+
+    def __str__(self):
+        return f"1 {self.base_currency} = {self.rate} {self.quote_currency} @ {self.effective_at:%Y-%m-%d}"

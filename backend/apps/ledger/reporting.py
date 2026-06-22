@@ -174,6 +174,36 @@ def member_account(user, fund_type: str, fund_id: int) -> Account | None:
     return Account.objects.filter(owner=user, fund_type=fund_type, fund_id=fund_id).first()
 
 
+# ── P5-04 Per-currency trial balance + presentation consolidation ────────────
+def trial_balance_by_currency(*, as_of=None, fund_type=None, fund_id=None, op_type=None) -> dict:
+    """Trial balance split by account currency; each currency must self-balance."""
+    out: dict[str, dict] = {}
+    per = (
+        _lines(as_of=as_of, fund_type=fund_type, fund_id=fund_id, op_type=op_type)
+        .values('account__currency')
+        .annotate(debit=_debit_expr(), credit=_credit_expr())
+    )
+    for r in per:
+        d, c = r['debit'] or _ZERO, r['credit'] or _ZERO
+        out[r['account__currency']] = {
+            'total_debit': d, 'total_credit': c, 'balanced': d == c,
+        }
+    return {
+        'as_of': as_of,
+        'currencies': out,
+        'balanced': all(v['balanced'] for v in out.values()),
+    }
+
+
+def present_value(amount: Decimal, currency: str, presentation: str, *, at=None) -> Decimal:
+    """Convert a single-currency figure into a presentation currency for
+    consolidated reporting (uses the effective-dated FX table)."""
+    from .fx import get_rate
+    if currency == presentation:
+        return amount
+    return amount * get_rate(currency, presentation, at=at)
+
+
 # ── P4-04 Audit export ───────────────────────────────────────────────────────
 EXPORT_COLUMNS = (
     'journal_id', 'posted_at', 'op_type', 'idempotency_key', 'narration',

@@ -2,10 +2,19 @@ from django.contrib import admin
 from .models import (
     Account,
     AccountBalance,
+    ExchangeRate,
     FinancialTransaction,
     JournalEntry,
     JournalLine,
 )
+
+
+@admin.register(ExchangeRate)
+class ExchangeRateAdmin(admin.ModelAdmin):
+    list_display  = ('base_currency', 'quote_currency', 'rate', 'effective_at', 'source')
+    list_filter   = ('base_currency', 'quote_currency')
+    search_fields = ('base_currency', 'quote_currency', 'source')
+    date_hierarchy = 'effective_at'
 
 
 @admin.register(FinancialTransaction)

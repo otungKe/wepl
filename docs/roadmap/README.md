@@ -53,7 +53,7 @@ settlement, reporting) has exactly one insertion point.
 | 2 | [Durable Eventing (Transactional Outbox)](PHASE-2-eventing-outbox.md) | No lost domain events | 4 | [#6](https://github.com/otungKe/wepl/issues/6) | 🟢 Done |
 | 3 | [Controls: Limits & Risk](PHASE-3-controls-limits-risk.md) | Limits + velocity/fraud gate at the posting chokepoint | 4 | [#7](https://github.com/otungKe/wepl/issues/7) | 🟢 Done (core; P3-01→05) |
 | 4 | [Reporting & GL](PHASE-4-reporting-gl.md) | Trial balance, statements, audit exports | 4 | [#8](https://github.com/otungKe/wepl/issues/8) | 🟢 Done (core; P4-01→04) |
-| 5 | [Multi-Currency](PHASE-5-multi-currency.md) | FX-aware Money; per-currency balancing | 4→5 | [#9](https://github.com/otungKe/wepl/issues/9) | 🔴 Not started |
+| 5 | [Multi-Currency](PHASE-5-multi-currency.md) | FX-aware Money; per-currency balancing | 4→5 | [#9](https://github.com/otungKe/wepl/issues/9) | 🟢 Done (core; P5-01→05) |
 | 6 | [Multi-Tenancy](PHASE-6-multi-tenancy.md) | Tenant boundary + isolation | 5 | [#10](https://github.com/otungKe/wepl/issues/10) | 🔴 Not started |
 | 7 | [Banking-as-a-Service](PHASE-7-baas.md) | Public API, webhooks-out, sandbox, API keys | 5 | [#11](https://github.com/otungKe/wepl/issues/11) | 🔴 Not started |
 | 8 | [Enterprise & Compliance](PHASE-8-enterprise-compliance.md) | AML, monitoring, treasury, data residency | 6 | [#12](https://github.com/otungKe/wepl/issues/12) | 🔴 Not started |

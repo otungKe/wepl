@@ -5,11 +5,13 @@ from .views import (
     BalanceSheetView,
     IncomeStatementView,
     StatementOfAccountView,
+    TrialBalanceByCurrencyView,
     TrialBalanceView,
 )
 
 urlpatterns = [
     path('reports/trial-balance/',    TrialBalanceView.as_view()),
+    path('reports/trial-balance-by-currency/', TrialBalanceByCurrencyView.as_view()),
     path('reports/balance-sheet/',    BalanceSheetView.as_view()),
     path('reports/income-statement/', IncomeStatementView.as_view()),
     path('reports/statement/',        StatementOfAccountView.as_view()),
