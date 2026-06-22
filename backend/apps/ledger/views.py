@@ -39,10 +39,12 @@ def _dt(request, key):
 
 def _dimensions(request):
     fund_id = request.query_params.get('fund_id')
+    tenant_id = request.query_params.get('tenant_id')
     return {
         'fund_type': request.query_params.get('fund_type'),
         'fund_id': int(fund_id) if fund_id else None,
         'op_type': request.query_params.get('op_type'),
+        'tenant_id': int(tenant_id) if tenant_id else None,
     }
 
 
@@ -67,7 +69,8 @@ class BalanceSheetView(APIView):
     def get(self, request):
         dims = _dimensions(request)
         return Response(_jsonify(reporting.balance_sheet(
-            as_of=_dt(request, 'as_of'), fund_type=dims['fund_type'], fund_id=dims['fund_id'])))
+            as_of=_dt(request, 'as_of'), fund_type=dims['fund_type'],
+            fund_id=dims['fund_id'], tenant_id=dims['tenant_id'])))
 
 
 class IncomeStatementView(APIView):
@@ -77,7 +80,7 @@ class IncomeStatementView(APIView):
         dims = _dimensions(request)
         return Response(_jsonify(reporting.income_statement(
             start=_dt(request, 'start'), end=_dt(request, 'end'),
-            fund_type=dims['fund_type'], fund_id=dims['fund_id'])))
+            fund_type=dims['fund_type'], fund_id=dims['fund_id'], tenant_id=dims['tenant_id'])))
 
 
 class StatementOfAccountView(APIView):

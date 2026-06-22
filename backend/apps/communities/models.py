@@ -28,6 +28,13 @@ class Community(models.Model):
         related_name="created_communities",
     )
 
+    # Multi-tenancy boundary (Phase 6, ADR-0008). Nullable during rollout; a
+    # community belongs to exactly one tenant (a SACCO / hosted institution).
+    tenant = models.ForeignKey(
+        'tenants.Tenant', null=True, blank=True,
+        on_delete=models.PROTECT, related_name='communities',
+    )
+
     community_photo = models.ImageField(upload_to="communities/", null=True, blank=True)
 
     is_private       = models.BooleanField(default=False)

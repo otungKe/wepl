@@ -100,6 +100,12 @@ class FinancialTransaction(models.Model):
     )
     recipient_phone = models.CharField(max_length=20, blank=True)
 
+    # Tenant dimension (Phase 6, ADR-0008). Nullable during rollout.
+    tenant = models.ForeignKey(
+        'tenants.Tenant', null=True, blank=True,
+        on_delete=models.PROTECT, related_name='financial_transactions',
+    )
+
     # ── External payment tracking ──────────────────────────────────────────────
     mpesa_checkout_id     = models.CharField(max_length=255, null=True, blank=True, unique=True)
     mpesa_conversation_id = models.CharField(max_length=255, null=True, blank=True, unique=True)
@@ -261,6 +267,12 @@ class Account(models.Model):
 
     currency  = models.CharField(max_length=3, default='KES')
     is_active = models.BooleanField(default=True)
+    # Tenant dimension (Phase 6, ADR-0008). Null = platform/shared (e.g. global
+    # GL accounts); member sub-ledgers carry their fund's tenant.
+    tenant = models.ForeignKey(
+        'tenants.Tenant', null=True, blank=True,
+        on_delete=models.PROTECT, related_name='accounts',
+    )
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:

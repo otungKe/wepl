@@ -91,7 +91,10 @@ class CommunityService:
     @staticmethod
     @transaction.atomic
     def create_community(user, validated_data, share_price=None):
-        community = Community.objects.create(created_by=user, **validated_data)
+        from apps.tenants.resolve import tenant_for_user
+        community = Community.objects.create(
+            created_by=user, tenant=tenant_for_user(user), **validated_data,
+        )
         CommunityMembership.objects.create(user=user, community=community, role=Role.ADMIN)
 
         if community.has_welfare_fund:

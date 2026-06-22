@@ -36,7 +36,7 @@ def _signed(acct_type: str, debit: Decimal, credit: Decimal) -> Decimal:
     return (credit or _ZERO) - (debit or _ZERO)
 
 
-def _lines(*, as_of=None, start=None, end=None, fund_type=None, fund_id=None, op_type=None):
+def _lines(*, as_of=None, start=None, end=None, fund_type=None, fund_id=None, op_type=None, tenant_id=None):
     qs = JournalLine.objects.all()
     if as_of is not None:
         qs = qs.filter(journal__posted_at__lte=as_of)
@@ -50,16 +50,18 @@ def _lines(*, as_of=None, start=None, end=None, fund_type=None, fund_id=None, op
         qs = qs.filter(account__fund_type=fund_type)
     if fund_id is not None:
         qs = qs.filter(account__fund_id=fund_id)
+    if tenant_id is not None:
+        qs = qs.filter(account__tenant_id=tenant_id)
     return qs
 
 
 # ── P4-01 Trial balance ──────────────────────────────────────────────────────
-def trial_balance(*, as_of=None, fund_type=None, fund_id=None, op_type=None) -> dict:
+def trial_balance(*, as_of=None, fund_type=None, fund_id=None, op_type=None, tenant_id=None) -> dict:
     """Per-account debit/credit/normal-balance plus totals and balanced flag."""
     rows = []
     total_debit = total_credit = _ZERO
     per = (
-        _lines(as_of=as_of, fund_type=fund_type, fund_id=fund_id, op_type=op_type)
+        _lines(as_of=as_of, fund_type=fund_type, fund_id=fund_id, op_type=op_type, tenant_id=tenant_id)
         .values('account__code', 'account__name', 'account__type')
         .annotate(debit=_debit_expr(), credit=_credit_expr())
         .order_by('account__code')
@@ -87,9 +89,9 @@ def _totals_by_type(qs) -> dict:
     return out
 
 
-def balance_sheet(*, as_of=None, fund_type=None, fund_id=None) -> dict:
+def balance_sheet(*, as_of=None, fund_type=None, fund_id=None, tenant_id=None) -> dict:
     """Assets = Liabilities + Equity + retained earnings (cumulative net income)."""
-    t = _totals_by_type(_lines(as_of=as_of, fund_type=fund_type, fund_id=fund_id))
+    t = _totals_by_type(_lines(as_of=as_of, fund_type=fund_type, fund_id=fund_id, tenant_id=tenant_id))
     assets = t.get(Account.Type.ASSET, _ZERO)
     liabilities = t.get(Account.Type.LIABILITY, _ZERO)
     equity = t.get(Account.Type.EQUITY, _ZERO)
@@ -107,9 +109,9 @@ def balance_sheet(*, as_of=None, fund_type=None, fund_id=None) -> dict:
     }
 
 
-def income_statement(*, start=None, end=None, fund_type=None, fund_id=None) -> dict:
+def income_statement(*, start=None, end=None, fund_type=None, fund_id=None, tenant_id=None) -> dict:
     """Income, expense and net for a period (per account + totals)."""
-    qs = _lines(start=start, end=end, fund_type=fund_type, fund_id=fund_id).filter(
+    qs = _lines(start=start, end=end, fund_type=fund_type, fund_id=fund_id, tenant_id=tenant_id).filter(
         account__type__in=[Account.Type.INCOME, Account.Type.EXPENSE]
     )
     income_rows, expense_rows = [], []
@@ -175,11 +177,11 @@ def member_account(user, fund_type: str, fund_id: int) -> Account | None:
 
 
 # ── P5-04 Per-currency trial balance + presentation consolidation ────────────
-def trial_balance_by_currency(*, as_of=None, fund_type=None, fund_id=None, op_type=None) -> dict:
+def trial_balance_by_currency(*, as_of=None, fund_type=None, fund_id=None, op_type=None, tenant_id=None) -> dict:
     """Trial balance split by account currency; each currency must self-balance."""
     out: dict[str, dict] = {}
     per = (
-        _lines(as_of=as_of, fund_type=fund_type, fund_id=fund_id, op_type=op_type)
+        _lines(as_of=as_of, fund_type=fund_type, fund_id=fund_id, op_type=op_type, tenant_id=tenant_id)
         .values('account__currency')
         .annotate(debit=_debit_expr(), credit=_credit_expr())
     )

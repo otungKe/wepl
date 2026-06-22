@@ -1,0 +1,78 @@
+"""Phase 6 multi-tenancy foundation tests — tenant model, resolution, and
+tenant-scoped reporting isolation."""
+from decimal import Decimal
+
+from django.test import TestCase
+
+from apps.ledger import reporting
+from apps.ledger.models import Account, JournalLine
+from apps.ledger.posting import Line, post_journal
+from apps.tenants.models import Tenant
+from apps.tenants.resolve import default_tenant, tenant_for_community, tenant_for_user
+
+
+class TenantResolutionTests(TestCase):
+    def test_default_tenant_is_idempotent(self):
+        a = default_tenant()
+        b = default_tenant()
+        self.assertEqual(a.pk, b.pk)
+        self.assertEqual(a.slug, 'default')
+
+    def test_tenant_for_community_falls_back_to_default(self):
+        class _C:  # community without a tenant set
+            tenant = None
+        self.assertEqual(tenant_for_community(_C()).pk, default_tenant().pk)
+
+
+class TenantScopedReportingTests(TestCase):
+    """Reports filtered by tenant never read another tenant's financial data."""
+
+    def setUp(self):
+        self.t1 = Tenant.objects.create(name='SACCO One', slug='sacco-one')
+        self.t2 = Tenant.objects.create(name='SACCO Two', slug='sacco-two')
+
+        # Each tenant gets its own pair of accounts and a posted journal.
+        self.a1 = Account.objects.create(code='T1-A', name='t1 asset', type=Account.Type.ASSET, tenant=self.t1)
+        self.l1 = Account.objects.create(code='T1-L', name='t1 liab', type=Account.Type.LIABILITY, tenant=self.t1)
+        self.a2 = Account.objects.create(code='T2-A', name='t2 asset', type=Account.Type.ASSET, tenant=self.t2)
+        self.l2 = Account.objects.create(code='T2-L', name='t2 liab', type=Account.Type.LIABILITY, tenant=self.t2)
+
+        post_journal(idempotency_key='t1-j', op_type='CONTRIBUTION', lines=[
+            Line(account=self.a1, direction=JournalLine.Direction.DEBIT, amount=Decimal('1000')),
+            Line(account=self.l1, direction=JournalLine.Direction.CREDIT, amount=Decimal('1000')),
+        ])
+        post_journal(idempotency_key='t2-j', op_type='CONTRIBUTION', lines=[
+            Line(account=self.a2, direction=JournalLine.Direction.DEBIT, amount=Decimal('250')),
+            Line(account=self.l2, direction=JournalLine.Direction.CREDIT, amount=Decimal('250')),
+        ])
+
+    def test_trial_balance_is_isolated_per_tenant(self):
+        tb1 = reporting.trial_balance(tenant_id=self.t1.id)
+        self.assertEqual(tb1['total_debit'], Decimal('1000'))
+        self.assertTrue(tb1['balanced'])
+        self.assertEqual({r['code'] for r in tb1['rows']}, {'T1-A', 'T1-L'})
+
+        tb2 = reporting.trial_balance(tenant_id=self.t2.id)
+        self.assertEqual(tb2['total_debit'], Decimal('250'))
+        self.assertEqual({r['code'] for r in tb2['rows']}, {'T2-A', 'T2-L'})
+
+    def test_global_trial_balance_sees_both(self):
+        tb = reporting.trial_balance()
+        self.assertEqual(tb['total_debit'], Decimal('1250'))
+        self.assertTrue(tb['balanced'])
+
+    def test_balance_sheet_per_tenant(self):
+        bs = reporting.balance_sheet(tenant_id=self.t1.id)
+        self.assertEqual(bs['assets'], Decimal('1000'))
+        self.assertEqual(bs['liabilities'], Decimal('1000'))
+        self.assertTrue(bs['balanced'])
+
+
+class CommunityGetsTenantOnCreateTests(TestCase):
+    def test_new_community_is_assigned_a_tenant(self):
+        from django.contrib.auth import get_user_model
+        from apps.communities.services import CommunityService
+        user = get_user_model().objects.create_user(phone_number='254700000020')
+        community = CommunityService.create_community(user, {'name': 'Test Chama'})
+        self.assertIsNotNone(community.tenant_id)
+        self.assertEqual(community.tenant.slug, 'default')
