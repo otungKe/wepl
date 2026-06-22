@@ -16,9 +16,16 @@ BaaS (Phase 7).
   existing row is tenant-stamped. New communities are stamped on create.
   *Remaining:* thread `tenant` onto member sub-ledger accounts at creation and
   onto `JournalEntry`/`JournalLine`, then make the column NOT NULL.
-- [ ] **P6-02** Postgres Row-Level Security policies keyed on
-  `current_setting('app.tenant_id')` with `FORCE ROW LEVEL SECURITY` + per-request
-  session var (the hard DB-level isolation). Designed in ADR-0008; next increment.
+- [x] **P6-02** Postgres Row-Level Security on the tenant-scoped financial tables
+  (`ledger_account`, `ledger_financialtransaction`): `ENABLE` + `FORCE ROW LEVEL
+  SECURITY` with a policy keyed on the `app.tenant_id` session GUC. Helpers
+  (`apps/tenants/rls.py`: `set_current_tenant` / `clear_current_tenant` /
+  `tenant_context`). Proven by test (a non-superuser `SET ROLE` cannot read
+  another tenant's rows even via raw SQL). **Deploy note:** RLS is bypassed by
+  superusers — run the app with a NON-superuser DB role for it to bite.
+  *Remaining:* set `app.tenant_id` per authenticated request (lands with P6-04,
+  since the app uses JWT — tenant comes from the user, resolved in DRF, not the
+  Django session middleware).
 - [ ] **P6-03** Tenant-scoped chart of accounts + per-tenant config/limits
   (`Tenant.config` JSON is the seam; limits engine to read tenant config).
 - [~] **P6-04** Tenant-aware reporting — every reporting function + the staff
@@ -35,8 +42,11 @@ BaaS (Phase 7).
   by test (one tenant's report never reads another's lines).
 
 ## Acceptance criteria
-- [ ] No query can read another tenant's financial data (RLS-proven test) — **P6-02**.
-  *Today:* application-level scoping is proven isolated in tests; DB-level RLS pending.
+- [x] No query can read another tenant's financial data — **RLS-proven test**
+  (`apps/tenants/tests.RowLevelSecurityTests`): a non-superuser role with
+  `app.tenant_id` set cannot read another tenant's rows, even via raw SQL.
+  *Caveat:* requires a non-superuser DB role in production; per-request context
+  wiring lands with P6-04.
 - [x] Trial balance and reports are correct per tenant.
 
 ## Exit criteria

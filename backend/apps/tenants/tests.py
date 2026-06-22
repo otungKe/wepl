@@ -76,3 +76,45 @@ class CommunityGetsTenantOnCreateTests(TestCase):
         community = CommunityService.create_community(user, {'name': 'Test Chama'})
         self.assertIsNotNone(community.tenant_id)
         self.assertEqual(community.tenant.slug, 'default')
+
+
+class RowLevelSecurityTests(TestCase):
+    """P6-02 — prove RLS isolates tenants at the database, not just the ORM.
+
+    The CI/dev DB role is a superuser (which bypasses RLS), so we SET ROLE to a
+    freshly-created NON-superuser role — the production scenario — and verify that
+    even raw SQL cannot read another tenant's rows once app.tenant_id is set.
+    """
+
+    def setUp(self):
+        from django.db import connection
+        self.t1 = Tenant.objects.create(name='RLS One', slug='rls-one')
+        self.t2 = Tenant.objects.create(name='RLS Two', slug='rls-two')
+        Account.objects.create(code='R1-A', name='r1', type=Account.Type.ASSET, tenant=self.t1)
+        Account.objects.create(code='R2-A', name='r2', type=Account.Type.ASSET, tenant=self.t2)
+        with connection.cursor() as cur:
+            cur.execute("DROP ROLE IF EXISTS rls_probe")
+            cur.execute("CREATE ROLE rls_probe NOSUPERUSER")
+            cur.execute("GRANT SELECT ON ledger_account TO rls_probe")
+
+    def _codes_as_tenant(self, tenant_id):
+        from django.db import connection
+        with connection.cursor() as cur:
+            cur.execute("SET ROLE rls_probe")
+            try:
+                cur.execute("SELECT set_config('app.tenant_id', %s, false)", [str(tenant_id)])
+                cur.execute("SELECT code FROM ledger_account WHERE code LIKE 'R%%' ORDER BY code")
+                return [r[0] for r in cur.fetchall()]
+            finally:
+                cur.execute("RESET ROLE")
+                cur.execute("RESET app.tenant_id")
+
+    def test_rls_blocks_cross_tenant_reads(self):
+        self.assertEqual(self._codes_as_tenant(self.t1.id), ['R1-A'])
+        self.assertEqual(self._codes_as_tenant(self.t2.id), ['R2-A'])
+
+    def test_superuser_unset_context_sees_all(self):
+        # No app.tenant_id set + superuser session (the default ORM connection)
+        # → system access sees both tenants' rows.
+        codes = set(Account.objects.filter(code__startswith='R').values_list('code', flat=True))
+        self.assertEqual(codes, {'R1-A', 'R2-A'})
