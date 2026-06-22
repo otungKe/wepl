@@ -12,6 +12,7 @@ import {
 import { SafeAreaView } from "react-native-safe-area-context";
 import { router } from "expo-router";
 import { updateProfile } from "../api/auth";
+import * as storage from "../utils/secureStorage";
 import { COLORS, FONTS, RADIUS, avatarColorFor, initialsFor } from "../constants/theme";
 
 export default function DisplayNameScreen() {
