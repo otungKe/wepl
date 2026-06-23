@@ -55,6 +55,7 @@ INSTALLED_APPS = [
 
     'apps.core.apps.CoreConfig',
     'apps.tenants.apps.TenantsConfig',
+    'apps.audit.apps.AuditConfig',
 
     'apps.users.apps.UsersConfig',
     'apps.communities.apps.CommunitiesConfig',

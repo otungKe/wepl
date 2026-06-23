@@ -191,6 +191,9 @@ class ResetPINView(APIView):
         PINService.set_pin(request.user, pin)
         logger.info("PIN reset for %s — active session issued", request.user.phone_number)
 
+        from apps.audit.services import AuditService
+        AuditService.log("auth.pin_reset", actor=request.user, target=request.user, request=request)
+
         # Issue a full active session now that recovery is complete.
         return Response({
             "message": "PIN reset successfully.",
