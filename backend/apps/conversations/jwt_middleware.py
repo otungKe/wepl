@@ -25,6 +25,14 @@ def get_user(token_key):
 
         user = User.objects.get(id=user_id)
 
+        # Enforce the ADR-0010 session registry on the WS handshake too, so a
+        # revoked/ logged-out session cannot open a new socket (REST already does
+        # this via SessionJWTAuthentication). Tokens without a sid pass through.
+        from apps.users.sessions import SID_CLAIM, active_session
+        sid = access_token.get(SID_CLAIM)
+        if sid and active_session(sid) is None:
+            return AnonymousUser()
+
         return user
 
     except Exception:

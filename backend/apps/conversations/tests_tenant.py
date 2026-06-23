@@ -9,6 +9,7 @@ from channels.routing import URLRouter
 from channels.testing import WebsocketCommunicator
 from django.contrib.auth import get_user_model
 from django.test import TestCase, TransactionTestCase, override_settings
+from django.utils import timezone
 
 from apps.communities.models import CommunityMembership
 from apps.communities.services import CommunityService
@@ -159,3 +160,26 @@ class ConsumerTenantTests(TransactionTestCase):
             app, f"/ws/conversation/{conv_id}/?token={access}")
         connected, _ = await communicator.connect()
         self.assertFalse(connected)  # membership check closes the socket
+
+    def test_revoked_session_cannot_open_socket(self):
+        async_to_sync(self._revoked)()
+
+    async def _revoked(self):
+        from apps.users.models import UserSession
+
+        def setup():
+            user = make_user("254700000001")
+            community = CommunityService.create_community(user, {"name": "Chama"})
+            conv = Conversation.objects.create(
+                community=community, topic="General", created_by=user)
+            access = issue_tokens(user, STAGE_ACTIVE)["access"]
+            # revoke the session that issue_tokens just created
+            UserSession.objects.filter(user=user).update(revoked_at=timezone.now())
+            return conv.id, access
+
+        conv_id, access = await sync_to_async(setup)()
+        app = JWTAuthMiddleware(URLRouter(websocket_urlpatterns))
+        communicator = WebsocketCommunicator(
+            app, f"/ws/conversation/{conv_id}/?token={access}")
+        connected, _ = await communicator.connect()
+        self.assertFalse(connected)  # ADR-0010 session check rejects the handshake
