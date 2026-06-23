@@ -24,6 +24,11 @@ def _safe_clear(where: str) -> None:
         clear_current_tenant()
     except Exception:  # pragma: no cover - hygiene must never break task execution
         logger.exception("Failed to clear tenant RLS context at %s", where)
+    try:
+        from apps.core.observability import clear as clear_log_context
+        clear_log_context()
+    except Exception:  # pragma: no cover
+        pass
 
 
 def _on_prerun(**_kwargs):

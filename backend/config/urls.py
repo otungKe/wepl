@@ -11,8 +11,17 @@ from drf_spectacular.views import (
 )
 
 
-def health_check(request):
-    """Lightweight health endpoint for uptime monitors and container probes."""
+def health_live(request):
+    """Liveness: the process is up and serving. No dependency checks (ADR-0020).
+    Use this for the container/orchestrator liveness probe — a failing dependency
+    must not cause the pod to be killed and restarted in a loop."""
+    return JsonResponse({'status': 'ok'})
+
+
+def health_ready(request):
+    """Readiness: can this instance serve traffic? Checks DB + cache (ADR-0020).
+    Use this for the readiness probe / load-balancer — a failed dependency takes
+    the instance out of rotation without restarting it."""
     checks = {}
     try:
         connection.ensure_connection()
@@ -32,7 +41,11 @@ def health_check(request):
 
 
 urlpatterns = [
-    path('health/', health_check, name='health'),
+    # Health probes (ADR-0020). /health/ kept as an alias of readiness for the
+    # existing uptime monitor.
+    path('health/',       health_ready, name='health'),
+    path('health/live/',  health_live,  name='health-live'),
+    path('health/ready/', health_ready, name='health-ready'),
     path('admin/', admin.site.urls),
 
     # API (P1 #6). The same map is served at the legacy unversioned prefix that

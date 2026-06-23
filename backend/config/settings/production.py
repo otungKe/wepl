@@ -4,6 +4,9 @@ from django.core.exceptions import ImproperlyConfigured
 
 DEBUG = False
 
+# Structured JSON logs by default in production (ADR-0020); override with LOG_FORMAT.
+LOGGING['handlers']['console']['formatter'] = config('LOG_FORMAT', default='json')  # noqa: F405
+
 # ─── Hard safety guard ──────────────────────────────────────────────────────────
 # The staging OTP bypass accepts a fixed '000000' code for ANY phone number. It
 # must never be active in production. Fail fast at boot rather than silently

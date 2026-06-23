@@ -159,6 +159,40 @@ SPECTACULAR_SETTINGS = {
     'PREPROCESSING_HOOKS': ['config.schema.only_versioned_paths'],
 }
 
+# ─── Logging (ADR-0020) ───────────────────────────────────────────────────────
+# Structured JSON in production (LOG_FORMAT=json), readable console in dev. Every
+# line carries request_id / tenant_id / actor_id via the ContextFilter.
+LOG_FORMAT = config('LOG_FORMAT', default='console')   # 'console' | 'json'
+
+LOGGING = {
+    'version': 1,
+    'disable_existing_loggers': False,
+    'filters': {
+        'context': {'()': 'apps.core.observability.ContextFilter'},
+    },
+    'formatters': {
+        'console': {
+            'format': '[{asctime}] {levelname} {name}: {message}',
+            'style': '{',
+            'datefmt': '%H:%M:%S',
+        },
+        'json': {'()': 'apps.core.observability.JSONFormatter'},
+    },
+    'handlers': {
+        'console': {
+            'class': 'logging.StreamHandler',
+            'formatter': LOG_FORMAT,
+            'filters': ['context'],
+        },
+    },
+    'root': {'handlers': ['console'], 'level': 'INFO'},
+    'loggers': {
+        'apps':                {'handlers': ['console'], 'level': 'DEBUG',   'propagate': False},
+        'django':              {'handlers': ['console'], 'level': 'INFO',    'propagate': False},
+        'django.db.backends':  {'handlers': ['console'], 'level': 'WARNING', 'propagate': False},
+    },
+}
+
 LANGUAGE_CODE = 'en-us'
 TIME_ZONE = 'Africa/Nairobi'
 USE_I18N = True

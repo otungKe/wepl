@@ -83,44 +83,5 @@ REST_FRAMEWORK = {
 }
 
 # ─── Logging ──────────────────────────────────────────────────────────────────
-LOGGING = {
-    'version': 1,
-    'disable_existing_loggers': False,
-    'formatters': {
-        'verbose': {
-            'format': '[{asctime}] {levelname} {name}: {message}',
-            'style': '{',
-            'datefmt': '%H:%M:%S',
-        },
-    },
-    'handlers': {
-        'console': {
-            'class': 'logging.StreamHandler',
-            'formatter': 'verbose',
-        },
-    },
-    'root': {
-        'handlers': ['console'],
-        'level': 'INFO',
-    },
-    'loggers': {
-        # All wepl app logs (OTP, PIN, payments, etc.)
-        'apps': {
-            'handlers': ['console'],
-            'level': 'DEBUG',
-            'propagate': False,
-        },
-        # Django request/server errors
-        'django': {
-            'handlers': ['console'],
-            'level': 'INFO',
-            'propagate': False,
-        },
-        # Show every SQL query in the console (useful for debugging)
-        'django.db.backends': {
-            'handlers': ['console'],
-            'level': 'WARNING',  # change to DEBUG to see all SQL queries
-            'propagate': False,
-        },
-    },
-}
+# Inherited from base.py (readable console format + request/tenant/actor context).
+# Set LOG_FORMAT=json to preview structured logs locally.

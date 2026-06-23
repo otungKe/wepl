@@ -123,6 +123,9 @@ class SessionJWTAuthentication(JWTAuthentication):
         if result is None:
             return None
         user, token = result
+        if user is not None and getattr(user, "is_authenticated", False):
+            from apps.core.observability import bind
+            bind(actor_id=user.id)
         from .sessions import SID_CLAIM, active_session, touch
         sid = token.payload.get(SID_CLAIM)
         if sid:
