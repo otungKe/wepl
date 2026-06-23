@@ -104,7 +104,11 @@ export interface Community {
   join_request_status: 'PENDING' | 'APPROVED' | 'REJECTED' | null
   created_at: string
   join_policy: 'open' | 'request' | 'invite_only'
+  invite_permission: 'admins' | 'members'
+  contribution_permission: 'admins' | 'members'
+  member_list_visibility: 'all' | 'admins'
   max_members: number | null
+  cooling_off_days: number
 }
 
 export interface CommunityMember {
@@ -285,6 +289,30 @@ export interface Message {
   created_at: string
 }
 
+export interface FinancialSummary {
+  total_contributed: number
+  total_received: number
+  active_contributions: number
+  total_contributions: number
+  pending_advances: number
+  advance_balance_due: number
+  this_month: number
+  last_month: number
+  monthly_trend: { month: string; amount: number }[]
+  tx_count: number
+  member_since: string
+  kyc_status: 'approved' | 'pending' | 'rejected' | 'not_submitted'
+}
+
+export interface MyJoinRequest {
+  id: number
+  community_id: number
+  community_name: string
+  community_photo: string | null
+  member_count: number
+  created_at: string
+}
+
 export interface Notification {
   id: number
   notification_type: string
@@ -337,8 +365,15 @@ export const communities = {
   requestByInvite: (code: string) => api.post(`/communities/invite/${code}/request/`),
   assignRole: (cid: number | string, mid: number, role: string) => api.post(`/communities/${cid}/members/${mid}/role/`, { role }),
   removeMember: (cid: number | string, mid: number) => api.delete(`/communities/${cid}/members/${mid}/`),
-  myRequests: async () => unwrap<{ id: number; community_id: number; community_name: string }>((await api.get('/communities/my-requests/')).data),
+  myRequests: async () => unwrap<MyJoinRequest>((await api.get('/communities/my-requests/')).data),
   actionRequest: (reqId: number, action: 'approve' | 'reject') => api.post(`/communities/join-requests/${reqId}/action/`, { action }),
+}
+
+// ─────────────────────────────────────────────────────────────
+// Reports / financial summary
+// ─────────────────────────────────────────────────────────────
+export const reports = {
+  financialSummary: () => api.get<FinancialSummary>('/users/financial-summary/'),
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -347,6 +382,7 @@ export const communities = {
 export const contributions = {
   mine:      async (active = true) => unwrap<Contribution>((await api.get(`/contributions/?active=${active}`)).data),
   open:      async () => unwrap<Contribution>((await api.get('/contributions/open/')).data),
+  myTransactions: async () => unwrap<Transaction>((await api.get('/contributions/transactions/')).data),
   forCommunity: async (cid: number | string) => unwrap<Contribution>((await api.get(`/contributions/community/${cid}/`)).data),
   get:       (id: number | string) => api.get<Contribution>(`/contributions/${id}/`),
   create:    (data: Record<string, unknown>) => api.post<Contribution>('/contributions/create/', data),

@@ -23,13 +23,21 @@ import { toast } from 'sonner'
 export default function CommunityDetailPage() {
   const { id } = useParams<{ id: string }>()
   const router = useRouter()
+  const myPhone = useAuthStore(s => s.user?.phone_number)
   const [c, setC] = useState<Community | null>(null)
   const [tab, setTab] = useState('chats')
   const [loading, setLoading] = useState(true)
+  const [isAdmin, setIsAdmin] = useState(false)
 
   useEffect(() => {
-    communities.get(id).then(r => setC(r.data)).catch(e => toast.error(apiError(e))).finally(() => setLoading(false))
-  }, [id])
+    communities.get(id).then(r => {
+      setC(r.data)
+      if (r.data.created_by === myPhone) { setIsAdmin(true); return }
+      communities.members(id)
+        .then(ms => setIsAdmin(ms.some(m => m.phone_number === myPhone && m.role === 'admin')))
+        .catch(() => {})
+    }).catch(e => toast.error(apiError(e))).finally(() => setLoading(false))
+  }, [id, myPhone])
 
   async function leave() {
     if (!confirm('Leave this community?')) return
@@ -44,7 +52,16 @@ export default function CommunityDetailPage() {
   return (
     <div>
       <PageHeader title={c.name} subtitle={`${c.member_count} members`} back="/communities"
-        action={<Button variant="ghost" size="sm" onClick={leave}><LogOut size={15} /> Leave</Button>} />
+        action={
+          <div className="flex gap-2">
+            {isAdmin && (
+              <Link href={`/community/${id}/settings`}>
+                <Button variant="outline" size="sm"><Settings2 size={15} /> Settings</Button>
+              </Link>
+            )}
+            <Button variant="ghost" size="sm" onClick={leave}><LogOut size={15} /> Leave</Button>
+          </div>
+        } />
 
       <div className="mb-4 flex flex-wrap items-center gap-2">
         <button onClick={copyInvite} className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-surface px-3 py-1.5 text-sm text-text-secondary hover:bg-divider">
