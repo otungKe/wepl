@@ -2,11 +2,12 @@
 import { useEffect, useState, useCallback } from 'react'
 import Link from 'next/link'
 import { useParams, useRouter } from 'next/navigation'
-import { MessageSquare, Coins, HeartHandshake, Plus, Copy, LogOut, Crown } from 'lucide-react'
+import { MessageSquare, Coins, HeartHandshake, Plus, Copy, LogOut, Crown, Shield, UserMinus, Settings2 } from 'lucide-react'
 import {
   communities, contributions, conversations, apiError,
   type Community, type CommunityMember, type Contribution, type Conversation,
 } from '@/lib/api'
+import { useAuthStore } from '@/store/auth'
 import { PageHeader } from '@/components/app/PageHeader'
 import { Tabs } from '@/components/ui/Tabs'
 import { Button } from '@/components/ui/Button'
@@ -66,7 +67,7 @@ export default function CommunityDetailPage() {
 
       {tab === 'chats' && <ChatsTab communityId={id} />}
       {tab === 'contributions' && <ContributionsTab communityId={id} />}
-      {tab === 'members' && <MembersTab communityId={id} />}
+      {tab === 'members' && <MembersTab communityId={id} community={c} />}
     </div>
   )
 }
@@ -189,28 +190,110 @@ function CreateContributionModal({ open, onClose, communityId, onCreated }: { op
   )
 }
 
-function MembersTab({ communityId }: { communityId: string }) {
+function MembersTab({ communityId, community }: { communityId: string; community: Community }) {
+  const myPhone = useAuthStore(s => s.user?.phone_number)
   const [items, setItems] = useState<CommunityMember[]>([])
   const [loading, setLoading] = useState(true)
-  useEffect(() => {
+  const [selected, setSelected] = useState<CommunityMember | null>(null)
+
+  const load = useCallback(() => {
     communities.members(communityId).then(setItems).catch(e => toast.error(apiError(e))).finally(() => setLoading(false))
   }, [communityId])
+  useEffect(() => { load() }, [load])
+
+  const myRole = items.find(m => m.phone_number === myPhone)?.role
+  const iAmAdmin = community.created_by === myPhone || myRole === 'admin'
 
   if (loading) return <div className="space-y-2">{Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-14" />)}</div>
   if (items.length === 0) return <EmptyState title="No members" />
 
   return (
     <div className="divide-y divide-divider overflow-hidden rounded-lg border border-border bg-surface">
-      {items.map(m => (
-        <div key={m.id} className="flex items-center gap-3 p-3.5">
-          <Avatar name={m.name} src={m.profile_photo} size={40} />
-          <div className="min-w-0 flex-1">
-            <p className="truncate font-medium text-text">{m.name}</p>
-            <p className="truncate text-sm text-text-muted">{m.phone_number}</p>
+      {items.map(m => {
+        const isOwner = m.phone_number === community.created_by
+        const isSelf = m.phone_number === myPhone
+        const canManage = iAmAdmin && !isOwner && !isSelf
+        return (
+          <div key={m.id} className="flex items-center gap-3 p-3.5">
+            <Avatar name={m.name} src={m.profile_photo} size={40} />
+            <div className="min-w-0 flex-1">
+              <p className="truncate font-medium text-text">{m.name}{isSelf && <span className="text-text-muted"> (you)</span>}</p>
+              <p className="truncate text-sm text-text-muted">{m.phone_number}</p>
+            </div>
+            {isOwner ? (
+              <Badge tone="warning"><Crown size={11} /> owner</Badge>
+            ) : m.role !== 'member' ? (
+              <Badge tone={m.role === 'admin' ? 'primary' : 'warning'}>{m.role === 'admin' && <Shield size={11} />}{m.role}</Badge>
+            ) : null}
+            {canManage && (
+              <button onClick={() => setSelected(m)} className="rounded-lg p-1.5 text-text-muted hover:bg-divider hover:text-text" aria-label="Manage member">
+                <Settings2 size={16} />
+              </button>
+            )}
           </div>
-          {m.role !== 'member' && <Badge tone={m.role === 'admin' ? 'primary' : 'warning'}>{m.role === 'admin' && <Crown size={11} />}{m.role}</Badge>}
-        </div>
-      ))}
+        )
+      })}
+
+      <ManageMemberModal
+        member={selected}
+        communityId={communityId}
+        onClose={() => setSelected(null)}
+        onChanged={load}
+      />
     </div>
   )
+}
+
+const ROLE_OPTIONS: { role: 'admin' | 'treasurer' | 'member'; label: string; desc: string }[] = [
+  { role: 'admin',     label: 'Admin',     desc: 'Manage members, contributions and settings' },
+  { role: 'treasurer', label: 'Treasurer', desc: 'Manage contributions and approve payouts' },
+  { role: 'member',    label: 'Member',    desc: 'Standard access' },
+]
+
+function ManageMemberModal({ member, communityId, onClose, onChanged }: {
+  member: CommunityMember | null; communityId: string; onClose: () => void; onChanged: () => void
+}) {
+  const [busy, setBusy] = useState(false)
+
+  async function setRole(role: 'admin' | 'treasurer' | 'member') {
+    if (!member || member.role === role) return
+    setBusy(true)
+    try { await communities.assignRole(communityId, member.id, role); toast.success(`${member.name} is now ${role}`); onChanged(); onClose() }
+    catch (e) { toast.error(apiError(e)) } finally { setBusy(false) }
+  }
+  async function removeMember() {
+    if (!member || !confirm(`Remove ${member.name} from this community?`)) return
+    setBusy(true)
+    try { await communities.removeMember(communityId, member.id); toast.success(`${member.name} removed`); onChanged(); onClose() }
+    catch (e) { toast.error(apiError(e)) } finally { setBusy(false) }
+  }
+
+  return (
+    <Modal open={!!member} onClose={onClose} title={member ? `Manage ${member.name}` : 'Manage member'}>
+      <div className="flex flex-col gap-2">
+        <p className="text-sm font-medium text-text-secondary">Role</p>
+        {ROLE_OPTIONS.map(opt => (
+          <button key={opt.role} disabled={busy} onClick={() => setRole(opt.role)}
+            className={cnRow(member?.role === opt.role)}>
+            <div className="min-w-0">
+              <p className="font-medium text-text">{opt.label}</p>
+              <p className="text-sm text-text-muted">{opt.desc}</p>
+            </div>
+            {member?.role === opt.role && <Badge tone="success">Current</Badge>}
+          </button>
+        ))}
+        <button disabled={busy} onClick={removeMember}
+          className="mt-2 flex items-center justify-center gap-2 rounded-lg border border-error/30 bg-red-50 px-4 py-2.5 text-sm font-medium text-error hover:bg-red-100 disabled:opacity-50">
+          <UserMinus size={16} /> Remove from community
+        </button>
+      </div>
+    </Modal>
+  )
+}
+
+function cnRow(active: boolean) {
+  return [
+    'flex items-center justify-between gap-3 rounded-lg border px-4 py-3 text-left transition-colors disabled:opacity-50',
+    active ? 'border-primary bg-primary-pale/50' : 'border-border bg-surface hover:bg-divider/50',
+  ].join(' ')
 }
