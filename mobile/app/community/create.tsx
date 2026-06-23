@@ -83,7 +83,7 @@ export default function CreateCommunityScreen() {
         member_list_visibility:  memberListVisibility,
         max_members:             maxMembers ? Number(maxMembers) : undefined,
       } as any);
-      router.replace({ pathname: `/community/${c.id}`, params: { name: c.name } });
+      router.replace({ pathname: "/community/[id]", params: { id: String(c.id), name: c.name } });
     } catch (e: any) {
       Alert.alert("Error", e?.response?.data?.name?.[0] || "Failed to create community.");
     } finally {

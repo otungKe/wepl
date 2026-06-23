@@ -27,7 +27,7 @@ function ContributionCard({ item }: { item: Contribution }) {
   return (
     <TouchableOpacity
       style={styles.card}
-      onPress={() => router.push({ pathname: `/contribution/${item.id}` })}
+      onPress={() => router.push({ pathname: "/contribution/[id]", params: { id: String(item.id) } })}
       activeOpacity={0.75}
     >
       {/* Badges row */}
@@ -44,18 +44,6 @@ function ContributionCard({ item }: { item: Contribution }) {
               : 'Open amount'}
           </Text>
         </View>
-        {item.has_welfare_fund && (
-          <View style={[styles.badge, styles.badgeWelfare]}>
-            <Ionicons name="heart-outline" size={11} color="#c0392b" />
-            <Text style={[styles.badgeText, { color: "#c0392b" }]}>Welfare</Text>
-          </View>
-        )}
-        {item.has_shares_fund && (
-          <View style={[styles.badge, styles.badgeShares]}>
-            <Ionicons name="stats-chart-outline" size={11} color={COLORS.accent} />
-            <Text style={[styles.badgeText, { color: COLORS.accent }]}>Shares</Text>
-          </View>
-        )}
       </View>
 
       <Text style={styles.title}>{item.title}</Text>

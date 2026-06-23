@@ -108,7 +108,7 @@ export default function NotificationsScreen() {
 
   async function runAction(
     notifId: number,
-    fn: () => Promise<void>,
+    fn: () => Promise<unknown>,
     successState: ActionState,
   ) {
     setActionStates(p => ({ ...p, [notifId]: "loading" }));

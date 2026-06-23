@@ -186,7 +186,7 @@ export default function CommunitiesScreen() {
             return (
               <TouchableOpacity
                 style={styles.row}
-                onPress={() => router.push({ pathname: `/community/${item.id}`, params: { name: item.name } })}
+                onPress={() => router.push({ pathname: "/community/[id]", params: { id: String(item.id), name: item.name } })}
                 activeOpacity={0.7}
               >
                 <Avatar name={item.name} uri={item.community_photo} size={50} />

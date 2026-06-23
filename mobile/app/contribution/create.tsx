@@ -336,7 +336,7 @@ export default function CreateContributionScreen() {
       // community and visibility must always be consistent.
       // communityId is the source of truth — derive visibility from it.
       const effectiveCommunity   = communityId ?? null;
-      const effectiveVisibility  = effectiveCommunity ? 'closed' : 'open';
+      const effectiveVisibility: 'closed' | 'open' = effectiveCommunity ? 'closed' : 'open';
 
       // Guard: custom % must be a valid 1-100 integer
       let effectiveThreshold = votingThreshold;
@@ -375,7 +375,7 @@ export default function CreateContributionScreen() {
       };
       const c = await createContribution(payload);
       await AsyncStorage.removeItem(DRAFT_KEY); // clear draft on success
-      router.replace({ pathname: `/contribution/${c.id}` });
+      router.replace({ pathname: "/contribution/[id]", params: { id: String(c.id) } });
     } catch (e: any) {
       const err =
         e?.response?.data?.error ||
@@ -669,14 +669,16 @@ export default function CreateContributionScreen() {
                   <Text style={styles.muted}>No community members found.</Text>
                 ) : (
                   members.map((m) => {
-                    const selected = selectedPhones.has(m.phone_number);
+                    const phone = m.phone_number;
+                    if (!phone) return null;
+                    const selected = selectedPhones.has(phone);
                     return (
                       <TouchableOpacity
                         key={m.id}
                         style={[styles.memberRow, selected && styles.memberRowActive]}
-                        onPress={() => togglePhone(m.phone_number)}
+                        onPress={() => togglePhone(phone)}
                       >
-                        <Avatar name={m.name || m.phone_number} size={36} />
+                        <Avatar name={m.name || phone} size={36} />
                         <View style={{ flex: 1, marginLeft: 12 }}>
                           <Text style={styles.memberName}>{m.name || m.phone_number}</Text>
                           <Text style={styles.memberPhone}>{m.phone_number}</Text>

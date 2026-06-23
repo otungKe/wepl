@@ -68,7 +68,7 @@ export default function JoinRequestsScreen() {
           renderItem={({ item }) => (
             <TouchableOpacity
               style={s.row}
-              onPress={() => router.push({ pathname: `/community/${item.community_id}` })}
+              onPress={() => router.push({ pathname: "/community/[id]", params: { id: String(item.community_id) } })}
               activeOpacity={0.7}
             >
               <Avatar name={item.community_name} uri={item.community_photo} size={48} />

@@ -1178,12 +1178,6 @@ const s = StyleSheet.create({
   dobModalCancel: { fontSize: FONTS.md, color: COLORS.textSecondary },
   dobModalDone:   { fontSize: FONTS.md, fontWeight: "700", color: COLORS.primary },
 
-  photoBox: {
-    borderWidth: 1.5, borderColor: COLORS.border, borderRadius: RADIUS.md,
-    height: 160, justifyContent: "center", alignItems: "center",
-    backgroundColor: COLORS.white, overflow: "hidden",
-  },
-  photoPreview: { width: "100%", height: "100%" },
   photoPrompt:  { fontSize: FONTS.md, color: COLORS.textMuted },
 
   dropdown: {

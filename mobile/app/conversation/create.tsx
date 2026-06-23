@@ -31,8 +31,8 @@ export default function CreateConversationScreen() {
     try {
       const c = await createConversation(Number(communityId), { topic: topic.trim() });
       router.replace({
-        pathname: `/conversation/${c.id}`,
-        params: { topic: c.topic, communityId },
+        pathname: "/conversation/[id]",
+        params: { id: String(c.id), topic: c.topic, communityId },
       });
     } catch (e: any) {
       Alert.alert("Error", e?.response?.data?.error || "Failed to create conversation.");

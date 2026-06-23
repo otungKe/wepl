@@ -67,11 +67,11 @@ export default function NotificationsScreen() {
     }
 
     if (n.conversation_id) {
-      router.push({ pathname: `/conversation/${n.conversation_id}` });
+      router.push({ pathname: "/conversation/[id]", params: { id: String(n.conversation_id) } });
     } else if (n.contribution_id) {
-      router.push({ pathname: `/contribution/${n.contribution_id}` });
+      router.push({ pathname: "/contribution/[id]", params: { id: String(n.contribution_id) } });
     } else if (n.community_id) {
-      router.push({ pathname: `/community/${n.community_id}` });
+      router.push({ pathname: "/community/[id]", params: { id: String(n.community_id) } });
     }
   };
 

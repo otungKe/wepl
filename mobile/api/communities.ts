@@ -28,6 +28,7 @@ export type Community = {
   contribution_permission: ContributionPermission;
   member_list_visibility:  MemberListVisibility;
   max_members:             number | null;
+  cooling_off_days:        number;
 };
 
 export type CommunityMember = {

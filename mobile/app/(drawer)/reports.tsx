@@ -288,7 +288,7 @@ export default function ReportsScreen() {
                   <TouchableOpacity
                     key={c.id}
                     style={styles.contribCard}
-                    onPress={() => router.push({ pathname: `/contribution/${c.id}` })}
+                    onPress={() => router.push({ pathname: "/contribution/[id]", params: { id: String(c.id) } })}
                     activeOpacity={0.75}
                   >
                     <View style={styles.contribHeader}>

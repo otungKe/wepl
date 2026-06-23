@@ -1099,8 +1099,8 @@ export default function ContributionDetailScreen() {
               <TouchableOpacity
                 style={styles.joinRequestEntry}
                 onPress={() => router.push({
-                  pathname: `/contribution/${contributionId}/join-requests`,
-                  params: { title: contribution.title },
+                  pathname: "/contribution/[id]/join-requests",
+                  params: { id: String(contributionId), title: contribution.title },
                 })}
                 activeOpacity={0.75}
               >
@@ -1146,7 +1146,7 @@ export default function ContributionDetailScreen() {
                             reached && { backgroundColor: COLORS.success },
                           ]} />
                         </View>
-                        <Text style={[styles.progressLabel, reached && { color: COLORS.success }]}>
+                        <Text style={[styles.progressBarLabel, reached && { color: COLORS.success }]}>
                           {reached
                             ? `✓ Goal reached — KES ${Number(p.balance).toLocaleString()}`
                             : `KES ${Number(p.balance).toLocaleString()} of KES ${Number(memberTarget).toLocaleString()} (${pct.toFixed(0)}%)`}
@@ -1883,7 +1883,7 @@ const styles = StyleSheet.create({
     height: "100%" as any, backgroundColor: COLORS.primary,
     borderRadius: 3,
   },
-  progressLabel: {
+  progressBarLabel: {
     fontSize: 11, color: COLORS.textSecondary, fontWeight: "500",
   },
 

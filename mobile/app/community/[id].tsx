@@ -513,7 +513,7 @@ export default function CommunityDetailScreen() {
                     <TouchableOpacity
                       key={c.id}
                       style={reportStyles.poolCard}
-                      onPress={() => router.push({ pathname: `/contribution/${c.id}` })}
+                      onPress={() => router.push({ pathname: "/contribution/[id]", params: { id: String(c.id) } })}
                     >
                       <View style={reportStyles.poolHead}>
                         <Text style={reportStyles.poolName}>{c.title}</Text>
@@ -553,7 +553,7 @@ export default function CommunityDetailScreen() {
                   <TouchableOpacity
                     key={c.id}
                     style={[reportStyles.poolCard, { opacity: 0.6 }]}
-                    onPress={() => router.push({ pathname: `/contribution/${c.id}` })}
+                    onPress={() => router.push({ pathname: "/contribution/[id]", params: { id: String(c.id) } })}
                   >
                     <View style={reportStyles.poolHead}>
                       <Text style={reportStyles.poolName}>{c.title}</Text>
@@ -716,7 +716,7 @@ export default function CommunityDetailScreen() {
               return (
                 <TouchableOpacity
                   style={styles.row}
-                  onPress={() => router.push({ pathname: `/conversation/${c.id}`, params: { topic: c.topic, communityId: String(communityId), createdBy: c.created_by, myRole } })}
+                  onPress={() => router.push({ pathname: "/conversation/[id]", params: { id: String(c.id), topic: c.topic, communityId: String(communityId), createdBy: c.created_by, myRole } })}
                 >
                   <Avatar name={c.topic} uri={c.photo} size={48} />
                   <View style={{ flex: 1 }}>
@@ -741,7 +741,7 @@ export default function CommunityDetailScreen() {
             const tgt = x.target_amount ? Number(x.target_amount) : 0;
             const pct = tgt > 0 ? Math.min((cur / tgt) * 100, 100) : 0;
             return (
-              <TouchableOpacity style={styles.contribCard} onPress={() => router.push({ pathname: `/contribution/${x.id}` })}>
+              <TouchableOpacity style={styles.contribCard} onPress={() => router.push({ pathname: "/contribution/[id]", params: { id: String(x.id) } })}>
                 <Text style={styles.contribTitle}>{x.title}</Text>
                 <Text style={styles.contribAmount}>KES {cur.toLocaleString()} {tgt > 0 ? `/ ${tgt.toLocaleString()}` : ""}</Text>
                 {tgt > 0 && (
@@ -753,11 +753,20 @@ export default function CommunityDetailScreen() {
             );
           }}
           ListEmptyComponent={
-            <Text style={styles.emptyText}>
-              {tab === "members" ? "No members yet" :
-               tab === "conversations" ? "No discussions yet" :
-               "No pools yet"}
-            </Text>
+            <View style={styles.emptyState}>
+              <Ionicons
+                name={tab === "members" ? "people-outline" : tab === "conversations" ? "chatbubbles-outline" : "wallet-outline"}
+                size={52} color={COLORS.border}
+              />
+              <Text style={styles.emptyTitle}>
+                {tab === "members" ? "No members yet" : tab === "conversations" ? "No discussions yet" : "No pools yet"}
+              </Text>
+              <Text style={styles.emptyHint}>
+                {tab === "members" ? "Invite people to grow this community."
+                  : tab === "conversations" ? "Start a topic to chat with members."
+                  : "Create a savings pool to get started."}
+              </Text>
+            </View>
           }
           ItemSeparatorComponent={() =>
             tab === "contributions" ? <View style={{ height: 10 }} /> : <View style={styles.divider} />
@@ -777,7 +786,7 @@ export default function CommunityDetailScreen() {
           <FAB onPress={() => router.push({ pathname: `/conversation/create`, params: { communityId: String(communityId) } })} />
         )}
         {tab === "members" && isAdmin && (
-          <FAB onPress={() => router.push({ pathname: `/community/${communityId}/add-members` })} />
+          <FAB onPress={handleShare} />
         )}
       </SafeAreaView>
     );
@@ -928,9 +937,6 @@ export default function CommunityDetailScreen() {
                   {selectedMember?.phone_number === community?.created_by ? "Owner" : selectedMember?.role}
                 </Text>
               </View>
-              <Text style={styles.memberJoined}>
-                Joined {selectedMember?.joined_at ? new Date(selectedMember.joined_at).toLocaleDateString([], { month: "long", year: "numeric" }) : ""}
-              </Text>
             </View>
 
             {/* Admin actions — only visible to creator, not on themselves */}
@@ -986,10 +992,10 @@ export default function CommunityDetailScreen() {
 
       <FlatList
         data={
+          tab === "overview"      ? [] : // overview renders entirely inside ListHeaderComponent
           tab === "members"       ? members       :
           tab === "conversations" ? conversations :
-          tab === "contributions" ? contributions :
-          [] // overview renders entirely inside ListHeaderComponent
+          contributions
         }
         keyExtractor={(item: any) => String(item.id)}
         refreshControl={
@@ -1109,7 +1115,7 @@ export default function CommunityDetailScreen() {
                     {community?.has_welfare_fund && (
                       <TouchableOpacity
                         style={overviewStyles.quickBtn}
-                        onPress={() => router.push({ pathname: `/welfare/${communityId}`, params: { name: community?.name, isAdmin: isAdmin ? "1" : "0" } })}
+                        onPress={() => router.push({ pathname: "/welfare/[communityId]", params: { communityId: String(communityId), name: community?.name, isAdmin: isAdmin ? "1" : "0" } })}
                       >
                         <View style={[overviewStyles.quickIcon, { backgroundColor: COLORS.error + "18" }]}>
                           <Ionicons name="heart-outline" size={20} color={COLORS.error} />
@@ -1121,7 +1127,7 @@ export default function CommunityDetailScreen() {
                     {community?.has_shares_fund && (
                       <TouchableOpacity
                         style={overviewStyles.quickBtn}
-                        onPress={() => router.push({ pathname: `/shares/${communityId}`, params: { name: community?.name } })}
+                        onPress={() => router.push({ pathname: "/shares/[communityId]", params: { communityId: String(communityId), name: community?.name } })}
                       >
                         <View style={[overviewStyles.quickIcon, { backgroundColor: COLORS.primary + "18" }]}>
                           <Ionicons name="bar-chart-outline" size={20} color={COLORS.primary} />
@@ -1132,7 +1138,7 @@ export default function CommunityDetailScreen() {
 
                     <TouchableOpacity
                       style={overviewStyles.quickBtn}
-                      onPress={() => router.push({ pathname: `/community/${communityId}/add-members` })}
+                      onPress={handleShare}
                     >
                       <View style={[overviewStyles.quickIcon, { backgroundColor: COLORS.accent + "18" }]}>
                         <Ionicons name="person-add-outline" size={20} color={COLORS.accent} />
@@ -1160,7 +1166,7 @@ export default function CommunityDetailScreen() {
                           <TouchableOpacity
                             key={c.id}
                             style={overviewStyles.poolCard}
-                            onPress={() => router.push({ pathname: `/contribution/${c.id}` })}
+                            onPress={() => router.push({ pathname: "/contribution/[id]", params: { id: String(c.id) } })}
                           >
                             <View style={{ flex: 1 }}>
                               <Text style={overviewStyles.poolTitle}>{c.title}</Text>
@@ -1214,7 +1220,7 @@ export default function CommunityDetailScreen() {
                           <TouchableOpacity
                             key={c.id}
                             style={overviewStyles.convRow}
-                            onPress={() => router.push({ pathname: `/conversation/${c.id}`, params: { topic: c.topic, communityId: String(communityId), createdBy: c.created_by, myRole } })}
+                            onPress={() => router.push({ pathname: "/conversation/[id]", params: { id: String(c.id), topic: c.topic, communityId: String(communityId), createdBy: c.created_by, myRole } })}
                           >
                             <Avatar name={c.topic} uri={c.photo} size={40} />
                             <View style={{ flex: 1, marginLeft: 12 }}>
@@ -1252,7 +1258,7 @@ export default function CommunityDetailScreen() {
                           >
                             <Avatar name={m.name} uri={m.profile_photo} size={46} />
                             <Text style={overviewStyles.memberAvatarName} numberOfLines={1}>
-                              {m.name?.split(" ")[0] ?? m.phone_number.slice(-4)}
+                              {m.name?.split(" ")[0] ?? m.phone_number?.slice(-4) ?? ""}
                             </Text>
                           </TouchableOpacity>
                         ))}
@@ -1278,6 +1284,7 @@ export default function CommunityDetailScreen() {
           </>
         }
         renderItem={({ item }) => {
+          if (tab === "overview") return null;
           if (tab === "members") {
             const m = item as CommunityMember;
             const isOwnerRow = m.phone_number === community?.created_by;
@@ -1323,8 +1330,8 @@ export default function CommunityDetailScreen() {
                 style={styles.row}
                 onPress={() =>
                   router.push({
-                    pathname: `/conversation/${c.id}`,
-                    params: { topic: c.topic, communityId: String(communityId), createdBy: c.created_by, myRole },
+                    pathname: "/conversation/[id]",
+                    params: { id: String(c.id), topic: c.topic, communityId: String(communityId), createdBy: c.created_by, myRole },
                   })
                 }
               >
@@ -1357,7 +1364,7 @@ export default function CommunityDetailScreen() {
           return (
             <TouchableOpacity
               style={styles.contribCard}
-              onPress={() => router.push({ pathname: `/contribution/${x.id}` })}
+              onPress={() => router.push({ pathname: "/contribution/[id]", params: { id: String(x.id) } })}
             >
               <Text style={styles.contribTitle}>{x.title}</Text>
               <Text style={styles.contribAmount}>
@@ -1373,13 +1380,23 @@ export default function CommunityDetailScreen() {
         }}
         ListEmptyComponent={
           tab === "overview" ? null :
-          <Text style={styles.emptyText}>
-            {tab === "members" ? "No members yet" :
-             tab === "conversations" ? "No discussions yet" :
-             "No contributions yet"}
-          </Text>
+          <View style={styles.emptyState}>
+            <Ionicons
+              name={tab === "members" ? "people-outline" : tab === "conversations" ? "chatbubbles-outline" : "wallet-outline"}
+              size={52} color={COLORS.border}
+            />
+            <Text style={styles.emptyTitle}>
+              {tab === "members" ? "No members yet" : tab === "conversations" ? "No discussions yet" : "No contributions yet"}
+            </Text>
+            <Text style={styles.emptyHint}>
+              {tab === "members" ? "Invite people to grow this community."
+                : tab === "conversations" ? "Start a topic to chat with members."
+                : "Create a savings pool to get started."}
+            </Text>
+          </View>
         }
         ItemSeparatorComponent={() =>
+          tab === "overview"      ? <View style={styles.divider} /> :
           tab === "contributions" ? <View style={{ height: 10 }} /> : <View style={styles.divider} />
         }
       />
@@ -1699,6 +1716,24 @@ const styles = StyleSheet.create({
     color: COLORS.textMuted,
     paddingVertical: 32,
     fontSize: FONTS.sm,
+  },
+  emptyState: {
+    alignItems: "center",
+    justifyContent: "center",
+    paddingVertical: 64,
+    paddingHorizontal: 32,
+    gap: 8,
+  },
+  emptyTitle: {
+    fontSize: FONTS.md,
+    fontWeight: "700",
+    color: COLORS.text,
+    textAlign: "center",
+  },
+  emptyHint: {
+    fontSize: FONTS.sm,
+    color: COLORS.textMuted,
+    textAlign: "center",
   },
 
   // Member profile sheet
