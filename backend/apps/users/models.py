@@ -210,3 +210,45 @@ class PrivacyPreferences(models.Model):
 
     def __str__(self):
         return f"Privacy({self.user.phone_number})"
+
+
+# ─────────────────────────────────────────────────────────────
+# USER SESSION (device/session registry — ADR-0010)
+# ─────────────────────────────────────────────────────────────
+
+class UserSession(models.Model):
+    """One row per active login, keyed by a ``sid`` UUID embedded in the JWT.
+
+    The ``sid`` survives refresh-token rotation (SimpleJWT copies non-reserved
+    claims), so a single row represents the whole rotation chain of one login.
+    Setting ``revoked_at`` kills the session: both the authentication class and
+    the refresh view reject any token whose ``sid`` points here.
+    """
+    import uuid as _uuid
+
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="sessions",
+    )
+    sid = models.UUIDField(default=_uuid.uuid4, editable=False, unique=True, db_index=True)
+
+    device_label = models.CharField(max_length=120, blank=True, default="")
+    user_agent   = models.CharField(max_length=400, blank=True, default="")
+    ip_address   = models.GenericIPAddressField(null=True, blank=True)
+
+    created_at   = models.DateTimeField(auto_now_add=True)
+    last_seen_at = models.DateTimeField(auto_now_add=True)
+    revoked_at   = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        indexes = [
+            models.Index(fields=["user", "revoked_at"], name="usersession_user_active_idx"),
+        ]
+        ordering = ["-last_seen_at"]
+
+    def __str__(self):
+        state = "revoked" if self.revoked_at else "active"
+        return f"Session({self.user_id}, {self.device_label or 'device'}, {state})"
+
+    @property
+    def is_active(self) -> bool:
+        return self.revoked_at is None

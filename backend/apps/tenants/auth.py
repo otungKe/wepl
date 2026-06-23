@@ -9,13 +9,15 @@ they work across tenants (e.g. the staff reports API with ?tenant_id=), and the
 Django admin must stay platform-wide. Regular members are pinned to their tenant,
 so RLS restricts their connection to their own rows.
 """
-from rest_framework_simplejwt.authentication import JWTAuthentication
+from apps.users.auth import SessionJWTAuthentication
 
 from .resolve import tenant_for_user
 from .rls import set_current_tenant
 
 
-class TenantJWTAuthentication(JWTAuthentication):
+class TenantJWTAuthentication(SessionJWTAuthentication):
+    """Session-aware JWT (ADR-0010) + per-request RLS tenant pinning (P6-04)."""
+
     def authenticate(self, request):
         result = super().authenticate(request)
         if result is not None:
