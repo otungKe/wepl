@@ -1,11 +1,15 @@
 from django.urls import path
-from rest_framework_simplejwt.views import TokenRefreshView
+from .token_views import SessionTokenRefreshView
 from .views import (
     RequestOTPView,
     VerifyOTPView,
     SetPINView,
     ResetPINView,
     PINLoginView,
+    LogoutView,
+    SessionListView,
+    SessionRevokeView,
+    SessionRevokeOthersView,
     ProtectedView,
     UserProfileView,
     KYCView,
@@ -21,11 +25,11 @@ from .views import (
 urlpatterns = [
     # TOKEN REFRESH
     # The mobile client (api/client.ts) refreshes its 60-minute access token here
-    # when it expires. SimpleJWT's TokenRefreshView copies all non-reserved claims
-    # onto the new access token, so the custom `stage` claim minted by issue_tokens
-    # survives the refresh. ROTATE_REFRESH_TOKENS + BLACKLIST_AFTER_ROTATION are on,
-    # so a rotated refresh token is returned and the old one is blacklisted.
-    path('token/refresh/', TokenRefreshView.as_view()),
+    # when it expires. SimpleJWT copies all non-reserved claims onto the new token,
+    # so the custom `stage` and `sid` claims survive the refresh. ROTATE_REFRESH_TOKENS
+    # + BLACKLIST_AFTER_ROTATION are on, and the session-aware view (ADR-0010) also
+    # refuses to refresh a revoked session.
+    path('token/refresh/', SessionTokenRefreshView.as_view()),
 
     # OTP FLOW
     path('otp/request/', RequestOTPView.as_view()),
@@ -35,6 +39,12 @@ urlpatterns = [
     path('pin/set/',   SetPINView.as_view()),    # new users only
     path('pin/reset/', ResetPINView.as_view()),  # OTP-authenticated recovery
     path('pin/login/', PINLoginView.as_view()),  # normal login
+
+    # SESSION MANAGEMENT (ADR-0010)
+    path('logout/',                   LogoutView.as_view()),
+    path('sessions/',                 SessionListView.as_view()),
+    path('sessions/revoke-others/',   SessionRevokeOthersView.as_view()),
+    path('sessions/<uuid:sid>/revoke/', SessionRevokeView.as_view()),
 
     # PROFILE
     path('profile/',           UserProfileView.as_view()),

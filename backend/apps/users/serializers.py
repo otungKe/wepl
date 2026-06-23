@@ -2,7 +2,7 @@ import re
 from datetime import date
 
 from rest_framework import serializers
-from .models import User, KYCProfile
+from .models import User, KYCProfile, UserSession
 
 
 # ─────────────────────────────────────────────────────────────
@@ -244,3 +244,24 @@ class KYCStatusSerializer(serializers.ModelSerializer):
 
     def get_income_sources(self, obj):
         return [{'value': v, 'label': l} for v, l in KYCProfile.SOURCE_CHOICES]
+
+
+# ─────────────────────────────────────────────────────────────
+# USER SESSION (device/session registry — ADR-0010)
+# ─────────────────────────────────────────────────────────────
+
+class UserSessionSerializer(serializers.ModelSerializer):
+    """Serialize a session for the 'where am I logged in' screen. Flags the
+    session that the requesting token belongs to via context['current_sid']."""
+
+    is_current = serializers.SerializerMethodField()
+
+    class Meta:
+        model = UserSession
+        fields = (
+            "sid", "device_label", "ip_address",
+            "created_at", "last_seen_at", "is_current",
+        )
+
+    def get_is_current(self, obj) -> bool:
+        return str(obj.sid) == self.context.get("current_sid")

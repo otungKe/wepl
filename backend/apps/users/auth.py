@@ -15,7 +15,9 @@ disbursement or M-Pesa endpoints. The two PIN endpoints opt into the narrower
 """
 import logging
 
+from rest_framework.exceptions import AuthenticationFailed
 from rest_framework.permissions import BasePermission
+from rest_framework_simplejwt.authentication import JWTAuthentication
 from rest_framework_simplejwt.tokens import RefreshToken
 
 logger = logging.getLogger(__name__)
@@ -29,15 +31,24 @@ STAGE_ACTIVE       = "active"
 STAGE_CLAIM = "stage"
 
 
-def issue_tokens(user, stage: str) -> dict:
+def issue_tokens(user, stage: str, request=None) -> dict:
     """
     Mint a refresh/access pair tagged with the given auth stage.
     Returns a dict ready to merge into a Response body::
 
-        return Response({"message": "OK", **issue_tokens(user, STAGE_ACTIVE)})
+        return Response({"message": "OK", **issue_tokens(user, STAGE_ACTIVE, request)})
+
+    For ``active`` sessions a ``UserSession`` is registered and its ``sid`` is
+    embedded in the token (ADR-0010), so the login can later be listed/revoked.
+    The ``sid`` survives refresh-token rotation because SimpleJWT copies
+    non-reserved claims. Intermediate (OTP-stage) tokens get no session.
     """
     refresh = RefreshToken.for_user(user)
     refresh[STAGE_CLAIM] = stage
+    if stage == STAGE_ACTIVE:
+        from .sessions import SID_CLAIM, create_session
+        session = create_session(user, request)
+        refresh[SID_CLAIM] = str(session.sid)
     logger.debug("Issued %s token for user %s", stage, user.phone_number)
     return {
         "access":  str(refresh.access_token),
@@ -91,3 +102,32 @@ class StageRequired(BasePermission):
             return False
         allowed = getattr(view, "required_stages", set())
         return _token_stage(request) in allowed
+
+
+# ── Authentication ───────────────────────────────────────────────────────────
+
+class SessionJWTAuthentication(JWTAuthentication):
+    """JWT auth that enforces the ADR-0010 session registry.
+
+    After SimpleJWT validates the token, any token carrying a ``sid`` claim must
+    map to a non-revoked ``UserSession`` — otherwise it is rejected even though
+    the JWT signature/expiry are still valid. This makes revocation effective for
+    *access* tokens (which SimpleJWT never blacklists), not just refresh tokens.
+
+    Tokens without a ``sid`` (intermediate OTP-stage tokens, and any token minted
+    before this feature shipped) are passed through unchanged.
+    """
+
+    def authenticate(self, request):
+        result = super().authenticate(request)
+        if result is None:
+            return None
+        user, token = result
+        from .sessions import SID_CLAIM, active_session, touch
+        sid = token.payload.get(SID_CLAIM)
+        if sid:
+            session = active_session(sid)
+            if session is None:
+                raise AuthenticationFailed("This session has been revoked. Please sign in again.")
+            touch(session)
+        return user, token
