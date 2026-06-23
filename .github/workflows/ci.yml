@@ -85,8 +85,8 @@ jobs:
       - name: Apply migrations
         run: python manage.py migrate --noinput
 
-      - name: Run test suite (with coverage on the ledger)
-        run: coverage run --source=apps.ledger manage.py test --noinput -v2
+      - name: Run test suite (with coverage)
+        run: coverage run --source=apps manage.py test --noinput -v2
 
       # Gate the double-entry posting engine. The threshold ratchets up as Phase 0
       # removes legacy code (writer/queries/tasks) and rewrites money paths onto
@@ -95,6 +95,15 @@ jobs:
         run: >-
           coverage report
           --include="apps/ledger/posting.py,apps/ledger/balances.py,apps/ledger/coa.py,apps/ledger/money.py,apps/ledger/posting_map.py"
+          --fail-under=90
+
+      # Gate the authorization policy layer (ADR-0009), session/token revocation
+      # (ADR-0010) and tenant-isolation seams (ADR-0008). These are small,
+      # security-critical modules; like the ledger core they must stay well-tested.
+      - name: Enforce authz / session / isolation coverage (>=90%)
+        run: >-
+          coverage report
+          --include="apps/core/policy.py,apps/communities/policies.py,apps/contributions/policies.py,apps/conversations/policies.py,apps/conversations/groups.py,apps/users/sessions.py,apps/users/token_views.py,apps/tenants/celery_hooks.py,apps/tenants/guards.py"
           --fail-under=90
 
       - name: Full coverage report (informational)

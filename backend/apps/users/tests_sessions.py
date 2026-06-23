@@ -73,6 +73,25 @@ class RevocationTests(TestCase):
         r = APIClient().post("/api/users/token/refresh/", {"refresh": self.tokens["refresh"]}, format="json")
         self.assertEqual(r.status_code, 401)
 
+    def test_revoke_all_for_user_revokes_and_blacklists(self):
+        from rest_framework_simplejwt.token_blacklist.models import OutstandingToken
+        from .sessions import revoke_all_for_user
+
+        # a second login → two active sessions, plus an outstanding refresh token
+        second = issue_tokens(self.user, STAGE_ACTIVE)
+        RefreshToken(second["refresh"])  # ensure the token is materialised
+        OutstandingToken.objects.create(
+            user=self.user, jti="jti-x", token=second["refresh"],
+            created_at=timezone.now(), expires_at=timezone.now() + timezone.timedelta(days=7),
+        )
+
+        n = revoke_all_for_user(self.user)
+
+        self.assertEqual(n, 2)
+        self.assertEqual(
+            UserSession.objects.filter(user=self.user, revoked_at__isnull=True).count(), 0)
+
+
 
 class LogoutApiTests(TestCase):
 
