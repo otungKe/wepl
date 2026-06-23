@@ -333,6 +333,72 @@ class CommunityService:
         )
         return membership
 
+    @staticmethod
+    @transaction.atomic
+    def transfer_ownership(creator, community, membership_id):
+        """Transfer community ownership to another active member (ADR-0011).
+
+        Only the current owner may transfer (policy: community.ownership.transfer;
+        platform operators may also act, to recover an orphaned community whose
+        owner deleted their account). The new owner must be an active member and is
+        promoted to admin; the former owner stays on as an admin, so the community
+        is never left unadministrable.
+        """
+        require(creator, "community.ownership.transfer", community,
+                "Only the community owner can transfer ownership.")
+
+        # Lock the community to serialise concurrent transfers.
+        community = Community.objects.select_for_update().get(pk=community.pk)
+
+        new_membership = (
+            CommunityMembership.objects
+            .select_for_update()
+            .filter(id=membership_id, community=community, is_active=True)
+            .first()
+        )
+        if not new_membership:
+            raise ValidationError("The new owner must be an active member of this community.")
+        if new_membership.user_id == community.created_by_id:
+            raise ValidationError("This member is already the community owner.")
+
+        old_owner_id = community.created_by_id
+        new_owner = new_membership.user
+
+        community.created_by = new_owner
+        community.save(update_fields=["created_by"])
+
+        # New owner must hold admin authority.
+        if new_membership.role != Role.ADMIN:
+            new_membership.role = Role.ADMIN
+            new_membership.save(update_fields=["role"])
+
+        # Keep the former owner as an admin member (if they still have one) so the
+        # transfer never reduces the admin count — no last-admin lockout.
+        former = community.memberships.filter(user_id=old_owner_id, is_active=True).first()
+        if former and former.role != Role.ADMIN:
+            former.role = Role.ADMIN
+            former.save(update_fields=["role"])
+
+        logger.info(
+            "Ownership of '%s' (id=%s) transferred %s → %s (by %s)",
+            community.name, community.id, old_owner_id, new_owner.id, _dn(creator),
+        )
+        ActivityService.log_activity(
+            user=creator,
+            activity_type="community_ownership_transferred",
+            message=f"{_dn(creator)} transferred ownership of '{community.name}' to {_dn(new_owner)}",
+        )
+        from apps.notifications.services import NotificationService
+        NotificationService.create(
+            user=new_owner,
+            community_id=community.id,
+            notification_type="community_ownership",
+            title=f"You're now the owner of {community.name}",
+            message=f"{_dn(creator)} transferred ownership of {community.name} to you.",
+        )
+        return community
+
+
     # ── Join request actions ───────────────────────────────────────────────────
 
     @staticmethod

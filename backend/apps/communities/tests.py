@@ -208,6 +208,83 @@ class CommunityTenantIsolationTests(TestCase):
         finally:
             clear_current_tenant()
 
+
+class OwnershipTransferTests(TestCase):
+    """ADR-0011 — ownership transfer + the last-admin/ownership invariants."""
+
+    def setUp(self):
+        self.owner   = make_user("254700000001")
+        self.admin   = make_user("254700000002")
+        self.member  = make_user("254700000003")
+        self.c = CommunityService.create_community(self.owner, {"name": "Chama"})
+        self.m_admin  = CommunityMembership.objects.create(
+            user=self.admin, community=self.c, role=Role.ADMIN)
+        self.m_member = CommunityMembership.objects.create(
+            user=self.member, community=self.c, role=Role.MEMBER)
+
+    def test_only_owner_may_transfer(self):
+        with self.assertRaises(PermissionDenied):
+            CommunityService.transfer_ownership(self.admin, self.c, self.m_member.id)
+
+    def test_cannot_transfer_to_non_member(self):
+        outsider = make_user("254700000004")
+        m = CommunityMembership.objects.create(
+            user=outsider, community=self.c, role=Role.MEMBER, is_active=False)
+        with self.assertRaises(ValidationError):
+            CommunityService.transfer_ownership(self.owner, self.c, m.id)
+
+    def test_cannot_transfer_to_self(self):
+        own = self.c.memberships.get(user=self.owner)
+        with self.assertRaises(ValidationError):
+            CommunityService.transfer_ownership(self.owner, self.c, own.id)
+
+    def test_successful_transfer_promotes_and_keeps_former_owner_admin(self):
+        CommunityService.transfer_ownership(self.owner, self.c, self.m_member.id)
+        self.c.refresh_from_db()
+        # ownership moved
+        self.assertEqual(self.c.created_by_id, self.member.id)
+        # new owner is an admin
+        self.m_member.refresh_from_db()
+        self.assertEqual(self.m_member.role, Role.ADMIN)
+        # former owner stays an admin → never below one admin
+        former = self.c.memberships.get(user=self.owner)
+        self.assertEqual(former.role, Role.ADMIN)
+        self.assertGreaterEqual(self.c.active_admin_count(), 1)
+
+    def test_capabilities_follow_ownership(self):
+        # before: only the owner can delete
+        self.assertTrue(can(self.owner, "community.delete", self.c))
+        self.assertFalse(can(self.member, "community.delete", self.c))
+        CommunityService.transfer_ownership(self.owner, self.c, self.m_member.id)
+        self.c.refresh_from_db()
+        # after: the new owner holds creator-only capabilities, the old owner does not
+        self.assertTrue(can(self.member, "community.delete", self.c))
+        self.assertFalse(can(self.owner, "community.delete", self.c))
+
+    def test_transfer_via_api(self):
+        r = active_client(self.owner).post(
+            f"/api/communities/{self.c.id}/transfer-ownership/",
+            {"membership_id": self.m_admin.id}, format="json")
+        self.assertEqual(r.status_code, 200)
+        self.c.refresh_from_db()
+        self.assertEqual(self.c.created_by_id, self.admin.id)
+
+    def test_non_owner_transfer_via_api_is_forbidden(self):
+        r = active_client(self.admin).post(
+            f"/api/communities/{self.c.id}/transfer-ownership/",
+            {"membership_id": self.m_member.id}, format="json")
+        self.assertEqual(r.status_code, 403)
+
+    def test_superuser_can_transfer_to_recover_orphan(self):
+        operator = make_user("254700009999")
+        operator.is_superuser = True
+        operator.is_staff = True
+        operator.save(update_fields=["is_superuser", "is_staff"])
+        # operator is not a member, but may reassign ownership (orphan recovery)
+        CommunityService.transfer_ownership(operator, self.c, self.m_admin.id)
+        self.c.refresh_from_db()
+        self.assertEqual(self.c.created_by_id, self.admin.id)
+
     def test_no_pinned_tenant_is_unrestricted(self):
         # Staff/system contexts (no tenant pinned) operate across tenants.
         from apps.tenants.models import Tenant

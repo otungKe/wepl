@@ -316,6 +316,23 @@ class RemoveMemberView(APIView):
         return Response(status=status.HTTP_204_NO_CONTENT)
 
 
+class TransferOwnershipView(APIView):
+    """POST /communities/<community_id>/transfer-ownership/  body: {membership_id}
+
+    Hand the community to another active member (ADR-0011)."""
+    permission_classes = [IsActiveSession]
+
+    def post(self, request, community_id):
+        community = get_object_or_404(Community, id=community_id)
+        membership_id = request.data.get("membership_id")
+        if not membership_id:
+            raise ValidationError("membership_id is required.")
+        community = CommunityService.transfer_ownership(
+            request.user, community, membership_id,
+        )
+        return Response(CommunitySerializer(community, context=_ctx(request)).data)
+
+
 # ── Invite code ────────────────────────────────────────────────────────────────
 
 class CommunityByInviteView(APIView):
