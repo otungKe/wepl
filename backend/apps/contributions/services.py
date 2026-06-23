@@ -22,6 +22,7 @@ from django.db import transaction
 from django.db.models import F
 from django.core.exceptions import ValidationError, PermissionDenied
 
+from apps.audit.services import AuditService
 from apps.core.policy import require
 from django.utils import timezone
 
@@ -823,6 +824,11 @@ class WelfareService:
                 "Only community admins can approve welfare claims.")
 
         WelfareService._disburse(claim)
+        AuditService.log(
+            "welfare.claim_approved", actor=admin_user, target=claim,
+            tenant=getattr(claim.fund.community, "tenant_id", None),
+            metadata={"amount": str(claim.amount_requested), "claimant_id": claim.claimant_id},
+        )
         return WelfareClaim.objects.get(id=claim_id)
 
     @staticmethod
@@ -836,6 +842,11 @@ class WelfareService:
                 "Only community admins can reject welfare claims.")
 
         claim.transition_to('REJECTED')
+        AuditService.log(
+            "welfare.claim_rejected", actor=admin_user, target=claim,
+            tenant=getattr(claim.fund.community, "tenant_id", None),
+            metadata={"amount": str(claim.amount_requested), "claimant_id": claim.claimant_id},
+        )
         _notify(
             user=claim.claimant,
             notification_type='welfare_rejected',
@@ -1060,6 +1071,13 @@ class EmergencyAdvanceService:
 
         advance.transition_to('DISBURSED')
 
+        AuditService.log(
+            "advance.approved", actor=admin_user, target=advance,
+            tenant=getattr(contribution.community, "tenant_id", None),
+            metadata={"amount": str(advance.amount), "borrower_id": advance.borrower_id,
+                      "contribution_id": contribution.id},
+        )
+
         # ── Dispatch B2C via Celery AFTER commit ──────────────────────────────
         ft_id = ft.id
 
@@ -1093,6 +1111,12 @@ class EmergencyAdvanceService:
                 "Only admins/treasurers can reject advances.")
 
         advance.transition_to('REJECTED')
+        AuditService.log(
+            "advance.rejected", actor=admin_user, target=advance,
+            tenant=getattr(contribution.community, "tenant_id", None),
+            metadata={"amount": str(advance.amount), "borrower_id": advance.borrower_id,
+                      "contribution_id": contribution.id},
+        )
         _notify(
             user=advance.borrower,
             notification_type='advance_rejected',

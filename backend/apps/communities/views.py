@@ -9,6 +9,7 @@ from rest_framework.exceptions import PermissionDenied, ValidationError
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from apps.audit.services import AuditService
 from apps.core.policy import can, require
 from apps.users.auth import IsActiveSession
 
@@ -183,6 +184,11 @@ class CommunityUpdateView(APIView):
         serializer.is_valid(raise_exception=True)
         serializer.save()
         logger.info("Community '%s' (id=%s) updated by %s", community.name, community.id, request.user.phone_number)
+        AuditService.log(
+            "community.settings_updated", actor=request.user, target=community,
+            tenant=community.tenant_id, request=request,
+            metadata={"fields": sorted(payload.keys())},
+        )
         return Response(CommunitySerializer(community, context=_ctx(request)).data)
 
 
@@ -194,6 +200,12 @@ class CommunityDeleteView(APIView):
         require(request.user, "community.delete", community,
                 "Only the creator can delete this community.")
         logger.info("Community '%s' (id=%s) deleted by %s", community.name, community.id, request.user.phone_number)
+        # Capture identity before the row is gone.
+        AuditService.log(
+            "community.deleted", actor=request.user, target_type="community",
+            target_id=str(community.id), tenant=community.tenant_id, request=request,
+            metadata={"name": community.name},
+        )
         community.delete()
         return Response(status=status.HTTP_204_NO_CONTENT)
 

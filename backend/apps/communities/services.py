@@ -19,6 +19,7 @@ from django.db import transaction
 from django.utils import timezone
 
 from apps.activity.services import ActivityService
+from apps.audit.services import AuditService
 from apps.core.policy import require
 
 from .models import Community, CommunityJoinRequest, CommunityMembership
@@ -308,6 +309,11 @@ class CommunityService:
             "Role changed for %s in '%s': %s → %s (by %s)",
             _dn(membership.user), community.name, old_role, role, _dn(creator),
         )
+        AuditService.log(
+            "community.role_changed", actor=creator, target=community, tenant=community.tenant_id,
+            metadata={"membership_id": membership.id, "user_id": membership.user_id,
+                      "old_role": old_role, "new_role": role},
+        )
         return membership
 
     @staticmethod
@@ -330,6 +336,10 @@ class CommunityService:
         logger.info(
             "Member removed from '%s': %s (by %s)",
             community.name, _dn(membership.user), _dn(creator),
+        )
+        AuditService.log(
+            "community.member_removed", actor=creator, target=community, tenant=community.tenant_id,
+            metadata={"membership_id": membership.id, "user_id": membership.user_id},
         )
         return membership
 
@@ -382,6 +392,11 @@ class CommunityService:
         logger.info(
             "Ownership of '%s' (id=%s) transferred %s → %s (by %s)",
             community.name, community.id, old_owner_id, new_owner.id, _dn(creator),
+        )
+        AuditService.log(
+            "community.ownership_transferred", actor=creator, target=community,
+            tenant=community.tenant_id,
+            metadata={"from_user_id": old_owner_id, "to_user_id": new_owner.id},
         )
         ActivityService.log_activity(
             user=creator,
