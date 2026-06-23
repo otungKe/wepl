@@ -47,6 +47,9 @@ export default function OtpPage() {
         const profile = await auth.profile()
         useAuthStore.getState().login(data.access, data.refresh, profile.data)
         router.push('/communities')
+      } else if (stage === 'otp_recovery') {
+        // Existing account verifying via OTP — go set a *new* PIN (reset), not create one.
+        router.push('/pin?mode=reset')
       } else {
         router.push('/pin')
       }
