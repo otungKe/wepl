@@ -295,6 +295,7 @@ export interface Notification {
   conversation_id: number | null
   contribution_id: number | null
   join_request_id: number | null
+  join_request_status: 'PENDING' | 'APPROVED' | 'REJECTED' | null
   created_at: string
 }
 
@@ -361,6 +362,12 @@ export const contributions = {
   proposeAmendment: (id: number | string, data: { changes: Record<string, unknown>; reason?: string }) =>
     api.post<ContributionAmendment>(`/contributions/${id}/amendments/`, data),
   voteAmendment: (aid: number, vote: 'APPROVE' | 'REJECT') => api.post(`/contributions/amendments/${aid}/vote/`, { vote }),
+  // Pool join requests (admin review) & invites (invitee response)
+  joinRequests: async (id: number | string) => unwrap<{ id: number; phone_number: string; name: string | null; created_at: string }>((await api.get(`/contributions/${id}/join-requests/`)).data),
+  actionJoinRequest: (reqId: number, action: 'approve' | 'reject') => api.post(`/contributions/join-requests/${reqId}/action/`, { action }),
+  respondInvite: (reqId: number, action: 'accept' | 'decline') => api.post(`/contributions/invitations/${reqId}/respond/`, { action }),
+  // Emergency advances (admin review)
+  actionAdvance: (advanceId: number, action: 'approve' | 'reject', amount?: number) => api.post(`/contributions/advances/${advanceId}/action/`, { action, ...(amount != null ? { amount } : {}) }),
 }
 
 // ─────────────────────────────────────────────────────────────
