@@ -46,16 +46,20 @@ class ConversationConsumer(AsyncWebsocketConsumer):
             await self.close()
             return
 
-        # Record when this token expires so we can close the socket cleanly.
-        # The JWT middleware already validated the token — extract exp from scope.
+        # Record token expiry + session id so we can close the socket cleanly when
+        # the token expires or the session is revoked. The JWT middleware already
+        # validated the token (incl. the session) on connect — extract from scope.
         self._token_exp: int = 0
+        self._sid = None
         qs = parse_qs(self.scope.get("query_string", b"").decode())
         raw_token = (qs.get("token") or [""])[0]
         if raw_token:
             try:
                 from rest_framework_simplejwt.tokens import AccessToken
+                from apps.users.sessions import SID_CLAIM
                 tok = AccessToken(raw_token)
                 self._token_exp = tok.payload.get("exp", 0)
+                self._sid = tok.payload.get(SID_CLAIM)
             except Exception:
                 pass
 
@@ -84,9 +88,17 @@ class ConversationConsumer(AsyncWebsocketConsumer):
 
         # ── Ping / keepalive ──────────────────────────────────────────────────
         # Client sends {"type": "ping"} periodically. We reply with a pong so the
-        # client knows the connection is alive, and we re-validate the token above
-        # on every ping so a stale session is detected quickly.
+        # client knows the connection is alive. We also re-check the session here
+        # (ADR-0010) — a low-frequency heartbeat — so a session revoked while the
+        # socket is open is detected within one ping interval and the socket closed.
         if event_type == "ping":
+            if self._sid and not await self._session_active():
+                await self.send(text_data=json.dumps({
+                    "type":    "session_expired",
+                    "message": "Your session has been revoked. Please sign in again.",
+                }))
+                await self.close(code=4001)
+                return
             await self.send(text_data=json.dumps({"type": "pong"}))
             return
 
@@ -149,6 +161,14 @@ class ConversationConsumer(AsyncWebsocketConsumer):
     # ── Tenant-scoped DB helpers ──────────────────────────────────────────────
     # Wrap writes/reads in tenant_context so RLS applies on the worker thread's
     # connection for the duration of the operation (P6-04 follow-up).
+
+    @staticmethod
+    def _is_session_active(sid) -> bool:
+        from apps.users.sessions import active_session
+        return active_session(sid) is not None
+
+    async def _session_active(self) -> bool:
+        return await sync_to_async(self._is_session_active)(self._sid)
 
     def _create_message(self, **kwargs):
         with tenant_context(self.tenant_id):
