@@ -223,3 +223,49 @@ class SeedAdminRolesTests(TestCase):
         for name in ["KYC Reviewers", "Support", "Finance & Compliance"]:
             group = Group.objects.get(name=name)
             self.assertTrue(group.permissions.exists(), f"{name} has no permissions")
+
+
+class PhoneNormalizationTests(SimpleTestCase):
+    """normalize_phone collapses every Kenyan MSISDN shape to 2547XXXXXXXX."""
+
+    def test_shapes(self):
+        from apps.users.phone import normalize_phone
+        cases = {
+            "0712345678":     "254712345678",
+            "712345678":      "254712345678",
+            "+254712345678":  "254712345678",
+            "254712345678":   "254712345678",
+            "254 712 345 678": "254712345678",
+            "0110123456":     "254110123456",
+            "":               "",
+            None:             "",
+        }
+        for raw, expected in cases.items():
+            self.assertEqual(normalize_phone(raw), expected, f"{raw!r}")
+
+
+class CrossFormatLoginTests(TestCase):
+    """An account is reachable from any client regardless of the phone shape
+    the caller types — the regression behind 'correct phone & PIN rejected'."""
+
+    def setUp(self):
+        self.client = APIClient()
+        # New registrations (and the 0011 backfill) store the canonical shape.
+        self.user = get_user_model().objects.create(phone_number="254712345678")
+        self.user.set_pin("123456")
+
+    def test_login_with_local_format(self):
+        # User types 0712… on one client — must still resolve to the canonical row.
+        r = self.client.post("/api/users/pin/login/",
+                             {"phone_number": "0712345678", "pin": "123456"}, format="json")
+        self.assertEqual(r.status_code, 200, r.data)
+
+    def test_login_with_international_format(self):
+        r = self.client.post("/api/users/pin/login/",
+                             {"phone_number": "254712345678", "pin": "123456"}, format="json")
+        self.assertEqual(r.status_code, 200, r.data)
+
+    def test_login_with_plus_format(self):
+        r = self.client.post("/api/users/pin/login/",
+                             {"phone_number": "+254 712 345 678", "pin": "123456"}, format="json")
+        self.assertEqual(r.status_code, 200, r.data)

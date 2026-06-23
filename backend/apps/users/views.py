@@ -14,6 +14,7 @@ from .auth import (
     IsActiveSession, StageRequired, issue_tokens,
 )
 from .models import KYCProfile, PrivacyPreferences
+from .phone import normalize_phone
 from .serializers import UserSerializer, KYCSubmitSerializer, KYCStatusSerializer
 from .services import UserService, OTPService, PINService
 
@@ -47,7 +48,7 @@ class RequestOTPView(APIView):
 
     def post(self, request):
 
-        phone = request.data.get("phone_number", "").strip()
+        phone = normalize_phone(request.data.get("phone_number", ""))
 
         if not phone:
             return Response(
@@ -75,7 +76,7 @@ class VerifyOTPView(APIView):
 
     def post(self, request):
 
-        phone = request.data.get("phone_number")
+        phone = normalize_phone(request.data.get("phone_number"))
         otp   = request.data.get("otp")
 
         if not phone or not otp:
@@ -207,7 +208,7 @@ class PINLoginView(APIView):
 
     def post(self, request):
 
-        phone = request.data.get("phone_number", "").strip()
+        phone = normalize_phone(request.data.get("phone_number", ""))
         pin   = request.data.get("pin", "").strip()
 
         if not phone or not pin:
