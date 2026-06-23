@@ -24,6 +24,7 @@ whitenoise==6.12.0
 Django==6.0.5
 djangorestframework==3.17.1
 djangorestframework_simplejwt==5.5.1
+drf-spectacular==0.29.0
 hyperlink==21.0.0
 idna==3.13
 Incremental==24.11.0

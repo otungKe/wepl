@@ -4,6 +4,12 @@ from django.http import JsonResponse
 from django.db import connection
 from django.core.cache import cache
 
+from drf_spectacular.views import (
+    SpectacularAPIView,
+    SpectacularRedocView,
+    SpectacularSwaggerView,
+)
+
 
 def health_check(request):
     """Lightweight health endpoint for uptime monitors and container probes."""
@@ -28,14 +34,15 @@ def health_check(request):
 urlpatterns = [
     path('health/', health_check, name='health'),
     path('admin/', admin.site.urls),
-    path('api/users/', include('apps.users.urls')),
-    path('api/communities/', include('apps.communities.urls')),
-    path('api/conversations/', include('apps.conversations.urls')),
-    path('api/contributions/', include('apps.contributions.urls')),
-    path('api/payments/', include('apps.payments.urls')),
-    path('api/activity/', include('apps.activity.urls')),
-    path('api/notifications/', include('apps.notifications.urls')),
-    path('api/mpesa/',     include('apps.mpesa.urls')),
-    path('api/reminders/', include('apps.reminders.urls')),
-    path('api/ledger/',    include('apps.ledger.urls')),
+
+    # API (P1 #6). The same map is served at the legacy unversioned prefix that
+    # existing mobile binaries call, and at the versioned /api/v1/ space new
+    # clients should target. See config/api_urls.py.
+    path('api/',    include('config.api_urls')),
+    path('api/v1/', include('config.api_urls')),
+
+    # OpenAPI schema + interactive docs (drf-spectacular).
+    path('api/schema/',             SpectacularAPIView.as_view(), name='schema'),
+    path('api/schema/swagger-ui/',  SpectacularSwaggerView.as_view(url_name='schema'), name='swagger-ui'),
+    path('api/schema/redoc/',       SpectacularRedocView.as_view(url_name='schema'), name='redoc'),
 ]
