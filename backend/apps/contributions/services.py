@@ -21,6 +21,8 @@ logger = logging.getLogger(__name__)
 from django.db import transaction
 from django.db.models import F
 from django.core.exceptions import ValidationError, PermissionDenied
+
+from apps.core.policy import require
 from django.utils import timezone
 
 from .models import (
@@ -187,8 +189,8 @@ class ContributionService:
     @staticmethod
     def close_contribution(contribution_id, user):
         contribution = Contribution.objects.get(id=contribution_id)
-        if contribution.created_by != user:
-            raise PermissionDenied("Only the creator can close this contribution.")
+        require(user, "contribution.lifecycle", contribution,
+                "Only the creator can close this contribution.")
         contribution.status = 'closed'
         contribution.is_active = False
         contribution.save(update_fields=['status', 'is_active'])
@@ -197,8 +199,8 @@ class ContributionService:
     @staticmethod
     def archive_contribution(contribution_id, user):
         contribution = Contribution.objects.get(id=contribution_id)
-        if contribution.created_by != user:
-            raise PermissionDenied("Only the creator can archive this contribution.")
+        require(user, "contribution.lifecycle", contribution,
+                "Only the creator can archive this contribution.")
         contribution.status = 'archived'
         contribution.is_active = False
         contribution.save(update_fields=['status', 'is_active'])
@@ -207,8 +209,8 @@ class ContributionService:
     @staticmethod
     def reopen_contribution(contribution_id, user):
         contribution = Contribution.objects.get(id=contribution_id)
-        if contribution.created_by != user:
-            raise PermissionDenied("Only the creator can reopen this contribution.")
+        require(user, "contribution.lifecycle", contribution,
+                "Only the creator can reopen this contribution.")
         contribution.status = 'active'
         contribution.is_active = True
         contribution.save(update_fields=['status', 'is_active'])
@@ -217,8 +219,8 @@ class ContributionService:
     @staticmethod
     def delete_contribution(contribution_id, user):
         contribution = Contribution.objects.get(id=contribution_id)
-        if contribution.created_by != user:
-            raise PermissionDenied("Only the creator can delete this contribution.")
+        require(user, "contribution.lifecycle", contribution,
+                "Only the creator can delete this contribution.")
         if fund_balance('contribution', contribution.id) > 0:
             raise ValidationError(
                 "Cannot delete a contribution with an active balance. "
@@ -399,8 +401,8 @@ class ROSCAService:
     @staticmethod
     def initialize_rotation(contribution_id, user):
         contribution = Contribution.objects.get(id=contribution_id)
-        if contribution.created_by != user:
-            raise PermissionDenied("Only the creator can initialize the rotation.")
+        require(user, "contribution.lifecycle", contribution,
+                "Only the creator can initialize the rotation.")
 
         participants = list(ContributionParticipant.objects.filter(
             contribution=contribution, is_active=True
@@ -444,8 +446,8 @@ class ROSCAService:
     @transaction.atomic
     def mark_slot_paid(contribution_id, user):
         contribution = Contribution.objects.select_for_update().get(id=contribution_id)
-        if contribution.created_by != user:
-            raise PermissionDenied("Only the creator can advance the rotation.")
+        require(user, "contribution.lifecycle", contribution,
+                "Only the creator can advance the rotation.")
 
         current_slot = ROSCASlot.objects.filter(
             contribution=contribution, has_received=False

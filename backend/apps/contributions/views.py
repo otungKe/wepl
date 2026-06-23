@@ -8,6 +8,7 @@ from rest_framework.response import Response
 from rest_framework import status
 
 from apps.core.pagination import FinancialCursorPagination
+from apps.core.policy import can, require
 from apps.users.auth import IsActiveSession
 
 logger = logging.getLogger(__name__)
@@ -40,12 +41,8 @@ from .services import (
 
 
 def _is_contribution_member(contribution, user) -> bool:
-    """Return True if user is the creator OR an active participant."""
-    if contribution.created_by_id == user.id:
-        return True
-    return ContributionParticipant.objects.filter(
-        contribution=contribution, user=user, is_active=True
-    ).exists()
+    """Return True if user is the creator OR an active participant (ADR-0009)."""
+    return can(user, "contribution.view", contribution)
 
 
 def _member_only(contribution, user):
@@ -76,24 +73,17 @@ class ContributionCreateView(APIView):
 
         community = serializer.validated_data.get('community')
         if community:
-            from apps.communities.models import CommunityMembership, Community as CommunityModel
-
-            is_creator = community.created_by == request.user
-            is_admin   = is_creator or CommunityMembership.objects.filter(
-                community=community, user=request.user,
-                role__in=['admin', 'treasurer'], is_active=True
-            ).exists()
-            is_member  = is_admin or CommunityMembership.objects.filter(
-                community=community, user=request.user, is_active=True
-            ).exists()
+            from apps.communities.models import Community as CommunityModel
 
             perm = community.contribution_permission
-            if perm == CommunityModel.ContributionPermission.ADMINS and not is_admin:
+            if (perm == CommunityModel.ContributionPermission.ADMINS
+                    and not can(request.user, "community.finance.manage", community)):
                 return Response(
                     {"error": "Only admins and treasurers can create contributions in this community."},
                     status=status.HTTP_403_FORBIDDEN,
                 )
-            if perm == CommunityModel.ContributionPermission.MEMBERS and not is_member:
+            if (perm == CommunityModel.ContributionPermission.MEMBERS
+                    and not can(request.user, "community.view", community)):
                 return Response(
                     {"error": "You must be a member of this community to create a contribution."},
                     status=status.HTTP_403_FORBIDDEN,
@@ -135,17 +125,11 @@ class CommunityContributionsView(APIView):
 
     def get(self, request, community_id):
         from django.db.models import Count, Q
-        from apps.communities.models import Community, CommunityMembership
+        from apps.communities.models import Community
         from apps.ledger.balances import user_fund_balances
 
         community = get_object_or_404(Community, id=community_id)
-        is_member = (
-            community.created_by_id == request.user.id or
-            CommunityMembership.objects.filter(
-                community=community, user=request.user, is_active=True
-            ).exists()
-        )
-        if not is_member:
+        if not can(request.user, "community.view", community):
             logger.warning(
                 "CommunityContributionsView: user %s attempted to list contributions "
                 "for community %s without membership",
@@ -296,7 +280,6 @@ class ContributionDetailView(APIView):
     permission_classes = [IsActiveSession]
 
     def get(self, request, contribution_id):
-        from apps.communities.models import CommunityMembership
         c = get_object_or_404(Contribution, id=contribution_id)
 
         # Participants and the creator always get the full detail view.
@@ -305,13 +288,7 @@ class ContributionDetailView(APIView):
 
         # Non-participant: determine whether they can reach the request-to-join screen.
         if c.visibility == 'closed' and c.community:
-            is_community_member = (
-                c.community.created_by_id == request.user.id or
-                CommunityMembership.objects.filter(
-                    community=c.community, user=request.user, is_active=True
-                ).exists()
-            )
-            if not is_community_member:
+            if not can(request.user, "community.view", c.community):
                 return Response(
                     {"error": "not_community_member"},
                     status=status.HTTP_403_FORBIDDEN,
@@ -398,16 +375,7 @@ class ContributionUpdateView(APIView):
     def patch(self, request, contribution_id):
         contribution = get_object_or_404(Contribution, id=contribution_id)
 
-        is_creator = contribution.created_by == request.user
-        is_admin = False
-        if contribution.community:
-            from apps.communities.models import CommunityMembership
-            is_admin = CommunityMembership.objects.filter(
-                community=contribution.community,
-                user=request.user, role__in=['admin', 'treasurer'], is_active=True,
-            ).exists()
-
-        if not is_creator and not is_admin:
+        if not can(request.user, "contribution.admin", contribution):
             return Response(
                 {"error": "Only the contribution creator or a community admin can edit this contribution."},
                 status=status.HTTP_403_FORBIDDEN,
@@ -499,10 +467,7 @@ class ContributionTransactionsView(APIView):
     def get(self, request, contribution_id):
         contribution = get_object_or_404(Contribution, id=contribution_id)
 
-        is_participant = ContributionParticipant.objects.filter(
-            contribution=contribution, user=request.user, is_active=True,
-        ).exists()
-        if not is_participant:
+        if not can(request.user, "contribution.participate", contribution):
             return Response(
                 {"error": "You are not a participant in this contribution."},
                 status=status.HTTP_403_FORBIDDEN,
@@ -510,22 +475,9 @@ class ContributionTransactionsView(APIView):
 
         # Determine whether this user can see everyone's transactions
         vis = contribution.transaction_visibility
-        is_admin = _is_contribution_member(contribution, request.user) and (
-            contribution.created_by == request.user or (
-                contribution.community and
-                __import__('apps.communities.models', fromlist=['CommunityMembership'])
-                .CommunityMembership.objects.filter(
-                    community=contribution.community,
-                    user=request.user,
-                    role__in=['admin', 'treasurer'],
-                    is_active=True,
-                ).exists()
-            )
-        )
-
         see_all = (
             vis == 'all' or
-            (vis == 'admins_all' and is_admin)
+            (vis == 'admins_all' and can(request.user, "contribution.admin", contribution))
         )
 
         txs = ContributionTransaction.objects.filter(
@@ -688,13 +640,9 @@ class WelfareFundView(APIView):
         return Response(WelfareFundSerializer(fund).data)
 
     def patch(self, request, community_id):
-        from apps.communities.models import Community, CommunityMembership
+        from apps.communities.models import Community
         community = get_object_or_404(Community, id=community_id)
-        is_admin = CommunityMembership.objects.filter(
-            community=community, user=request.user,
-            role__in=['admin', 'treasurer'], is_active=True,
-        ).exists()
-        if not is_admin:
+        if not can(request.user, "community.finance.manage", community):
             return Response({"error": "Admins only"}, status=status.HTTP_403_FORBIDDEN)
         fund = WelfareService.get_or_create_community_fund(community)
         monthly = request.data.get('monthly_contribution')
@@ -722,13 +670,8 @@ class WelfareClaimListCreateView(APIView):
     permission_classes = [IsActiveSession]
 
     def _check_membership(self, community, user):
-        """Return True if user is a member or creator of the community."""
-        from apps.communities.models import CommunityMembership
-        if community.created_by == user:
-            return True
-        return CommunityMembership.objects.filter(
-            community=community, user=user, is_active=True
-        ).exists()
+        """Return True if user is a member or creator of the community (ADR-0009)."""
+        return can(user, "community.view", community)
 
     def get(self, request, community_id):
         from apps.communities.models import Community
@@ -1022,14 +965,7 @@ class ContributionJoinRequestListView(APIView):
     def get(self, request, contribution_id):
         contribution = get_object_or_404(Contribution, id=contribution_id)
         # Only creator/admins can see the queue
-        is_admin = contribution.created_by == request.user
-        if not is_admin and contribution.community:
-            from apps.communities.models import CommunityMembership
-            is_admin = CommunityMembership.objects.filter(
-                community=contribution.community, user=request.user,
-                role__in=['admin', 'treasurer'], is_active=True,
-            ).exists()
-        if not is_admin:
+        if not can(request.user, "contribution.admin", contribution):
             return Response({"error": "Only admins can view join requests."}, status=status.HTTP_403_FORBIDDEN)
         requests = ContributionJoinRequestService.get_pending_requests(contribution_id)
         return Response(ContributionJoinRequestSerializer(requests, many=True).data)

@@ -71,5 +71,10 @@ stays free of DRF/HTTP coupling and is usable from services, consumers, and task
 
 Incremental, one app at a time, each migration shipping with tests:
 1. `communities` (this ADR's reference implementation) — **done**.
-2. `contributions` (highest inline-check count) — next.
+2. `contributions` (highest inline-check count) — **done**. The pre-existing
+   `ledger.permissions.FinancialPermissions` helper became the *implementation*
+   behind the registered `contribution` resolver, so services already using it
+   are on the centralized layer; the inline `CommunityMembership.objects.filter(...)`
+   checks duplicated across the views were migrated to `can()`/`require()`, and a
+   `community.finance.manage` capability (admins + treasurers) was added.
 3. `conversations`, `notifications`, then the rest.

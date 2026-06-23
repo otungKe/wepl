@@ -44,6 +44,10 @@ _MIN_RANK = {
     "community.members.view_all":     _RANK[Role.ADMIN],       # full roster (see note below)
     "community.update":               _RANK[Role.ADMIN],       # edit settings/governance
     "community.join_request.review":  _RANK[Role.ADMIN],       # approve/reject join requests
+    # Financial administration — admins *and* treasurers. Mirrors the long-standing
+    # FinancialPermissions.is_community_admin definition (creator/admin/treasurer);
+    # used by contributions/welfare to gate fund management & privileged creation.
+    "community.finance.manage":       _RANK[Role.TREASURER],
     "community.member.assign_role":   _RANK[CREATOR],          # change a member's role
     "community.member.remove":        _RANK[CREATOR],          # remove a member
     "community.delete":               _RANK[CREATOR],          # delete the community
