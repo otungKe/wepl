@@ -12,6 +12,7 @@ from apps.communities.models import Community
 from apps.core.policy import can
 from apps.users.auth import IsActiveSession
 
+from .groups import group_for_conversation_id
 from .models import Conversation, Message, MessageReaction
 from .serializers import ConversationSerializer, MessageSerializer
 from .services import ConversationService
@@ -147,7 +148,7 @@ class ConversationMessagesView(APIView):
 
         channel_layer = get_channel_layer()
         async_to_sync(channel_layer.group_send)(
-            f'conv_{conversation_id}',
+            group_for_conversation_id(conversation_id),
             {
                 "type":         "chat_message",
                 "id":           msg.id,
@@ -221,7 +222,7 @@ class MessageDeleteView(APIView):
         )
         channel_layer = get_channel_layer()
         async_to_sync(channel_layer.group_send)(
-            f'conv_{message.conversation_id}',
+            group_for_conversation_id(message.conversation_id),
             {"type": "message_delete", "id": message.id}
         )
         return Response(status=status.HTTP_204_NO_CONTENT)
@@ -267,7 +268,7 @@ class MessageBulkDeleteView(APIView):
         channel_layer = get_channel_layer()
         for mid in deleted_ids:
             async_to_sync(channel_layer.group_send)(
-                f'conv_{conversation_id}',
+                group_for_conversation_id(conversation_id),
                 {"type": "message_delete", "id": mid}
             )
 
@@ -300,7 +301,7 @@ class MessageEditView(APIView):
         )
         channel_layer = get_channel_layer()
         async_to_sync(channel_layer.group_send)(
-            f'conv_{message.conversation_id}',
+            group_for_conversation_id(message.conversation_id),
             {"type": "message_edit", "id": message.id, "content": message.content}
         )
         return Response({"id": message.id, "content": message.content, "is_edited": True})
@@ -335,7 +336,7 @@ class MessageReactView(APIView):
 
         channel_layer = get_channel_layer()
         async_to_sync(channel_layer.group_send)(
-            f'conv_{message.conversation_id}',
+            group_for_conversation_id(message.conversation_id),
             {
                 "type":         "reaction_event",
                 "message_id":   message.id,

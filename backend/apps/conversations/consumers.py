@@ -6,6 +6,8 @@ from asgiref.sync import sync_to_async
 from urllib.parse import parse_qs
 
 from apps.communities.models import CommunityMembership
+from apps.tenants.rls import tenant_context
+from .groups import group_name
 from .models import Conversation, Message
 from .services import ConversationService
 
@@ -14,21 +16,25 @@ class ConversationConsumer(AsyncWebsocketConsumer):
 
     async def connect(self):
         self.conversation_id = self.scope['url_route']['kwargs']['conversation_id']
-        self.room_group_name = f'conv_{self.conversation_id}'
+        self.tenant_id = None
         user = self.scope["user"]
 
         if user.is_anonymous:
             await self.close()
             return
 
-        community_id = await sync_to_async(
+        row = await sync_to_async(
             lambda: Conversation.objects.filter(id=self.conversation_id)
-            .values_list('community_id', flat=True).first()
+            .values_list('community_id', 'community__tenant_id').first()
         )()
 
-        if not community_id:
+        if not row or not row[0]:
             await self.close()
             return
+        community_id, self.tenant_id = row
+
+        # Tenant-scope the fan-out group so it can never collide across tenants.
+        self.room_group_name = group_name(self.tenant_id, self.conversation_id)
 
         is_member = await sync_to_async(
             CommunityMembership.objects.filter(
@@ -104,7 +110,7 @@ class ConversationConsumer(AsyncWebsocketConsumer):
         if not message:
             return
 
-        saved = await sync_to_async(ConversationService.create_message)(
+        saved = await sync_to_async(self._create_message)(
             conversation_id=self.conversation_id,
             sender=user,
             content=message,
@@ -113,9 +119,7 @@ class ConversationConsumer(AsyncWebsocketConsumer):
 
         reply_to_data = None
         if reply_to_id:
-            rt = await sync_to_async(
-                lambda: Message.objects.select_related('sender').filter(id=reply_to_id).first()
-            )()
+            rt = await sync_to_async(self._fetch_reply)(reply_to_id)
             if rt and not rt.is_deleted:
                 rt_sender = rt.sender.name or f"User ...{rt.sender.phone_number[-4:]}"
                 reply_to_data = {
@@ -141,6 +145,18 @@ class ConversationConsumer(AsyncWebsocketConsumer):
                 "is_edited": False,
             }
         )
+
+    # ── Tenant-scoped DB helpers ──────────────────────────────────────────────
+    # Wrap writes/reads in tenant_context so RLS applies on the worker thread's
+    # connection for the duration of the operation (P6-04 follow-up).
+
+    def _create_message(self, **kwargs):
+        with tenant_context(self.tenant_id):
+            return ConversationService.create_message(**kwargs)
+
+    def _fetch_reply(self, reply_to_id):
+        with tenant_context(self.tenant_id):
+            return Message.objects.select_related('sender').filter(id=reply_to_id).first()
 
     # ── Group-send handlers ───────────────────────────────────────────────────
 
