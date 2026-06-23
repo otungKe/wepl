@@ -52,6 +52,7 @@ INSTALLED_APPS = [
     'rest_framework',
     'rest_framework_simplejwt',
     'rest_framework_simplejwt.token_blacklist',
+    'drf_spectacular',
 
     'apps.core.apps.CoreConfig',
     'apps.tenants.apps.TenantsConfig',
@@ -139,6 +140,23 @@ REST_FRAMEWORK = {
         'otp_request': '3/hour',
         'pin_login': '5/minute',
     },
+    # OpenAPI schema generation (P1 #6).
+    'DEFAULT_SCHEMA_CLASS': 'drf_spectacular.openapi.AutoSchema',
+    # Safe default for any (future) generic/list views. Existing APIView endpoints
+    # paginate explicitly (apps/core/pagination.py) and are unaffected.
+    'DEFAULT_PAGINATION_CLASS': 'rest_framework.pagination.PageNumberPagination',
+    'PAGE_SIZE': 30,
+}
+
+# ─── OpenAPI schema (drf-spectacular, P1 #6) ──────────────────────────────────
+SPECTACULAR_SETTINGS = {
+    'TITLE': 'WEPL API',
+    'DESCRIPTION': 'Community-finance "Financial OS" — ledger-first backend.',
+    'VERSION': '1.0.0',
+    'SERVE_INCLUDE_SCHEMA': False,
+    # Document the versioned space only; the legacy /api/ prefix is the same map
+    # kept for old binaries, so excluding it avoids duplicate operations.
+    'PREPROCESSING_HOOKS': ['config.schema.only_versioned_paths'],
 }
 
 LANGUAGE_CODE = 'en-us'
