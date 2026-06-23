@@ -195,3 +195,29 @@ class UserDevice(models.Model):
 
     def __str__(self):
         return f"{self.user.phone_number} [{self.platform}]"
+
+
+class NotificationDeadLetter(models.Model):
+    """A notification delivery that failed on a channel after retries (ADR-0015).
+
+    At-least-once delivery means transient failures get retried; when retries are
+    exhausted the attempt is recorded here instead of being lost, so it is
+    queryable and replayable by ops rather than silently dropped.
+    """
+    user_id           = models.BigIntegerField(null=True, blank=True)
+    notification_type = models.CharField(max_length=50, blank=True, default="")
+    channel           = models.CharField(max_length=20, db_index=True)
+    payload           = models.JSONField(default=dict, blank=True)
+    error             = models.TextField(blank=True, default="")
+    created_at        = models.DateTimeField(auto_now_add=True, db_index=True)
+    resolved_at       = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+        indexes = [
+            models.Index(fields=["channel", "-created_at"], name="notif_dlq_channel_idx"),
+        ]
+
+    def __str__(self):
+        state = "resolved" if self.resolved_at else "pending"
+        return f"DLQ[{self.channel}] {self.notification_type} user={self.user_id} ({state})"

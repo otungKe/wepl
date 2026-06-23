@@ -2,8 +2,6 @@ import logging
 
 from celery import shared_task
 
-from .services import NotificationService
-
 logger = logging.getLogger(__name__)
 
 
@@ -32,51 +30,52 @@ def send_notification(
     Retries up to 3 times on transient failure with 30-second backoff.
     ``event_id`` (outbox id) is passed through for idempotent creation.
     """
-    try:
-        # ── Check user's notification preferences ─────────────────────────────
-        from .models import NotificationPreferences, NOTIF_CATEGORY_MAP
-        prefs, _ = NotificationPreferences.objects.get_or_create(user_id=user_id)
+    from .models import NotificationPreferences
+    from .channels import CHANNELS, channels_for
 
-        if not prefs.push_enabled:
-            logger.debug(
-                "send_notification: suppressed %s for user %s — push disabled",
-                notification_type, user_id,
-            )
-            return
+    payload = {
+        'user_id': user_id,
+        'notification_type': notification_type,
+        'title': title,
+        'message': message,
+        'community_id': community_id,
+        'conversation_id': conversation_id,
+        'contribution_id': contribution_id,
+        'join_request_id': join_request_id,
+        'event_id': event_id,
+    }
 
-        category = NOTIF_CATEGORY_MAP.get(notification_type)
-        if category and not getattr(prefs, category, True):
-            logger.debug(
-                "send_notification: suppressed %s for user %s — category '%s' disabled",
-                notification_type, user_id, category,
-            )
-            return
-
-        NotificationService.create(
-            user_id=user_id,
-            notification_type=notification_type,
-            title=title,
-            message=message,
-            community_id=community_id,
-            conversation_id=conversation_id,
-            contribution_id=contribution_id,
-            join_request_id=join_request_id,
-            event_id=event_id,
+    prefs, _ = NotificationPreferences.objects.get_or_create(user_id=user_id)
+    keys = channels_for(notification_type, prefs)
+    if not keys:
+        logger.debug(
+            "send_notification: suppressed %s for user %s (preferences)",
+            notification_type, user_id,
         )
-        # Best-effort push — failure here must not retry the DB write above.
-        _push_to_devices.delay(
-            user_id=user_id,
-            title=title,
-            body=message,
-            data={
-                'type':            notification_type,
-                'community_id':    str(community_id    or ''),
-                'contribution_id': str(contribution_id or ''),
-                'conversation_id': str(conversation_id or ''),
-            },
-        )
-    except Exception as exc:
-        raise self.retry(exc=exc)
+        return
+
+    # The in-app row is the durable record — retry it (idempotent via event_id),
+    # and dead-letter only once retries are exhausted so it is never lost.
+    if 'in_app' in keys:
+        try:
+            CHANNELS['in_app'].deliver(payload)
+        except Exception as exc:
+            try:
+                raise self.retry(exc=exc)
+            except self.MaxRetriesExceededError:
+                from .deadletter import record
+                record(channel='in_app', payload=payload, error=str(exc))
+                return
+
+    # Other channels are best-effort; the push task self-dead-letters on failure.
+    for key in keys:
+        if key == 'in_app':
+            continue
+        try:
+            CHANNELS[key].deliver(payload)
+        except Exception as exc:  # enqueue failure (rare) — don't lose it
+            from .deadletter import record
+            record(channel=key, payload=payload, error=str(exc))
 
 
 @shared_task(
@@ -158,4 +157,15 @@ def _push_to_devices(self, user_id, title, body, data=None):
         logger.warning("firebase-admin not installed — FCM push skipped.")
     except Exception as exc:
         logger.exception("FCM push failed for user %s: %s", user_id, exc)
+        if self.request.retries >= self.max_retries:
+            # Retries exhausted — record instead of dropping the push (ADR-0015).
+            from .deadletter import record
+            record(
+                channel='push',
+                user_id=user_id,
+                notification_type=(data or {}).get('type', ''),
+                payload={'user_id': user_id, 'title': title, 'body': body, 'data': data or {}},
+                error=str(exc),
+            )
+            return
         raise self.retry(exc=exc)
