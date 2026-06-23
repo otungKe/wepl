@@ -34,11 +34,19 @@ class RequestIdMiddleware:
         self.get_response = get_response
 
     def __call__(self, request):
+        from apps.core import observability
+
         request_id = request.META.get('HTTP_X_REQUEST_ID') or str(uuid.uuid4())
         request.request_id = request_id
         _local.request_id = request_id
+        observability.bind(request_id=request_id)
 
-        response = self.get_response(request)
+        try:
+            response = self.get_response(request)
+        finally:
+            # Clear the whole log context (request_id + actor/tenant bound during
+            # dispatch) so nothing leaks onto the next request on this thread.
+            observability.clear()
         response['X-Request-Id'] = request_id
 
         # Update last_seen for authenticated users.

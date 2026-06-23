@@ -23,5 +23,8 @@ class TenantJWTAuthentication(SessionJWTAuthentication):
         if result is not None:
             user, _token = result
             if user and user.is_authenticated and not (user.is_staff or user.is_superuser):
-                set_current_tenant(tenant_for_user(user).id)
+                tenant_id = tenant_for_user(user).id
+                set_current_tenant(tenant_id)
+                from apps.core.observability import bind
+                bind(tenant_id=tenant_id)
         return result
