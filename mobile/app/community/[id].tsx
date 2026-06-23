@@ -529,7 +529,7 @@ export default function CommunityDetailScreen() {
                       )}
                       <View style={reportStyles.poolMeta}>
                         <Ionicons name="people-outline" size={13} color={COLORS.textMuted} />
-                        <Text style={reportStyles.poolMetaTxt}>{c.participant_count} members</Text>
+                        <Text style={reportStyles.poolMetaTxt}>{c.participant_count} member{c.participant_count !== 1 ? "s" : ""}</Text>
                         <Text style={reportStyles.poolMetaDot}>·</Text>
                         <Text style={reportStyles.poolMetaTxt}>{c.frequency}</Text>
                         <Text style={reportStyles.poolMetaDot}>·</Text>
