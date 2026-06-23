@@ -77,6 +77,13 @@ Incremental, one app at a time, each migration shipping with tests:
    are on the centralized layer; the inline `CommunityMembership.objects.filter(...)`
    checks duplicated across the views were migrated to `can()`/`require()`, and a
    `community.finance.manage` capability (admins + treasurers) was added.
+   A follow-up folded the remaining money-governance checks (disbursement/welfare/
+   advance/amendment approve/reject/propose/invite) behind `require()`, and
+   centralized the threshold→eligibility *voting* logic — previously duplicated
+   and divergent between disbursement and amendment voting (the latter hand-rolled
+   its own `CommunityMembership` query) — into `contribution.vote_disbursement` /
+   `contribution.vote_amendment`, preserving the amendment-specific nuance that an
+   admin must also be an active participant in a community-scoped contribution.
 3. `conversations` — **done**. Registered `conversation` + `message` resolvers
    that delegate community-membership/admin decisions to the `community` policy
    (`community.view` = member, `community.update` = creator/admin); migrated the

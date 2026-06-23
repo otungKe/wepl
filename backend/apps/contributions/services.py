@@ -521,8 +521,8 @@ class DisbursementService:
     def create_request(contribution_id, user, amount, reason, recipient_phone):
         contribution = Contribution.objects.select_for_update().get(id=contribution_id)
 
-        if not FinancialPermissions.is_active_participant(contribution, user):
-            raise PermissionDenied("You must be an active participant.")
+        require(user, "contribution.participate", contribution,
+                "You must be an active participant.")
 
         # Balance check — pool balance from the ledger (contribution row is locked
         # above, serialising concurrent disbursements on this contribution).
@@ -579,15 +579,9 @@ class DisbursementService:
             from apps.communities.services import check_cooling_off
             check_cooling_off(voter, contribution.community, 'disbursement_vote')
 
-        # Authorization
-        threshold = contribution.voting_threshold
-        if threshold == 'admins':
-            authorized = FinancialPermissions.is_contribution_admin(contribution, voter)
-        else:
-            authorized = FinancialPermissions.is_active_participant(contribution, voter)
-
-        if not authorized:
-            raise PermissionDenied("You are not authorised to vote on this request.")
+        # Authorization — threshold-aware voting eligibility (ADR-0009 policy)
+        require(voter, "contribution.vote_disbursement", contribution,
+                "You are not authorised to vote on this request.")
 
         vote_obj, created = DisbursementVote.objects.get_or_create(
             request=req, voter=voter, defaults={'vote': vote_choice}
@@ -825,8 +819,8 @@ class WelfareService:
         if claim.claimant == admin_user:
             raise PermissionDenied("You cannot approve your own welfare claim.")
 
-        if not FinancialPermissions.is_community_admin(claim.fund.community, admin_user):
-            raise PermissionDenied("Only community admins can approve welfare claims.")
+        require(admin_user, "community.finance.manage", claim.fund.community,
+                "Only community admins can approve welfare claims.")
 
         WelfareService._disburse(claim)
         return WelfareClaim.objects.get(id=claim_id)
@@ -838,8 +832,8 @@ class WelfareService:
         if claim.claimant == admin_user:
             raise PermissionDenied("You cannot reject your own welfare claim.")
 
-        if not FinancialPermissions.is_community_admin(claim.fund.community, admin_user):
-            raise PermissionDenied("Only community admins can reject welfare claims.")
+        require(admin_user, "community.finance.manage", claim.fund.community,
+                "Only community admins can reject welfare claims.")
 
         claim.transition_to('REJECTED')
         _notify(
@@ -939,8 +933,8 @@ class EmergencyAdvanceService:
 
         contribution = Contribution.objects.get(id=contribution_id)
 
-        if not FinancialPermissions.is_active_participant(contribution, user):
-            raise PermissionDenied("You must be an active participant.")
+        require(user, "contribution.participate", contribution,
+                "You must be an active participant.")
 
         # Section B: cooling-off period check
         if contribution.community:
@@ -1016,8 +1010,8 @@ class EmergencyAdvanceService:
         if advance.borrower == admin_user:
             raise PermissionDenied("You cannot approve your own advance request.")
 
-        if not FinancialPermissions.is_contribution_admin(contribution, admin_user):
-            raise PermissionDenied("Only admins/treasurers can approve advances.")
+        require(admin_user, "contribution.admin", contribution,
+                "Only admins/treasurers can approve advances.")
 
         # Check pool has enough funds (ledger-derived)
         if fund_balance('contribution', contribution.id) < advance.amount:
@@ -1095,8 +1089,8 @@ class EmergencyAdvanceService:
         if advance.borrower == admin_user:
             raise PermissionDenied("You cannot reject your own advance request.")
 
-        if not FinancialPermissions.is_contribution_admin(contribution, admin_user):
-            raise PermissionDenied("Only admins/treasurers can reject advances.")
+        require(admin_user, "contribution.admin", contribution,
+                "Only admins/treasurers can reject advances.")
 
         advance.transition_to('REJECTED')
         _notify(
@@ -1191,10 +1185,8 @@ class StandingOrderService:
     def create_standing_order(user, contribution_id, data):
         contribution = Contribution.objects.get(id=contribution_id)
 
-        if not FinancialPermissions.is_contribution_admin(contribution, user):
-            raise PermissionDenied(
-                "Only the contribution creator or a community admin can create standing orders."
-            )
+        require(user, "contribution.admin", contribution,
+                "Only the contribution creator or a community admin can create standing orders.")
 
         frequency = data.get('frequency', 'monthly')
         order = StandingOrder.objects.create(
@@ -1239,8 +1231,8 @@ class StandingOrderService:
         """
         order = StandingOrder.objects.select_for_update().get(id=order_id)
 
-        if not FinancialPermissions.is_contribution_admin(order.contribution, user):
-            raise PermissionDenied("Only the creator or an admin can execute this order.")
+        require(user, "contribution.admin", order.contribution,
+                "Only the creator or an admin can execute this order.")
 
         if not order.is_active:
             raise ValidationError("This standing order is no longer active.")
@@ -1429,25 +1421,17 @@ class AmendmentService:
         # Section C — check amendment_proposer setting
         proposer_policy = contribution.amendment_proposer
         if proposer_policy == 'creator':
-            if contribution.created_by != user:
-                raise PermissionDenied(
-                    "Only the contribution creator can propose amendments."
-                )
+            require(user, "contribution.lifecycle", contribution,
+                    "Only the contribution creator can propose amendments.")
         elif proposer_policy == 'admins':
-            if not FinancialPermissions.is_contribution_admin(contribution, user):
-                raise PermissionDenied(
-                    "Only admins and treasurers can propose amendments."
-                )
+            require(user, "contribution.admin", contribution,
+                    "Only admins and treasurers can propose amendments.")
         elif proposer_policy == 'members':
-            if not FinancialPermissions.is_active_participant(contribution, user):
-                raise PermissionDenied(
-                    "Only active participants can propose amendments."
-                )
+            require(user, "contribution.participate", contribution,
+                    "Only active participants can propose amendments.")
         else:
-            if not FinancialPermissions.is_contribution_admin(contribution, user):
-                raise PermissionDenied(
-                    "Only the contribution creator or a community admin can propose amendments."
-                )
+            require(user, "contribution.admin", contribution,
+                    "Only the contribution creator or a community admin can propose amendments.")
 
         # Quorum check: ensure at least one eligible voter exists for the amendment threshold.
         FinancialPermissions.assert_quorum_exists(
@@ -1553,32 +1537,9 @@ class AmendmentService:
         if amendment.proposed_by == voter:
             raise PermissionDenied("You cannot vote on your own amendment proposal.")
 
-        # Section C: amendment votes use amendment_voting_threshold, not disbursement threshold
-        threshold = contribution.amendment_voting_threshold
-        if threshold == 'admins':
-            if contribution.community:
-                from apps.communities.models import CommunityMembership
-                is_participant = ContributionParticipant.objects.filter(
-                    contribution=contribution, user=voter, is_active=True,
-                ).exists()
-                if not is_participant:
-                    authorized = False
-                elif contribution.created_by == voter:
-                    authorized = True
-                else:
-                    authorized = CommunityMembership.objects.filter(
-                        community=contribution.community,
-                        user=voter, role__in=['admin', 'treasurer'], is_active=True,
-                    ).exists()
-            else:
-                authorized = contribution.created_by == voter
-        else:
-            authorized = ContributionParticipant.objects.filter(
-                contribution=contribution, user=voter, is_active=True
-            ).exists()
-
-        if not authorized:
-            raise PermissionDenied("You are not authorised to vote on this amendment.")
+        # Section C: amendment votes use amendment_voting_threshold (ADR-0009 policy)
+        require(voter, "contribution.vote_amendment", contribution,
+                "You are not authorised to vote on this amendment.")
 
         _, created = ContributionAmendmentVote.objects.get_or_create(
             amendment=amendment, voter=voter, defaults={'vote': vote_choice}
@@ -1768,10 +1729,8 @@ class ContributionJoinRequestService:
             id=contribution_id
         )
 
-        if not FinancialPermissions.is_contribution_admin(contribution, admin):
-            raise PermissionDenied(
-                "Only the contribution creator or a community admin can send invitations."
-            )
+        require(admin, "contribution.admin", contribution,
+                "Only the contribution creator or a community admin can send invitations.")
 
         if contribution.status != 'active':
             raise ValidationError("This contribution is not accepting new members.")
@@ -1845,10 +1804,8 @@ class ContributionJoinRequestService:
         if jr.request_type != 'REQUEST':
             raise ValidationError("Use respond_to_invite() for invitation rows.")
 
-        if not FinancialPermissions.is_contribution_admin(jr.contribution, admin):
-            raise PermissionDenied(
-                "Only an admin or the contribution creator can review join requests."
-            )
+        require(admin, "contribution.admin", jr.contribution,
+                "Only an admin or the contribution creator can review join requests.")
 
         if jr.status != 'PENDING':
             raise ValidationError(f"This request has already been {jr.status.lower()}.")

@@ -151,3 +151,66 @@ class ContributionAuthzApiTests(TestCase):
         r = active_client(self.member).get(
             f"/api/contributions/{self.contribution.id}/join-requests/")
         self.assertEqual(r.status_code, 403)
+
+
+class GovernanceVotingPolicyTests(TestCase):
+    """contribution.vote_disbursement / vote_amendment threshold logic."""
+
+    def setUp(self):
+        self.creator   = make_user("254700000001")
+        self.admin     = make_user("254700000002")
+        self.treasurer = make_user("254700000003")
+        self.participant = make_user("254700000004")  # plain participant (not community admin)
+        self.outsider  = make_user("254700000005")
+
+        self.community = CommunityService.create_community(self.creator, {"name": "Chama"})
+        CommunityMembership.objects.create(user=self.admin,     community=self.community, role=Role.ADMIN)
+        CommunityMembership.objects.create(user=self.treasurer, community=self.community, role=Role.TREASURER)
+        CommunityMembership.objects.create(user=self.participant, community=self.community, role=Role.MEMBER)
+        # admin is NOT a participant; treasurer IS a participant (to exercise the nuance)
+        self.contribution = ContributionService.create_contribution(
+            self.creator, {"title": "Pool", "contribution_type": "POOL",
+                           "visibility": "closed", "community": self.community},
+        )
+        ContributionParticipant.objects.create(
+            contribution=self.contribution, user=self.participant, is_active=True)
+        ContributionParticipant.objects.create(
+            contribution=self.contribution, user=self.treasurer, is_active=True)
+
+    def _set(self, **kw):
+        for k, v in kw.items():
+            setattr(self.contribution, k, v)
+        self.contribution.save(update_fields=list(kw))
+
+    def test_disbursement_admins_threshold(self):
+        self._set(voting_threshold="admins")
+        # admins/treasurers/creator may vote — participant status NOT required
+        self.assertTrue(can(self.admin, "contribution.vote_disbursement", self.contribution))
+        self.assertTrue(can(self.treasurer, "contribution.vote_disbursement", self.contribution))
+        self.assertTrue(can(self.creator, "contribution.vote_disbursement", self.contribution))
+        # a plain participant cannot
+        self.assertFalse(can(self.participant, "contribution.vote_disbursement", self.contribution))
+        self.assertFalse(can(self.outsider, "contribution.vote_disbursement", self.contribution))
+
+    def test_disbursement_percentage_threshold(self):
+        self._set(voting_threshold="50")
+        # any active participant may vote
+        self.assertTrue(can(self.participant, "contribution.vote_disbursement", self.contribution))
+        self.assertTrue(can(self.creator, "contribution.vote_disbursement", self.contribution))
+        # a community admin who is NOT a participant cannot
+        self.assertFalse(can(self.admin, "contribution.vote_disbursement", self.contribution))
+
+    def test_amendment_admins_threshold_requires_participant(self):
+        self._set(amendment_voting_threshold="admins")
+        # treasurer is a community admin AND a participant → may vote
+        self.assertTrue(can(self.treasurer, "contribution.vote_amendment", self.contribution))
+        self.assertTrue(can(self.creator, "contribution.vote_amendment", self.contribution))
+        # admin is a community admin but NOT a participant → may NOT vote on amendments
+        # (the preserved amendment-specific nuance vs. disbursements)
+        self.assertFalse(can(self.admin, "contribution.vote_amendment", self.contribution))
+        self.assertFalse(can(self.participant, "contribution.vote_amendment", self.contribution))
+
+    def test_amendment_percentage_threshold(self):
+        self._set(amendment_voting_threshold="67")
+        self.assertTrue(can(self.participant, "contribution.vote_amendment", self.contribution))
+        self.assertFalse(can(self.admin, "contribution.vote_amendment", self.contribution))
