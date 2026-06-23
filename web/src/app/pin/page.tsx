@@ -1,6 +1,6 @@
 'use client'
-import { useState } from 'react'
-import { useRouter } from 'next/navigation'
+import { Suspense, useState } from 'react'
+import { useRouter, useSearchParams } from 'next/navigation'
 import { AuthShell } from '@/components/app/AuthShell'
 import { auth, apiError } from '@/lib/api'
 import { saveTokens } from '@/lib/auth'
@@ -10,8 +10,9 @@ import { Delete } from 'lucide-react'
 
 const LEN = 6
 
-export default function PinPage() {
+function PinForm() {
   const router = useRouter()
+  const isReset = useSearchParams().get('mode') === 'reset'
   const [pin, setPin] = useState('')
   const [confirm, setConfirm] = useState('')
   const [step, setStep] = useState<'enter' | 'confirm'>('enter')
@@ -28,27 +29,33 @@ export default function PinPage() {
     } else {
       if (confirm.length >= LEN) return
       const next = confirm + d; setConfirm(next)
-      if (next.length === LEN) create(pin, next)
+      if (next.length === LEN) submit(pin, next)
     }
   }
   function back() { step === 'enter' ? setPin(p => p.slice(0, -1)) : (setConfirm(''), setError('')) }
 
-  async function create(p: string, c: string) {
+  async function submit(p: string, c: string) {
     if (p !== c) { setError('PINs do not match. Try again.'); setConfirm(''); return }
     setLoading(true)
     try {
-      const { data } = await auth.setPin(p)
+      const { data } = isReset ? await auth.resetPin(p) : await auth.setPin(p)
       saveTokens(data.access, data.refresh)
       const profile = await auth.profile()
       useAuthStore.getState().login(data.access, data.refresh, profile.data)
-      router.push('/communities')
-    } catch (err) { setError(apiError(err, 'Failed to set PIN.')); setPin(''); setConfirm(''); setStep('enter') }
-    finally { setLoading(false) }
+      // New account → capture a display name (mirrors mobile). Reset → straight in.
+      router.replace(isReset || profile.data.name ? '/communities' : '/display-name')
+    } catch (err) {
+      setError(apiError(err, isReset ? 'Failed to reset PIN.' : 'Failed to set PIN.'))
+      setPin(''); setConfirm(''); setStep('enter')
+    } finally { setLoading(false) }
   }
 
+  const enterTitle = isReset ? 'Choose a new PIN' : 'Create your PIN'
+  const enterSub = isReset ? 'Enter a new 6-digit PIN for your account.' : 'Choose a 6-digit PIN to secure your account.'
+
   return (
-    <AuthShell title={step === 'enter' ? 'Create your PIN' : 'Confirm your PIN'}
-      subtitle={step === 'enter' ? 'Choose a 6-digit PIN to secure your account.' : 'Enter your PIN again to confirm.'}>
+    <AuthShell title={step === 'enter' ? enterTitle : 'Confirm your PIN'}
+      subtitle={step === 'enter' ? enterSub : 'Enter your PIN again to confirm.'}>
       <div className="mb-8 flex justify-center gap-3">
         {Array.from({ length: LEN }).map((_, i) => (
           <div key={i} className={cn('h-3.5 w-3.5 rounded-full border-2 transition-colors',
@@ -67,7 +74,11 @@ export default function PinPage() {
           )
         })}
       </div>
-      {loading && <p className="mt-5 text-center text-sm text-text-muted">Setting up your account…</p>}
+      {loading && <p className="mt-5 text-center text-sm text-text-muted">{isReset ? 'Resetting your PIN…' : 'Setting up your account…'}</p>}
     </AuthShell>
   )
+}
+
+export default function PinPage() {
+  return <Suspense><PinForm /></Suspense>
 }
