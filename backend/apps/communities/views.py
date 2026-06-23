@@ -9,6 +9,7 @@ from rest_framework.exceptions import PermissionDenied, ValidationError
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from apps.core.policy import can, require
 from apps.users.auth import IsActiveSession
 
 from .models import Community, CommunityJoinRequest, CommunityMembership
@@ -22,18 +23,10 @@ from .services import CommunityService
 
 logger = logging.getLogger(__name__)
 
-Role = CommunityMembership.Role
-
 
 def _ctx(request):
     """Serializer context carrying the current request (for is_member checks)."""
     return {"request": request}
-
-
-def _is_admin(community, user) -> bool:
-    return community.memberships.filter(
-        user=user, role=Role.ADMIN, is_active=True,
-    ).exists()
 
 
 # ── My communities ─────────────────────────────────────────────────────────────
@@ -168,8 +161,8 @@ class CommunityUpdateView(APIView):
 
     def patch(self, request, community_id):
         community = get_object_or_404(Community, id=community_id)
-        if community.created_by_id != request.user.id and not _is_admin(community, request.user):
-            raise PermissionDenied("Only the creator or an admin can edit community details.")
+        require(request.user, "community.update", community,
+                "Only the creator or an admin can edit community details.")
 
         payload = {k: v for k, v in request.data.items() if k in self.ALLOWED_FIELDS}
         if not payload:
@@ -198,8 +191,8 @@ class CommunityDeleteView(APIView):
 
     def delete(self, request, community_id):
         community = get_object_or_404(Community, id=community_id)
-        if community.created_by_id != request.user.id:
-            raise PermissionDenied("Only the creator can delete this community.")
+        require(request.user, "community.delete", community,
+                "Only the creator can delete this community.")
         logger.info("Community '%s' (id=%s) deleted by %s", community.name, community.id, request.user.phone_number)
         community.delete()
         return Response(status=status.HTTP_204_NO_CONTENT)
@@ -274,18 +267,18 @@ class CommunityMembersView(APIView):
     def get(self, request, community_id):
         community = get_object_or_404(Community, id=community_id)
 
-        is_member_flag = CommunityService.is_member(request.user, community)
-        if not is_member_flag and community.created_by_id != request.user.id:
-            raise PermissionDenied("You are not a member of this community.")
+        # Must be a member (creator ranks above member) to see the roster at all.
+        require(request.user, "community.view", community,
+                "You are not a member of this community.")
 
-        is_admin_flag = (
-            community.created_by_id == request.user.id
-            or _is_admin(community, request.user)
+        # Full roster visibility = the community allows ALL members to see it,
+        # OR the actor has admin-level authority (policy decides the role part).
+        show_all = (
+            community.member_list_visibility == Community.MemberListVisibility.ALL
+            or can(request.user, "community.members.view_all", community)
         )
-
-        vis = community.member_list_visibility
-        if vis == Community.MemberListVisibility.ADMINS and not is_admin_flag:
-            # Non-admins see only their own row
+        if not show_all:
+            # Restricted list — caller sees only their own row.
             own = community.memberships.filter(user=request.user, is_active=True)
             return Response(CommunityMembershipSerializer(own, many=True).data)
 

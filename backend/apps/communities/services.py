@@ -19,6 +19,7 @@ from django.db import transaction
 from django.utils import timezone
 
 from apps.activity.services import ActivityService
+from apps.core.policy import require
 
 from .models import Community, CommunityJoinRequest, CommunityMembership
 
@@ -281,9 +282,9 @@ class CommunityService:
     @staticmethod
     @transaction.atomic
     def assign_role(creator, community, membership_id, role):
-        """Only the community creator can assign roles."""
-        if community.created_by_id != creator.id:
-            raise PermissionDenied("Only the community creator can assign roles.")
+        """Only the community creator can assign roles (ADR-0009 policy)."""
+        require(creator, "community.member.assign_role", community,
+                "Only the community creator can assign roles.")
         if role not in Role.values:
             raise ValidationError(f"Invalid role '{role}'.")
 
@@ -312,9 +313,9 @@ class CommunityService:
     @staticmethod
     @transaction.atomic
     def remove_member(creator, community, membership_id):
-        """Only the community creator can remove other members."""
-        if community.created_by_id != creator.id:
-            raise PermissionDenied("Only the community creator can remove members.")
+        """Only the community creator can remove other members (ADR-0009 policy)."""
+        require(creator, "community.member.remove", community,
+                "Only the community creator can remove members.")
 
         membership = (
             CommunityMembership.objects
@@ -349,11 +350,8 @@ class CommunityService:
             .get(id=request_id)
         )
 
-        is_admin = req.community.memberships.filter(
-            user=admin_user, role=Role.ADMIN, is_active=True,
-        ).exists()
-        if not is_admin:
-            raise PermissionDenied("Only admins can review join requests.")
+        require(admin_user, "community.join_request.review", req.community,
+                "Only admins can review join requests.")
 
         if req.status != Status.PENDING:
             raise ValidationError("This request has already been reviewed.")
