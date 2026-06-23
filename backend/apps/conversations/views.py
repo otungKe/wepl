@@ -8,7 +8,8 @@ from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
 
-from apps.communities.models import Community, CommunityMembership
+from apps.communities.models import Community
+from apps.core.policy import can
 from apps.users.auth import IsActiveSession
 
 from .models import Conversation, Message, MessageReaction
@@ -22,24 +23,13 @@ _BULK_DELETE_MAX = 100
 
 
 def _is_community_member(community, user) -> bool:
-    """True if user is the community creator or an active member."""
-    if community.created_by_id == user.id:
-        return True
-    return CommunityMembership.objects.filter(
-        community=community, user=user, is_active=True
-    ).exists()
+    """True if user is the community creator or an active member (ADR-0009)."""
+    return can(user, "community.view", community)
 
 
 def _can_delete_message(user, message) -> bool:
-    """True if user is the sender, community creator, or community admin."""
-    if message.sender == user:
-        return True
-    community = message.conversation.community
-    if community.created_by == user:
-        return True
-    return CommunityMembership.objects.filter(
-        community=community, user=user, role='admin', is_active=True
-    ).exists()
+    """True if user is the sender, community creator, or community admin (ADR-0009)."""
+    return can(user, "message.delete", message)
 
 
 class CommunityConversationsView(APIView):
@@ -289,7 +279,7 @@ class MessageEditView(APIView):
 
     def patch(self, request, message_id):
         message = get_object_or_404(Message, id=message_id)
-        if message.sender != request.user:
+        if not can(request.user, "message.edit", message):
             logger.warning(
                 "MessageEditView: user %s attempted to edit message %s sent by user %s",
                 request.user.id, message_id, message.sender_id,

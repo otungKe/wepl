@@ -77,4 +77,13 @@ Incremental, one app at a time, each migration shipping with tests:
    are on the centralized layer; the inline `CommunityMembership.objects.filter(...)`
    checks duplicated across the views were migrated to `can()`/`require()`, and a
    `community.finance.manage` capability (admins + treasurers) was added.
-3. `conversations`, `notifications`, then the rest.
+3. `conversations` — **done**. Registered `conversation` + `message` resolvers
+   that delegate community-membership/admin decisions to the `community` policy
+   (`community.view` = member, `community.update` = creator/admin); migrated the
+   inline checks in the views and `ConversationService`. First test suite added.
+4. `notifications` — **reviewed; no policy needed**. Notifications are a per-user
+   resource whose every query is already scoped to the owner (`filter(..., user=user)`),
+   so authorization is ownership, not roles. A test suite was added to lock in
+   that isolation (the IDOR boundary) instead. This is the deliberate exception:
+   the policy layer is for *role/membership* decisions, not per-row ownership.
+5. The remaining apps as their endpoints gain role logic.
