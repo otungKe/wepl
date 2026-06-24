@@ -111,8 +111,17 @@ services:
         sync: false
       - key: MPESA_BASE_URL
         value: https://sandbox.safaricom.co.ke
+      # Must be the full STK callback route — Daraja POSTs the result here.
+      # A bare /api/mpesa/ 404s, so the STK request never finalises.
       - key: MPESA_CALLBACK_URL
-        value: https://wepl-api.onrender.com/api/mpesa/
+        value: https://wepl-api.onrender.com/api/mpesa/stk/callback/
+      # B2C (payout) result/timeout endpoints. Initiator name + security
+      # credential are secrets — set MPESA_B2C_INITIATOR_NAME and
+      # MPESA_B2C_SECURITY_CREDENTIAL in the dashboard before testing payouts.
+      - key: MPESA_B2C_RESULT_URL
+        value: https://wepl-api.onrender.com/api/mpesa/b2c/result/
+      - key: MPESA_B2C_TIMEOUT_URL
+        value: https://wepl-api.onrender.com/api/mpesa/b2c/timeout/
       - key: AT_API_KEY
         sync: false
       - key: AT_USERNAME
