@@ -101,8 +101,23 @@ class ConversationDetailView(APIView):
 class ConversationMessagesView(APIView):
     permission_classes = [IsActiveSession]
 
+    # Keyset pagination (ADR-0012): bound the result and scroll back by id.
+    DEFAULT_LIMIT = 50
+    MAX_LIMIT = 200
+
     def get(self, request, conversation_id):
-        messages = ConversationService.get_messages(conversation_id, request.user)
+        try:
+            limit = int(request.query_params.get('limit', self.DEFAULT_LIMIT))
+        except (TypeError, ValueError):
+            limit = self.DEFAULT_LIMIT
+        limit = max(1, min(limit, self.MAX_LIMIT))
+        before = request.query_params.get('before')  # message id; fetch older than this
+
+        qs = ConversationService.get_messages(conversation_id, request.user)
+        if before:
+            qs = qs.filter(id__lt=before)
+        # Take the most recent `limit` (keyset on id, no OFFSET), return ascending.
+        messages = list(qs.order_by('-id')[:limit])[::-1]
         return Response(MessageSerializer(messages, many=True, context={'request': request}).data)
 
     def post(self, request, conversation_id):

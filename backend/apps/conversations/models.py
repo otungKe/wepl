@@ -128,6 +128,9 @@ class ConversationReadStatus(models.Model):
         related_name='read_statuses'
     )
     last_read_at = models.DateTimeField()
+    # High-water-mark (ADR-0012): id of the last message the user has read.
+    # Exact + cheap for unread counts vs. comparing timestamps row-by-row.
+    last_read_message_id = models.BigIntegerField(null=True, blank=True)
 
     class Meta:
         unique_together = ('user', 'conversation')

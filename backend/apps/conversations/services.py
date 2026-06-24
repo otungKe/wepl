@@ -85,10 +85,19 @@ class ConversationService:
 
     @staticmethod
     def mark_read(conversation_id, user):
+        # Advance the high-water-mark to the latest message in the conversation
+        # (ADR-0012) so unread counts are an exact, cheap id comparison.
+        latest_id = (
+            Message.objects.filter(conversation_id=conversation_id)
+            .order_by('-id').values_list('id', flat=True).first()
+        )
         ConversationReadStatus.objects.update_or_create(
             conversation_id=conversation_id,
             user=user,
-            defaults={'last_read_at': timezone.now()},
+            defaults={
+                'last_read_at': timezone.now(),
+                'last_read_message_id': latest_id,
+            },
         )
 
     @staticmethod
@@ -96,32 +105,39 @@ class ConversationService:
         """
         Returns {'total': N, 'by_community': {community_id: unread_count, ...}}
         counting only messages not sent by the user.
+
+        One aggregate query (ADR-0012): each message is compared against the
+        per-conversation read high-water-mark via a correlated subquery, then
+        grouped by community — no per-conversation N+1 COUNT loop.
         """
+        from django.db.models import Count, F, IntegerField, OuterRef, Subquery, Value
+        from django.db.models.functions import Coalesce
+
         community_ids = list(
             CommunityMembership.objects.filter(user=user, is_active=True)
             .values_list('community_id', flat=True)
         )
-        conversations = Conversation.objects.filter(community_id__in=community_ids)
-        read_statuses = {
-            rs.conversation_id: rs.last_read_at
-            for rs in ConversationReadStatus.objects.filter(
-                conversation__in=conversations, user=user
-            )
-        }
+        if not community_ids:
+            return {'total': 0, 'by_community': {}}
 
-        by_community: dict[int, int] = {}
-        for conv in conversations:
-            qs = conv.messages.filter(is_deleted=False).exclude(sender=user)
-            last_read = read_statuses.get(conv.id)
-            if last_read:
-                qs = qs.filter(created_at__gt=last_read)
-            count = qs.count()
-            if count:
-                by_community[conv.community_id] = by_community.get(conv.community_id, 0) + count
-
+        high_water = (
+            ConversationReadStatus.objects
+            .filter(conversation_id=OuterRef('conversation_id'), user=user)
+            .values('last_read_message_id')[:1]
+        )
+        rows = (
+            Message.objects
+            .filter(conversation__community_id__in=community_ids, is_deleted=False)
+            .exclude(sender=user)
+            .annotate(hw=Coalesce(Subquery(high_water, output_field=IntegerField()), Value(0)))
+            .filter(id__gt=F('hw'))
+            .values('conversation__community_id')
+            .annotate(n=Count('id'))
+        )
+        by_community = {str(r['conversation__community_id']): r['n'] for r in rows}
         return {
             'total': sum(by_community.values()),
-            'by_community': {str(k): v for k, v in by_community.items()},
+            'by_community': by_community,
         }
 
     @staticmethod
