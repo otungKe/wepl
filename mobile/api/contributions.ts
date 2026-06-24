@@ -51,6 +51,7 @@ export type Contribution = {
   participant_count: number;
   user_balance: string | null;
   is_admin: boolean;
+  is_participant?: boolean;  // server-derived: creator or active participant
   created_at: string;
 };
 

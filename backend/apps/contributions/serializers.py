@@ -26,6 +26,9 @@ class ContributionSerializer(serializers.ModelSerializer):
     voting_threshold  = serializers.CharField(required=False, default='admins')
     # Whether the requesting user has admin rights on this contribution
     is_admin          = serializers.SerializerMethodField()
+    # Whether the requesting user is already in this contribution (creator or
+    # active participant) — authoritative, so clients don't string-match phones.
+    is_participant    = serializers.SerializerMethodField()
 
     class Meta:
         model = Contribution
@@ -41,7 +44,7 @@ class ContributionSerializer(serializers.ModelSerializer):
             'voting_threshold', 'voting_label',
             'min_approvals', 'is_active', 'status', 'is_campaign',
             'participant_count', 'user_balance', 'my_rosca_slot',
-            'is_admin', 'created_at',
+            'is_admin', 'is_participant', 'created_at',
         ]
         extra_kwargs = {
             'invite_code':    {'read_only': True},
@@ -119,6 +122,15 @@ class ContributionSerializer(serializers.ModelSerializer):
             return False
         from apps.ledger.permissions import FinancialPermissions
         return FinancialPermissions.is_contribution_admin(obj, request.user)
+
+    def get_is_participant(self, obj):
+        """True if the requesting user is the creator OR an active participant."""
+        request = self.context.get('request')
+        if not request or not request.user.is_authenticated:
+            return False
+        if obj.created_by_id == request.user.id:
+            return True
+        return obj.participants.filter(user=request.user, is_active=True).exists()
 
     def validate(self, attrs):
         # For partial updates fall back to the existing instance values so that

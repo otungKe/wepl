@@ -713,7 +713,10 @@ export default function ContributionDetailScreen() {
   const isCreator     = contribution.created_by === myPhone;
   // is_admin from the API: true for creator OR community admin/treasurer
   const isAdmin       = contribution.is_admin ?? isCreator;
-  const isParticipant = participants.some((p) => p.phone_number === myPhone && p.is_active);
+  // Trust the API's authoritative flag (creator or active participant); fall back
+  // to phone-matching only if the field is absent (older backend). Prevents showing
+  // "Request to Join" to members when phone formats differ or the list is partial.
+  const isParticipant = contribution.is_participant ?? participants.some((p) => p.phone_number === myPhone && p.is_active);
   const cur          = Number(contribution.current_amount);
   const tgt          = contribution.target_amount ? Number(contribution.target_amount) : 0;
   const pct          = tgt > 0 ? Math.min((cur / tgt) * 100, 100) : 0;

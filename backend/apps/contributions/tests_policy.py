@@ -214,3 +214,35 @@ class GovernanceVotingPolicyTests(TestCase):
         self._set(amendment_voting_threshold="67")
         self.assertTrue(can(self.participant, "contribution.vote_amendment", self.contribution))
         self.assertFalse(can(self.admin, "contribution.vote_amendment", self.contribution))
+
+
+class IsParticipantSerializerFieldTests(TestCase):
+    """ContributionSerializer.is_participant lets clients hide a stray 'Join' button
+    for contributions the user is already in (mobile bug: phone-string matching)."""
+
+    def setUp(self):
+        from .serializers import ContributionSerializer
+        from rest_framework.test import APIRequestFactory
+        self.SerCls = ContributionSerializer
+        self.rf = APIRequestFactory()
+        self.creator = make_user("254700000001")
+        self.participant = make_user("254700000002")
+        self.outsider = make_user("254700000003")
+        self.c = ContributionService.create_contribution(
+            self.creator, {"title": "Pool", "contribution_type": "POOL", "visibility": "open"})
+        ContributionParticipant.objects.create(
+            contribution=self.c, user=self.participant, is_active=True)
+
+    def _flag(self, user):
+        req = self.rf.get("/")
+        req.user = user
+        return self.SerCls(self.c, context={"request": req}).data["is_participant"]
+
+    def test_creator_is_participant(self):
+        self.assertTrue(self._flag(self.creator))
+
+    def test_active_participant_is_participant(self):
+        self.assertTrue(self._flag(self.participant))
+
+    def test_outsider_is_not_participant(self):
+        self.assertFalse(self._flag(self.outsider))
