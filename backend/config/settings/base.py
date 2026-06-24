@@ -57,6 +57,7 @@ INSTALLED_APPS = [
     'apps.core.apps.CoreConfig',
     'apps.tenants.apps.TenantsConfig',
     'apps.audit.apps.AuditConfig',
+    'apps.files.apps.FilesConfig',
 
     'apps.users.apps.UsersConfig',
     'apps.communities.apps.CommunitiesConfig',
@@ -284,6 +285,11 @@ CELERY_BEAT_SCHEDULE = {
     'reconcile-payments': {
         'task': 'apps.payments.tasks.reconcile_payments',
         'schedule': crontab(minute=15),
+    },
+    # Purge soft-deleted files past the retention window (ADR-0018) — daily 3am EAT
+    'purge-expired-files': {
+        'task': 'apps.files.tasks.purge_expired_files',
+        'schedule': crontab(minute=0, hour=3),
     },
     # Fire due reminders every 30 minutes
     'fire-due-reminders': {
