@@ -11,7 +11,14 @@ from datetime import timedelta
 
 from django.conf import settings
 from django.db import models
+from django.db.models import F
 from django.utils import timezone
+
+_RECURRENCE_STEP = {
+    'daily':   timedelta(days=1),
+    'weekly':  timedelta(weeks=1),
+    'monthly': timedelta(days=30),
+}
 
 
 class Reminder(models.Model):
@@ -70,25 +77,40 @@ class Reminder(models.Model):
             self.next_fire_at = self.scheduled_for
         super().save(*args, **kwargs)
 
-    def advance(self) -> None:
-        """
-        Mark as fired and compute the next fire time (if recurring).
-        Deactivates one-time reminders after firing.
+    def _next_future_fire(self, now) -> 'timezone.datetime':
+        """Next fire strictly after *now*, skipping occurrences missed during
+        downtime — so a long-overdue recurring reminder fires once and reschedules
+        ahead, rather than back-firing a burst of stale alerts (catch-up policy)."""
+        step = _RECURRENCE_STEP[self.recurrence]
+        nxt = self.next_fire_at + step
+        while nxt <= now:
+            nxt += step
+        return nxt
+
+    def claim(self) -> bool:
+        """Atomically reserve this occurrence and return whether *this* caller won.
+
+        The reservation is a single conditional UPDATE guarded by the value we
+        read (``is_active=True`` and the same ``next_fire_at``). Under concurrent
+        beats/workers exactly one caller's UPDATE matches; the rest get 0 rows and
+        return False — so a reminder is dispatched at most once per occurrence
+        (no double-fire). Claim happens *before* sending, so a crash mid-dispatch
+        drops that occurrence rather than risking a duplicate.
         """
         now = timezone.now()
-        self.last_sent_at = now
-        self.send_count  += 1
-
+        seen_fire = self.next_fire_at
+        updates = {'last_sent_at': now, 'send_count': F('send_count') + 1}
         if self.recurrence == 'none':
-            self.is_active = False
-        elif self.recurrence == 'daily':
-            self.next_fire_at = self.next_fire_at + timedelta(days=1)
-        elif self.recurrence == 'weekly':
-            self.next_fire_at = self.next_fire_at + timedelta(weeks=1)
-        elif self.recurrence == 'monthly':
-            self.next_fire_at = self.next_fire_at + timedelta(days=30)
+            updates['is_active'] = False
+        else:
+            updates['next_fire_at'] = self._next_future_fire(now)
 
-        self.save(update_fields=['last_sent_at', 'send_count', 'is_active', 'next_fire_at'])
+        claimed = (
+            Reminder.objects
+            .filter(pk=self.pk, is_active=True, next_fire_at=seen_fire)
+            .update(**updates)
+        )
+        return claimed == 1
 
     def __str__(self):
         return f"[{self.reminder_type}] {self.title} — {self.user.phone_number}"

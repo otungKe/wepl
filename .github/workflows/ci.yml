@@ -100,10 +100,10 @@ jobs:
       # Gate the authorization policy layer (ADR-0009), session/token revocation
       # (ADR-0010) and tenant-isolation seams (ADR-0008). These are small,
       # security-critical modules; like the ledger core they must stay well-tested.
-      - name: Enforce authz / session / isolation / audit / observability / notif coverage (>=90%)
+      - name: Enforce authz / session / isolation / audit / observability / notif / reminders coverage (>=90%)
         run: >-
           coverage report
-          --include="apps/core/policy.py,apps/communities/policies.py,apps/contributions/policies.py,apps/conversations/policies.py,apps/conversations/groups.py,apps/users/sessions.py,apps/users/token_views.py,apps/tenants/celery_hooks.py,apps/tenants/guards.py,apps/audit/services.py,apps/audit/models.py,apps/core/observability.py,apps/notifications/channels.py,apps/notifications/deadletter.py"
+          --include="apps/core/policy.py,apps/communities/policies.py,apps/contributions/policies.py,apps/conversations/policies.py,apps/conversations/groups.py,apps/users/sessions.py,apps/users/token_views.py,apps/tenants/celery_hooks.py,apps/tenants/guards.py,apps/audit/services.py,apps/audit/models.py,apps/core/observability.py,apps/notifications/channels.py,apps/notifications/deadletter.py,apps/reminders/tasks.py"
           --fail-under=90
 
       - name: Full coverage report (informational)
