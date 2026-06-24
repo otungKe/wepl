@@ -103,7 +103,7 @@ jobs:
       - name: Enforce authz / session / isolation / audit / observability / notif / reminders coverage (>=90%)
         run: >-
           coverage report
-          --include="apps/core/policy.py,apps/communities/policies.py,apps/contributions/policies.py,apps/conversations/policies.py,apps/conversations/groups.py,apps/users/sessions.py,apps/users/token_views.py,apps/tenants/celery_hooks.py,apps/tenants/guards.py,apps/audit/services.py,apps/audit/models.py,apps/core/observability.py,apps/notifications/channels.py,apps/notifications/deadletter.py,apps/reminders/tasks.py,apps/payments/services.py,apps/payments/reconciliation.py,apps/files/services.py,apps/files/signing.py,apps/files/views.py"
+          --include="apps/core/policy.py,apps/communities/policies.py,apps/contributions/policies.py,apps/conversations/policies.py,apps/conversations/groups.py,apps/users/sessions.py,apps/users/token_views.py,apps/tenants/celery_hooks.py,apps/tenants/guards.py,apps/audit/services.py,apps/audit/models.py,apps/core/observability.py,apps/notifications/channels.py,apps/notifications/deadletter.py,apps/reminders/tasks.py,apps/payments/services.py,apps/payments/reconciliation.py,apps/files/services.py,apps/files/signing.py,apps/files/views.py,apps/search/services.py,apps/search/views.py"
           --fail-under=90
 
       - name: Full coverage report (informational)

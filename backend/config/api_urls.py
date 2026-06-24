@@ -16,6 +16,7 @@ urlpatterns = [
     path('activity/',      include('apps.activity.urls')),
     path('notifications/', include('apps.notifications.urls')),
     path('files/',         include('apps.files.urls')),
+    path('search/',        include('apps.search.urls')),
     path('mpesa/',         include('apps.mpesa.urls')),
     path('reminders/',     include('apps.reminders.urls')),
     path('ledger/',        include('apps.ledger.urls')),
