@@ -134,6 +134,24 @@ class STKPushView(APIView):
             merchant_request_id=result.raw.get("MerchantRequestID", ""),
         )
 
+        # Provider-agnostic payment aggregate (ADR-0014) — best-effort; never
+        # block the money path on payment bookkeeping.
+        try:
+            from apps.payments.services import PaymentService
+            from apps.payments.models import PaymentIntent
+            PaymentService.record_initiation(
+                provider=get_provider().name,
+                direction=PaymentIntent.Direction.COLLECTION,
+                amount=amount,
+                idempotency_key=f"pi-collect-{result.provider_ref}",
+                provider_ref=result.provider_ref,
+                op_type=payment_type,
+                initiated_by=request.user,
+                metadata={"payment_type": payment_type},
+            )
+        except Exception:
+            logger.exception("record_initiation (collection) failed for %s", result.provider_ref)
+
         return Response(
             {
                 "message": "STK Push sent. Enter your M-Pesa PIN on your phone.",
@@ -163,6 +181,17 @@ class STKCallbackView(APIView):
 
         if not checkout_id:
             return Response({"ResultCode": 0, "ResultDesc": "Accepted"})
+
+        # Settle the provider-agnostic payment aggregate (ADR-0014) — best-effort.
+        try:
+            from apps.payments.services import PaymentService
+            PaymentService.resolve(
+                provider=get_provider().name, provider_ref=checkout_id,
+                success=event.success, receipt=event.receipt or '',
+                failure_reason=event.result_desc or '',
+            )
+        except Exception:
+            logger.exception("PaymentIntent resolve (collection) failed for %s", checkout_id)
 
         if event.success:
             # ── Success path ───────────────────────────────────────────────────
@@ -284,6 +313,17 @@ class B2CResultView(APIView):
 
         if not conversation_id:
             return Response({"ResultCode": 0, "ResultDesc": "Accepted"})
+
+        # Settle the provider-agnostic payment aggregate (ADR-0014) — best-effort.
+        try:
+            from apps.payments.services import PaymentService
+            PaymentService.resolve(
+                provider=get_provider().name, provider_ref=conversation_id,
+                success=event.success, receipt=event.receipt or '',
+                failure_reason=event.result_desc or '',
+            )
+        except Exception:
+            logger.exception("PaymentIntent resolve (payout) failed for %s", conversation_id)
 
         # ── Resolve the FinancialTransaction ──────────────────────────────────
         from apps.ledger.models import FinancialTransaction

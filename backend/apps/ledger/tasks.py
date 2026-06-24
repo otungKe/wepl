@@ -129,6 +129,24 @@ def execute_b2c_payout(self, fin_transaction_id: int) -> str:
     FinancialTransaction.objects.filter(pk=ft.pk).update(
         mpesa_conversation_id=conversation_id
     )
+
+    # Provider-agnostic payment aggregate (ADR-0014) — best-effort, linked to the FT.
+    try:
+        from apps.payments.services import PaymentService
+        from apps.payments.models import PaymentIntent
+        PaymentService.record_initiation(
+            provider=get_provider().name,
+            direction=PaymentIntent.Direction.PAYOUT,
+            amount=ft.amount,
+            idempotency_key=f"pi-payout-{ft.id}",
+            provider_ref=conversation_id,
+            financial_transaction=ft,
+            op_type=ft.op_type,
+            tenant_id=ft.tenant_id,
+        )
+    except Exception:
+        logger.exception("record_initiation (payout) failed for FT %s", ft.id)
+
     logger.info(
         "execute_b2c_payout: FT %s dispatched — conversation_id=%s", ft.id, conversation_id
     )
