@@ -67,3 +67,11 @@ def poll_mpesa_stk_status(self, checkout_request_id: str):
         stk.result_desc = 'Timed out waiting for M-Pesa confirmation.'
         stk.save(update_fields=['status', 'result_desc'])
         logger.error("poll_mpesa_stk_status: timed out for %s", checkout_request_id)
+
+
+@shared_task(name='apps.payments.tasks.reconcile_payments', queue='payments')
+def reconcile_payments():
+    """Periodic three-way reconciliation (ADR-0014). Opens ReconciliationDrift
+    rows for intent↔FT↔ledger discrepancies. Returns the per-kind drift count."""
+    from .reconciliation import reconcile_payments as _run
+    return _run()

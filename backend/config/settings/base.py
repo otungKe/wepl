@@ -280,6 +280,11 @@ CELERY_BEAT_SCHEDULE = {
         'task': 'apps.ledger.tasks.reconcile_ledger',
         'schedule': crontab(minute=0, hour=2),
     },
+    # Payments reconciliation: intent ↔ FT ↔ ledger drift (ADR-0014) — hourly
+    'reconcile-payments': {
+        'task': 'apps.payments.tasks.reconcile_payments',
+        'schedule': crontab(minute=15),
+    },
     # Fire due reminders every 30 minutes
     'fire-due-reminders': {
         'task': 'apps.reminders.tasks.fire_due_reminders',
