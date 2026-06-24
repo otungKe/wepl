@@ -58,6 +58,7 @@ INSTALLED_APPS = [
     'apps.tenants.apps.TenantsConfig',
     'apps.audit.apps.AuditConfig',
     'apps.files.apps.FilesConfig',
+    'apps.search.apps.SearchConfig',
 
     'apps.users.apps.UsersConfig',
     'apps.communities.apps.CommunitiesConfig',
