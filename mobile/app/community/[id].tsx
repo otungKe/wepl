@@ -292,7 +292,10 @@ export default function CommunityDetailScreen() {
 
   const isCreator = community?.created_by === myPhone;
   const isAdmin   = isCreator || members.some((m) => m.phone_number === myPhone && m.role === 'admin');
-  const isMember  = isCreator || members.some((m) => m.phone_number === myPhone);
+  // Trust the API's authoritative is_member flag; fall back to phone-matching only
+  // if it's absent. Prevents the NonMemberGate ("Request to Join") from showing to
+  // members when phone formats differ or the member list is restricted/partial.
+  const isMember  = community?.is_member ?? (isCreator || members.some((m) => m.phone_number === myPhone));
 
   const handleShare = async () => {
     setMenuVisible(false);
