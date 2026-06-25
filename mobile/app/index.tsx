@@ -324,14 +324,11 @@ const styles = StyleSheet.create({
   userCard: {
     alignItems: "center",
     backgroundColor: COLORS.white,
-    borderRadius: 20,
-    paddingVertical: 32,
+    borderRadius: 16,
+    paddingVertical: 28,
     paddingHorizontal: 24,
-    shadowColor: "#000",
-    shadowOpacity: 0.06,
-    shadowRadius: 12,
-    shadowOffset: { width: 0, height: 4 },
-    elevation: 3,
+    borderWidth: 1,
+    borderColor: COLORS.divider,
   },
   wbAvatar: {
     width: 80, height: 80, borderRadius: 40,
@@ -413,8 +410,6 @@ const styles = StyleSheet.create({
     fontWeight: "600",
     color: COLORS.textSecondary,
     marginBottom: 8,
-    textTransform: "uppercase",
-    letterSpacing: 0.5,
   },
   input: {
     borderWidth: 1.5,

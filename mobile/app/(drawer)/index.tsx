@@ -151,7 +151,7 @@ export default function CommunitiesScreen() {
 
       {/* Search bar */}
       <View style={styles.searchRow}>
-        <Ionicons name="search-outline" size={16} color={COLORS.textMuted} style={styles.searchIcon} />
+        <Ionicons name="search-outline" size={15} color={COLORS.textMuted} />
         <TextInput
           placeholder="Search communities..."
           placeholderTextColor={COLORS.textMuted}
@@ -167,13 +167,13 @@ export default function CommunitiesScreen() {
         <View style={styles.center}><ActivityIndicator size="large" color={COLORS.primary} /></View>
       ) : filtered.length === 0 && communities.length === 0 ? (
         <View style={styles.empty}>
-          <Ionicons name="people-outline" size={52} color={COLORS.textMuted} />
+          <Ionicons name="people-outline" size={40} color={COLORS.border} />
           <Text style={styles.emptyTitle}>No communities yet</Text>
           <Text style={styles.emptySub}>Create or join a community to start saving together.</Text>
         </View>
       ) : filtered.length === 0 ? (
         <View style={styles.empty}>
-          <Ionicons name="search-outline" size={40} color={COLORS.textMuted} />
+          <Ionicons name="search-outline" size={36} color={COLORS.border} />
           <Text style={styles.emptyTitle}>No results for "{search}"</Text>
         </View>
       ) : (
@@ -189,17 +189,14 @@ export default function CommunitiesScreen() {
                 onPress={() => router.push({ pathname: "/community/[id]", params: { id: String(item.id), name: item.name } })}
                 activeOpacity={0.7}
               >
-                <Avatar name={item.name} uri={item.community_photo} size={50} />
+                <Avatar name={item.name} uri={item.community_photo} size={46} />
                 <View style={styles.rowText}>
-                  <Text style={[styles.name, hasUnread && { fontWeight: "800" }]}>{item.name}</Text>
+                  <Text style={[styles.name, hasUnread && { fontWeight: "700" }]}>{item.name}</Text>
                   <Text style={styles.meta}>
                     {item.member_count} {item.member_count === 1 ? "member" : "members"}
                   </Text>
                 </View>
-                {hasUnread && (
-                  <View style={styles.unreadDot} />
-                )}
-                <Ionicons name="chevron-forward" size={16} color={COLORS.textMuted} />
+                {hasUnread && <View style={styles.unreadDot} />}
               </TouchableOpacity>
             );
           }}
@@ -392,40 +389,36 @@ const styles = StyleSheet.create({
   searchRow: {
     flexDirection: "row", alignItems: "center",
     backgroundColor: COLORS.white,
-    paddingHorizontal: 16, paddingBottom: 12,
+    paddingHorizontal: 16, paddingBottom: 10, paddingTop: 2,
     gap: 8,
     borderBottomWidth: 1, borderBottomColor: COLORS.divider,
   },
-  searchIcon: { marginLeft: 4 },
   searchInput: {
     flex: 1,
-    height: 38,
+    height: 36,
     backgroundColor: COLORS.background,
     borderRadius: RADIUS.full,
-    paddingHorizontal: 14,
+    paddingHorizontal: 12,
     fontSize: FONTS.sm,
     color: COLORS.text,
-    borderWidth: 1,
-    borderColor: COLORS.border,
   },
 
-  empty: { flex: 1, justifyContent: "center", alignItems: "center", paddingHorizontal: 40, gap: 10 },
-  emptyTitle: { fontSize: FONTS.lg, fontWeight: "700", color: COLORS.text },
+  empty: { flex: 1, justifyContent: "center", alignItems: "center", paddingHorizontal: 40, gap: 8 },
+  emptyTitle: { fontSize: FONTS.md, fontWeight: "600", color: COLORS.textSecondary, marginTop: 4 },
   emptySub: { fontSize: FONTS.sm, color: COLORS.textMuted, textAlign: "center", lineHeight: 20 },
 
   row: {
     flexDirection: "row", alignItems: "center",
-    paddingVertical: 13, paddingHorizontal: 16,
+    paddingVertical: 12, paddingHorizontal: 16,
     backgroundColor: COLORS.white, gap: 12,
   },
   rowText: { flex: 1 },
-  name: { fontSize: FONTS.md, fontWeight: "600", color: COLORS.text, marginBottom: 2 },
+  name: { fontSize: FONTS.md, fontWeight: "600", color: COLORS.text, marginBottom: 1 },
   meta: { fontSize: FONTS.sm, color: COLORS.textMuted },
-  divider: { height: 1, backgroundColor: COLORS.divider, marginLeft: 78 },
+  divider: { height: 1, backgroundColor: COLORS.divider, marginLeft: 74 },
   unreadDot: {
-    width: 10, height: 10, borderRadius: 5,
-    backgroundColor: COLORS.success,
-    marginRight: 4,
+    width: 8, height: 8, borderRadius: 4,
+    backgroundColor: COLORS.primary,
   },
 
   // Bottom sheet

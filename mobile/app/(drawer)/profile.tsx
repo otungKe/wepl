@@ -572,28 +572,26 @@ const s = StyleSheet.create({
   // Hero
   hero: {
     alignItems: "center",
-    paddingTop: 28, paddingBottom: 24,
+    paddingTop: 24, paddingBottom: 20,
     backgroundColor: COLORS.white,
-    marginBottom: 10,
+    marginBottom: 8,
   },
   avatar: {
-    width: 90, height: 90, borderRadius: 45,
+    width: 80, height: 80, borderRadius: 40,
     justifyContent: "center", alignItems: "center",
     marginBottom: 12,
-    elevation: 3,
-    shadowColor: "#000", shadowOpacity: 0.08, shadowRadius: 8, shadowOffset: { width: 0, height: 2 },
   },
-  avatarInitials: { fontSize: 34, fontWeight: "700" },
-  avatarImage:    { width: 90, height: 90, borderRadius: 45 },
+  avatarInitials: { fontSize: 30, fontWeight: "700" },
+  avatarImage:    { width: 80, height: 80, borderRadius: 40 },
   avatarEditBadge: {
     position: "absolute", bottom: 12, right: -2,
-    width: 24, height: 24, borderRadius: 12,
+    width: 22, height: 22, borderRadius: 11,
     backgroundColor: COLORS.primary,
     justifyContent: "center", alignItems: "center",
     borderWidth: 2, borderColor: COLORS.white,
   },
-  heroName:    { fontSize: FONTS.xl, fontWeight: "700", color: COLORS.text, marginBottom: 3 },
-  heroPhone:   { fontSize: FONTS.sm, color: COLORS.textMuted, marginBottom: 10 },
+  heroName:    { fontSize: FONTS.lg, fontWeight: "700", color: COLORS.text, marginBottom: 3 },
+  heroPhone:   { fontSize: FONTS.sm, color: COLORS.textMuted, marginBottom: 8 },
   kycBadge:    {
     flexDirection: "row", alignItems: "center", gap: 5,
     paddingHorizontal: 12, paddingVertical: 5,
@@ -658,14 +656,14 @@ const s = StyleSheet.create({
   // Section
   section: {
     backgroundColor: COLORS.white,
-    marginBottom: 10,
+    marginBottom: 8,
     paddingHorizontal: 16, paddingVertical: 16,
   },
   sectionHead: {
     flexDirection: "row", alignItems: "center", justifyContent: "space-between",
     marginBottom: 14,
   },
-  sectionTitle:  { fontSize: FONTS.sm, fontWeight: "700", color: COLORS.text, textTransform: "uppercase", letterSpacing: 0.6 },
+  sectionTitle:  { fontSize: FONTS.sm, fontWeight: "600", color: COLORS.textSecondary },
   sectionAction: { fontSize: FONTS.sm, color: COLORS.primary, fontWeight: "600" },
 
   // Stats
@@ -673,12 +671,11 @@ const s = StyleSheet.create({
   statCard: {
     flex: 1, backgroundColor: COLORS.background,
     borderRadius: RADIUS.md, padding: 14,
-    borderWidth: 1, borderColor: COLORS.divider,
   },
-  statHighlight: { borderColor: COLORS.warning + "60", backgroundColor: "#FFFBF0" },
-  statIcon:  { width: 32, height: 32, borderRadius: RADIUS.md, justifyContent: "center", alignItems: "center", marginBottom: 8 },
+  statHighlight: { backgroundColor: "#FFFBF0" },
+  statIcon:  { width: 30, height: 30, borderRadius: RADIUS.sm, justifyContent: "center", alignItems: "center", marginBottom: 8 },
   statValue: { fontSize: FONTS.lg, fontWeight: "700", color: COLORS.text, marginBottom: 2 },
-  statLabel: { fontSize: FONTS.xs, color: COLORS.textMuted, textTransform: "uppercase", letterSpacing: 0.4 },
+  statLabel: { fontSize: FONTS.xs, color: COLORS.textMuted, letterSpacing: 0.2 },
   statSub:   { fontSize: FONTS.xs, color: COLORS.textSecondary, marginTop: 3 },
 
   // Locked placeholders

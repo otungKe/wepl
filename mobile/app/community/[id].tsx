@@ -705,7 +705,6 @@ export default function CommunityDetailScreen() {
                       <Text style={styles.roleBadgeText}>{m.role}</Text>
                     </View>
                   ) : null}
-                  <Ionicons name="chevron-forward" size={16} color={COLORS.textMuted} />
                 </TouchableOpacity>
               );
             }
@@ -1006,12 +1005,15 @@ export default function CommunityDetailScreen() {
         }
         ListHeaderComponent={
           <>
-            {/* Profile section */}
-            <View style={styles.profile}>
-              <Avatar name={community?.name ?? ""} uri={community?.community_photo} size={140} />
-              <Text style={styles.cName}>{community?.name}</Text>
-              <Text style={styles.cStat}>{stat}</Text>
-              <Text style={styles.cStat}>{contribStat}</Text>
+            {/* Profile section — compact layout */}
+            <View style={styles.profileSection}>
+              <View style={styles.profile}>
+                <Avatar name={community?.name ?? ""} uri={community?.community_photo} size={64} />
+                <View style={styles.profileInfo}>
+                  <Text style={styles.cName}>{community?.name}</Text>
+                  <Text style={styles.cStat}>{stat} · {contribStat}</Text>
+                </View>
+              </View>
 
               {/* Invite code card */}
               {community?.invite_code && (
@@ -1024,7 +1026,7 @@ export default function CommunityDetailScreen() {
                     <TouchableOpacity style={styles.inviteBtn} onPress={handleCopyCode}>
                       <Ionicons
                         name={copied ? "checkmark" : "copy-outline"}
-                        size={16}
+                        size={15}
                         color={copied ? COLORS.success : COLORS.primary}
                       />
                       <Text style={[styles.inviteBtnText, copied && { color: COLORS.success }]}>
@@ -1032,7 +1034,7 @@ export default function CommunityDetailScreen() {
                       </Text>
                     </TouchableOpacity>
                     <TouchableOpacity style={styles.inviteBtn} onPress={handleShare}>
-                      <Ionicons name="share-outline" size={16} color={COLORS.primary} />
+                      <Ionicons name="share-outline" size={15} color={COLORS.primary} />
                       <Text style={styles.inviteBtnText}>Share</Text>
                     </TouchableOpacity>
                   </View>
@@ -1040,7 +1042,7 @@ export default function CommunityDetailScreen() {
               )}
             </View>
 
-            {/* Segmented control */}
+            {/* Tab control — underline style */}
             {(() => {
               const totalUnread = conversations.reduce((sum, c) => sum + (c.unread_count ?? 0), 0);
               const tabDefs: { key: Tab; label: string }[] = [
@@ -1050,7 +1052,7 @@ export default function CommunityDetailScreen() {
                 { key: "reports",       label: "Reports" },
               ];
               return (
-                <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.tabScroll} contentContainerStyle={{ paddingHorizontal: 12, gap: 8, paddingVertical: 10 }}>
+                <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.tabScroll} contentContainerStyle={{ paddingHorizontal: 4 }}>
                   {tabDefs.map(({ key: t, label }) => (
                     <TouchableOpacity
                       key={t}
@@ -1065,6 +1067,7 @@ export default function CommunityDetailScreen() {
                           </View>
                         )}
                       </View>
+                      {tab === t && <View style={styles.tabUnderline} />}
                     </TouchableOpacity>
                   ))}
                 </ScrollView>
@@ -1311,7 +1314,6 @@ export default function CommunityDetailScreen() {
                     <Text style={styles.roleBadgeText}>{m.role}</Text>
                   </View>
                 ) : null}
-                <Ionicons name="chevron-forward" size={16} color={COLORS.textMuted} />
               </TouchableOpacity>
             );
           }
@@ -1620,46 +1622,53 @@ const styles = StyleSheet.create({
   notFoundBtn:   { marginTop: 8, paddingHorizontal: 28, paddingVertical: 12, borderRadius: RADIUS.md, backgroundColor: COLORS.primary },
   notFoundBtnText: { color: COLORS.white, fontWeight: "700", fontSize: FONTS.md },
 
-  profile: { alignItems: "center", paddingVertical: 20 },
-  cName:   { marginTop: 14, fontSize: FONTS.xl, fontWeight: "bold", color: COLORS.text },
-  cStat:   { fontSize: FONTS.sm, color: COLORS.textMuted, marginTop: 4 },
+  profileSection: {
+    backgroundColor: COLORS.white,
+    paddingHorizontal: 16,
+    paddingTop: 16,
+    paddingBottom: 12,
+  },
+  profile: {
+    flexDirection: "row", alignItems: "center",
+    gap: 14, marginBottom: 12,
+  },
+  profileInfo: { flex: 1 },
+  cName:   { fontSize: FONTS.lg, fontWeight: "700", color: COLORS.text, marginBottom: 3 },
+  cStat:   { fontSize: FONTS.sm, color: COLORS.textMuted },
 
   inviteCard: {
-    marginTop: 16,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    backgroundColor: COLORS.primaryBg,
-    borderWidth: 1,
-    borderColor: COLORS.border,
-    borderRadius: RADIUS.lg,
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    width: "90%",
+    backgroundColor: COLORS.background,
+    borderRadius: RADIUS.md,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
   },
   inviteLeft: { gap: 2 },
-  inviteLabel: { fontSize: 11, color: COLORS.textMuted, fontWeight: "600", textTransform: "uppercase", letterSpacing: 0.5 },
-  inviteCode: { fontSize: FONTS.lg, fontWeight: "700", color: COLORS.text, letterSpacing: 3 },
-  inviteActions: { flexDirection: "row", gap: 8 },
+  inviteLabel: { fontSize: 10, color: COLORS.textMuted, fontWeight: "600", textTransform: "uppercase", letterSpacing: 0.5 },
+  inviteCode: { fontSize: FONTS.md, fontWeight: "700", color: COLORS.text, letterSpacing: 2 },
+  inviteActions: { flexDirection: "row", gap: 6 },
   inviteBtn: {
     flexDirection: "row", alignItems: "center", gap: 4,
-    paddingHorizontal: 10, paddingVertical: 7,
+    paddingHorizontal: 10, paddingVertical: 6,
     backgroundColor: COLORS.white,
-    borderRadius: RADIUS.md,
+    borderRadius: RADIUS.sm,
     borderWidth: 1, borderColor: COLORS.border,
   },
-  inviteBtnText: { fontSize: FONTS.sm, color: COLORS.primary, fontWeight: "600" },
+  inviteBtnText: { fontSize: FONTS.xs, color: COLORS.primary, fontWeight: "600" },
 
-  tabScroll:     { flexGrow: 0 },
-  tab:           { paddingHorizontal: 14, paddingVertical: 7, borderRadius: RADIUS.full, backgroundColor: COLORS.white, borderWidth: 1, borderColor: COLORS.border },
-  tabActive:     { backgroundColor: COLORS.primary, borderColor: COLORS.primary },
-  tabText:       { fontSize: FONTS.sm, color: COLORS.textMuted, fontWeight: "600" },
-  tabTextActive: { color: COLORS.white },
+  tabScroll:     { flexGrow: 0, borderBottomWidth: 1, borderBottomColor: COLORS.divider },
+  tab:           { paddingHorizontal: 16, paddingVertical: 12, alignItems: "center" },
+  tabActive:     {},
+  tabText:       { fontSize: FONTS.sm, color: COLORS.textMuted, fontWeight: "500" },
+  tabTextActive: { color: COLORS.primary, fontWeight: "600" },
+  tabUnderline:  { position: "absolute", bottom: 0, left: 0, right: 0, height: 2, backgroundColor: COLORS.primary },
   tabBadge: {
-    minWidth: 18, height: 18, borderRadius: 9,
+    minWidth: 16, height: 16, borderRadius: 8,
     backgroundColor: COLORS.primary,
     justifyContent: "center", alignItems: "center",
-    paddingHorizontal: 4,
+    paddingHorizontal: 3,
   },
   tabBadgeText: { fontSize: 10, fontWeight: "700", color: COLORS.white },
 
@@ -1678,8 +1687,8 @@ const styles = StyleSheet.create({
 
   row: {
     flexDirection: "row", alignItems: "center",
-    paddingVertical: 12, paddingHorizontal: 20,
-    backgroundColor: COLORS.white, gap: 14,
+    paddingVertical: 11, paddingHorizontal: 16,
+    backgroundColor: COLORS.white, gap: 12,
   },
   rowText: { flex: 1 },
   rowName:     { fontSize: FONTS.md, fontWeight: "600", color: COLORS.text },
@@ -1687,7 +1696,7 @@ const styles = StyleSheet.create({
   onlineText:  { fontSize: 11, color: "#22C55E", fontWeight: "600", marginTop: 2 },
   offlineText: { fontSize: 11, color: COLORS.textMuted, marginTop: 2 },
   rowTime: { fontSize: 11, color: COLORS.textMuted },
-  divider: { height: 1, backgroundColor: COLORS.divider, marginLeft: 74 },
+  divider: { height: 1, backgroundColor: COLORS.divider, marginLeft: 68 },
 
   unreadBadge: {
     minWidth: 20, height: 20, borderRadius: 10,
@@ -1844,51 +1853,51 @@ const editSheetStyles = StyleSheet.create({
 const overviewStyles = StyleSheet.create({
   wealthCard: {
     backgroundColor: COLORS.primary,
-    borderRadius: RADIUS.xl,
-    padding: 24,
-    alignItems: "center",
+    borderRadius: RADIUS.lg,
+    paddingHorizontal: 20,
+    paddingVertical: 20,
   },
-  wealthLabel:  { fontSize: 11, fontWeight: "700", color: "rgba(255,255,255,0.7)", letterSpacing: 1.2, marginBottom: 6 },
-  wealthAmount: { fontSize: 36, fontWeight: "800", color: COLORS.white, marginBottom: 6 },
-  wealthMeta:   { fontSize: FONTS.sm, color: "rgba(255,255,255,0.75)" },
+  wealthLabel:  { fontSize: 11, fontWeight: "600", color: "rgba(255,255,255,0.65)", letterSpacing: 0.8, marginBottom: 4 },
+  wealthAmount: { fontSize: 32, fontWeight: "700", color: COLORS.white, marginBottom: 4 },
+  wealthMeta:   { fontSize: FONTS.sm, color: "rgba(255,255,255,0.7)" },
 
   quickRow: { flexDirection: "row", justifyContent: "space-around" },
   quickBtn: { alignItems: "center", gap: 6 },
-  quickIcon: { width: 52, height: 52, borderRadius: 16, justifyContent: "center", alignItems: "center" },
-  quickLabel: { fontSize: 12, fontWeight: "600", color: COLORS.textSecondary },
+  quickIcon: { width: 48, height: 48, borderRadius: 14, justifyContent: "center", alignItems: "center" },
+  quickLabel: { fontSize: 11, fontWeight: "600", color: COLORS.textSecondary },
 
   sectionHead: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 10 },
-  sectionLabel: { fontSize: 11, fontWeight: "700", color: COLORS.textMuted, letterSpacing: 0.8 },
-  seeAll: { fontSize: FONTS.sm, fontWeight: "700", color: COLORS.primary },
+  sectionLabel: { fontSize: 11, fontWeight: "600", color: COLORS.textMuted, letterSpacing: 0.5 },
+  seeAll: { fontSize: FONTS.sm, fontWeight: "600", color: COLORS.primary },
 
   poolCard: {
     flexDirection: "row", alignItems: "center",
     backgroundColor: COLORS.white, borderRadius: RADIUS.md,
-    padding: 14, marginBottom: 8,
-    borderWidth: 1, borderColor: COLORS.border,
+    paddingHorizontal: 14, paddingVertical: 12, marginBottom: 8,
+    borderWidth: 1, borderColor: COLORS.divider,
   },
-  poolTitle:   { fontSize: FONTS.md, fontWeight: "700", color: COLORS.text, marginBottom: 2 },
-  poolAmount:  { fontSize: FONTS.md, fontWeight: "600", color: COLORS.primary },
-  poolTarget:  { fontWeight: "400", color: COLORS.textMuted },
+  poolTitle:   { fontSize: FONTS.md, fontWeight: "600", color: COLORS.text, marginBottom: 2 },
+  poolAmount:  { fontSize: FONTS.md, fontWeight: "700", color: COLORS.primary },
+  poolTarget:  { fontWeight: "400", color: COLORS.textMuted, fontSize: FONTS.sm },
   poolMeta:    { fontSize: FONTS.sm, color: COLORS.textMuted, marginTop: 4 },
-  progressBg:  { height: 4, backgroundColor: COLORS.border, borderRadius: 2, marginTop: 6, overflow: "hidden" },
-  progressFill:{ height: 4, backgroundColor: COLORS.primary, borderRadius: 2 },
+  progressBg:  { height: 3, backgroundColor: COLORS.divider, borderRadius: 2, marginTop: 8, overflow: "hidden" },
+  progressFill:{ height: 3, backgroundColor: COLORS.primary, borderRadius: 2 },
 
   convRow: { flexDirection: "row", alignItems: "center", paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: COLORS.divider },
   convTopic:   { fontSize: FONTS.md, fontWeight: "600", color: COLORS.text, marginBottom: 2 },
   convPreview: { fontSize: FONTS.sm, color: COLORS.textMuted },
-  unreadDot:   { backgroundColor: COLORS.primary, borderRadius: 10, minWidth: 20, height: 20, justifyContent: "center", alignItems: "center", paddingHorizontal: 5 },
-  unreadDotText: { color: COLORS.white, fontSize: 11, fontWeight: "700" },
+  unreadDot:   { backgroundColor: COLORS.primary, borderRadius: 10, minWidth: 18, height: 18, justifyContent: "center", alignItems: "center", paddingHorizontal: 4 },
+  unreadDotText: { color: COLORS.white, fontSize: 10, fontWeight: "700" },
 
-  emptyPool:      { alignItems: "center", gap: 10, paddingVertical: 24, backgroundColor: COLORS.white, borderRadius: RADIUS.md, borderWidth: 1, borderColor: COLORS.border },
+  emptyPool:      { alignItems: "center", gap: 8, paddingVertical: 20 },
   emptyPoolText:  { fontSize: FONTS.sm, color: COLORS.textMuted },
-  emptyPoolBtn:     { backgroundColor: COLORS.primaryPale, paddingHorizontal: 20, paddingVertical: 8, borderRadius: RADIUS.full },
-  emptyPoolBtnText: { color: COLORS.primary, fontWeight: "700", fontSize: FONTS.sm },
+  emptyPoolBtn:     { backgroundColor: COLORS.primaryPale, paddingHorizontal: 16, paddingVertical: 7, borderRadius: RADIUS.md },
+  emptyPoolBtnText: { color: COLORS.primary, fontWeight: "600", fontSize: FONTS.sm },
 
   // Members preview row
   membersRow:          { flexDirection: "row", flexWrap: "wrap", gap: 12 },
-  memberAvatarWrap:    { alignItems: "center", width: 52 },
-  memberAvatarName:    { fontSize: 10, color: COLORS.textSecondary, fontWeight: "600", marginTop: 4, textAlign: "center" },
+  memberAvatarWrap:    { alignItems: "center", width: 50 },
+  memberAvatarName:    { fontSize: 10, color: COLORS.textSecondary, fontWeight: "500", marginTop: 4, textAlign: "center" },
   memberMore:          { width: 46, height: 46, borderRadius: 23, backgroundColor: COLORS.primaryPale, justifyContent: "center", alignItems: "center" },
   memberMoreText:      { fontSize: FONTS.sm, fontWeight: "700", color: COLORS.primary },
 });

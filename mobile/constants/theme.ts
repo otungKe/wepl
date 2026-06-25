@@ -1,3 +1,23 @@
+// Spacing scale — use these values only; no arbitrary numbers
+export const SPACE = {
+  xs:   4,
+  sm:   8,
+  md:   12,
+  lg:   16,
+  xl:   20,
+  xxl:  24,
+  xxxl: 32,
+  huge: 48,
+  giant: 64,
+} as const;
+
+// Typography line heights
+export const LINE = {
+  tight:  1.2,
+  normal: 1.4,
+  loose:  1.6,
+} as const;
+
 // I&M-inspired palette — deep forest green + gold, minimalist
 export const COLORS = {
   // Primary — I&M forest green
