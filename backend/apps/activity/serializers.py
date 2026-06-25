@@ -12,6 +12,8 @@ class ActivitySerializer(serializers.ModelSerializer):
             'user',
             'activity_type',
             'message',
+            'visibility',
+            'community',
             'created_at',
         ]
 
