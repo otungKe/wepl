@@ -9,7 +9,7 @@ import { isAuthenticated } from '@/lib/auth'
 const FEATURES = [
   { icon: Users, title: 'Communities & chamas', desc: 'Create or join savings groups and stay in sync.' },
   { icon: Banknote, title: 'Contributions & ROSCA', desc: 'Pool funds, rotate payouts, run welfare & shares.' },
-  { icon: ShieldCheck, title: 'Secure by design', desc: 'Phone + PIN auth, M-Pesa payments, audited ledger.' },
+  { icon: ShieldCheck, title: 'Secure by design', desc: 'Phone + PIN auth, M-PESA payments, audited ledger.' },
 ]
 
 export default function WelcomePage() {
@@ -31,7 +31,7 @@ export default function WelcomePage() {
         </h1>
         <p className="mt-4 max-w-xl text-center text-text-secondary">
           Run your chama, SACCO or welfare group end-to-end — contributions, ROSCA payouts,
-          emergency advances and shares, all over M-Pesa.
+          emergency advances and shares, all over M-PESA.
         </p>
 
         <div className="mt-8 flex w-full max-w-xs flex-col gap-3">

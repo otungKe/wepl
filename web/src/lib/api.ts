@@ -438,7 +438,7 @@ export const shares = {
 }
 
 // ─────────────────────────────────────────────────────────────
-// Payments (M-Pesa STK push)
+// Payments (M-PESA STK push)
 // ─────────────────────────────────────────────────────────────
 export const payments = {
   stkPush: (data: { payment_type?: 'contribution' | 'welfare' | 'shares'; contribution_id?: number; community_id?: number; amount: number; phone_number?: string }) =>
