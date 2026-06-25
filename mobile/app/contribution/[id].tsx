@@ -1921,7 +1921,7 @@ const styles = StyleSheet.create({
   sheetHandle:  { width: 40, height: 4, backgroundColor: COLORS.border, borderRadius: 2, alignSelf: "center", marginBottom: 16 },
   sheetTitle:   { fontSize: FONTS.xl, fontWeight: "700", color: COLORS.text, marginBottom: 8 },
   sheetHint:    { fontSize: FONTS.sm, color: COLORS.textMuted, marginBottom: 16, lineHeight: 18 },
-  fieldLabel:   { fontSize: FONTS.sm, fontWeight: "600", color: COLORS.textSecondary, marginBottom: 6, marginTop: 10, textTransform: "uppercase", letterSpacing: 0.4 },
+  fieldLabel:   { fontSize: FONTS.sm, fontWeight: "600", color: COLORS.textSecondary, marginBottom: 6, marginTop: 10 },
   input:        { borderWidth: 1.5, borderColor: COLORS.border, borderRadius: RADIUS.md, padding: 13, fontSize: FONTS.md, color: COLORS.text, backgroundColor: COLORS.background, marginBottom: 4 },
   sheetActions: { flexDirection: "row", gap: 12, marginTop: 16 },
   cancelBtn:    { flex: 1, padding: 14, borderRadius: RADIUS.md, borderWidth: 1.5, borderColor: COLORS.border, alignItems: "center" },
@@ -1970,7 +1970,7 @@ const styles = StyleSheet.create({
 const editStyles = StyleSheet.create({
   fieldLabel: {
     fontSize: FONTS.sm, fontWeight: "600", color: COLORS.textSecondary,
-    marginBottom: 6, marginTop: 8, textTransform: "uppercase", letterSpacing: 0.4,
+    marginBottom: 6, marginTop: 8,
   },
   input: {
     borderWidth: 1.5, borderColor: COLORS.border, borderRadius: RADIUS.md,

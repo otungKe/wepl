@@ -868,7 +868,7 @@ const styles = StyleSheet.create({
   progressLabel: { fontSize: FONTS.sm, color: COLORS.textMuted, fontWeight: "600" },
 
   sectionTitle: { fontSize: FONTS.md, fontWeight: "700", color: COLORS.text, marginTop: 16, marginBottom: 10 },
-  label: { fontSize: FONTS.sm, fontWeight: "600", color: COLORS.textSecondary, marginTop: 16, marginBottom: 8, textTransform: "uppercase", letterSpacing: 0.4 },
+  label: { fontSize: FONTS.sm, fontWeight: "600", color: COLORS.textSecondary, marginTop: 16, marginBottom: 8,  },
   hint:  { fontSize: FONTS.sm, color: COLORS.textMuted, marginTop: 4, lineHeight: 18 },
   muted: { fontSize: FONTS.sm, color: COLORS.textMuted },
 

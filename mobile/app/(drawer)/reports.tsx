@@ -422,12 +422,12 @@ const styles = StyleSheet.create({
   },
   kpiIcon:  { width: 32, height: 32, borderRadius: RADIUS.md, justifyContent: "center", alignItems: "center", marginBottom: 8 },
   kpiValue: { fontSize: FONTS.lg, fontWeight: "700", color: COLORS.text, marginBottom: 2 },
-  kpiLabel: { fontSize: FONTS.xs, color: COLORS.textMuted, textTransform: "uppercase", letterSpacing: 0.4 },
+  kpiLabel: { fontSize: FONTS.xs, color: COLORS.textMuted,  },
   kpiSub:   { fontSize: FONTS.xs, color: COLORS.textSecondary, marginTop: 3 },
 
   // Cards
   card:      { backgroundColor: COLORS.white, borderRadius: RADIUS.lg, padding: 16, borderWidth: 1, borderColor: COLORS.divider },
-  cardTitle: { fontSize: FONTS.sm, fontWeight: "700", color: COLORS.text, marginBottom: 14, textTransform: "uppercase", letterSpacing: 0.5 },
+  cardTitle: { fontSize: FONTS.sm, fontWeight: "700", color: COLORS.text, marginBottom: 14,  },
 
   // Warning card
   warningCard: { borderColor: COLORS.warning + "50", backgroundColor: "#FFFCF0" },
@@ -442,7 +442,7 @@ const styles = StyleSheet.create({
     backgroundColor: COLORS.white, borderRadius: RADIUS.lg,
     padding: 14, borderWidth: 1, borderColor: COLORS.divider,
   },
-  memberLabel: { fontSize: FONTS.xs, color: COLORS.textMuted, textTransform: "uppercase", letterSpacing: 0.4 },
+  memberLabel: { fontSize: FONTS.xs, color: COLORS.textMuted,  },
   memberDate:  { fontSize: FONTS.md, fontWeight: "600", color: COLORS.text },
 
   // Bar chart
@@ -483,7 +483,7 @@ const styles = StyleSheet.create({
   txDate:   { fontSize: FONTS.sm, color: COLORS.textMuted },
   txRef:    { fontSize: FONTS.xs, color: COLORS.textMuted, marginTop: 1 },
   txAmount: { fontSize: FONTS.md, fontWeight: "700", marginBottom: 2 },
-  txType:   { fontSize: FONTS.xs, color: COLORS.textMuted, textTransform: "uppercase" },
+  txType:   { fontSize: FONTS.xs, color: COLORS.textMuted,  },
 
   // Contribution cards
   contribCard: {
@@ -497,9 +497,9 @@ const styles = StyleSheet.create({
   statusChip:    { paddingHorizontal: 10, paddingVertical: 4, borderRadius: RADIUS.full },
   statusActive:  { backgroundColor: COLORS.success + "18" },
   statusClosed:  { backgroundColor: COLORS.background },
-  statusText:    { fontSize: FONTS.xs, fontWeight: "700", textTransform: "uppercase" },
+  statusText:    { fontSize: FONTS.xs, fontWeight: "700",  },
   contribAmounts: { flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start" },
-  contribAmountLabel: { fontSize: FONTS.xs, color: COLORS.textMuted, marginBottom: 2, textTransform: "uppercase", letterSpacing: 0.3 },
+  contribAmountLabel: { fontSize: FONTS.xs, color: COLORS.textMuted, marginBottom: 2,  },
   contribAmount:  { fontSize: FONTS.lg, fontWeight: "700", color: COLORS.text },
 
   progressBg:     { height: 6, backgroundColor: COLORS.divider, borderRadius: RADIUS.full, overflow: "hidden" },

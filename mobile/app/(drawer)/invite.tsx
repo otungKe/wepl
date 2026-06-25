@@ -57,8 +57,8 @@ export default function InviteScreen() {
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: COLORS.background },
   body: { flex: 1, alignItems: "center", paddingHorizontal: 32, paddingTop: 40 },
-  hero: { fontSize: 72, marginBottom: 16 },
-  title: { fontSize: FONTS.xl, fontWeight: "bold", color: COLORS.text, marginBottom: 10, textAlign: "center" },
+  hero: { fontSize: 56, marginBottom: 16 },
+  title: { fontSize: FONTS.xl, fontWeight: "700", color: COLORS.text, marginBottom: 10, textAlign: "center" },
   sub: { fontSize: FONTS.md, color: COLORS.textSecondary, textAlign: "center", lineHeight: 22, marginBottom: 32 },
 
   card: {
@@ -68,7 +68,7 @@ const styles = StyleSheet.create({
     padding: 18,
     marginBottom: 28,
   },
-  cardLabel: { fontSize: 11, color: COLORS.textMuted, textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 8 },
+  cardLabel: { fontSize: 11, color: COLORS.textMuted, marginBottom: 8 },
   cardBody: { fontSize: FONTS.md, color: COLORS.text, lineHeight: 22 },
 
   shareBtn: {
@@ -78,5 +78,5 @@ const styles = StyleSheet.create({
     borderRadius: RADIUS.md,
     alignItems: "center",
   },
-  shareBtnText: { color: COLORS.white, fontWeight: "bold", fontSize: FONTS.md },
+  shareBtnText: { color: COLORS.white, fontWeight: "700", fontSize: FONTS.md },
 });

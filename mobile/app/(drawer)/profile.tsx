@@ -696,7 +696,7 @@ const s = StyleSheet.create({
     marginBottom: 8,
   },
   lockedValue: { fontSize: FONTS.lg, fontWeight: "700", color: COLORS.border, marginBottom: 2 },
-  lockedLabel: { fontSize: FONTS.xs, color: COLORS.textMuted, textTransform: "uppercase", letterSpacing: 0.4 },
+  lockedLabel: { fontSize: FONTS.xs, color: COLORS.textMuted },
   lockedHint:  {
     width: "100%", textAlign: "center", marginTop: 8,
     fontSize: FONTS.xs, color: COLORS.textMuted, fontStyle: "italic",

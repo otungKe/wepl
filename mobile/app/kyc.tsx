@@ -1126,7 +1126,7 @@ const s = StyleSheet.create({
   fieldGroup: { marginBottom: 20 },
   label: {
     fontSize: FONTS.sm, fontWeight: "600", color: COLORS.textSecondary,
-    marginBottom: 4, textTransform: "uppercase", letterSpacing: 0.5,
+    marginBottom: 4,
   },
   fieldHint: {
     fontSize: FONTS.xs, color: COLORS.textMuted, marginBottom: 8, lineHeight: 16,

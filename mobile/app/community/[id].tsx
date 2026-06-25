@@ -1646,7 +1646,7 @@ const styles = StyleSheet.create({
     paddingVertical: 10,
   },
   inviteLeft: { gap: 2 },
-  inviteLabel: { fontSize: 10, color: COLORS.textMuted, fontWeight: "600", textTransform: "uppercase", letterSpacing: 0.5 },
+  inviteLabel: { fontSize: 10, color: COLORS.textMuted, fontWeight: "600" },
   inviteCode: { fontSize: FONTS.md, fontWeight: "700", color: COLORS.text, letterSpacing: 2 },
   inviteActions: { flexDirection: "row", gap: 6 },
   inviteBtn: {
@@ -1710,7 +1710,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 8, paddingVertical: 3,
     backgroundColor: COLORS.primaryPale, borderRadius: RADIUS.full,
   },
-  roleBadgeText: { fontSize: 10, color: COLORS.primary, fontWeight: "700", textTransform: "uppercase" },
+  roleBadgeText: { fontSize: 10, color: COLORS.primary, fontWeight: "600" },
 
   contribCard: {
     backgroundColor: COLORS.white,
@@ -1718,7 +1718,7 @@ const styles = StyleSheet.create({
     borderRadius: RADIUS.lg,
     padding: 14,
   },
-  contribTitle: { fontSize: FONTS.md, fontWeight: "bold", color: COLORS.text, marginBottom: 6 },
+  contribTitle: { fontSize: FONTS.md, fontWeight: "600", color: COLORS.text, marginBottom: 6 },
   contribAmount: { fontSize: FONTS.sm, color: COLORS.textSecondary, marginBottom: 8 },
   progressBg: { height: 6, backgroundColor: COLORS.divider, borderRadius: RADIUS.full, overflow: "hidden" },
   progressFill: { height: "100%", backgroundColor: COLORS.primary },
@@ -1820,7 +1820,7 @@ const styles = StyleSheet.create({
 const editSheetStyles = StyleSheet.create({
   fieldLabel: {
     fontSize: FONTS.sm, fontWeight: "600", color: COLORS.textSecondary,
-    marginBottom: 6, marginTop: 4, textTransform: "uppercase", letterSpacing: 0.4,
+    marginBottom: 6, marginTop: 4,
   },
   input: {
     borderWidth: 1.5, borderColor: COLORS.border, borderRadius: RADIUS.md,

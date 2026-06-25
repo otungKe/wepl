@@ -7,6 +7,7 @@ import {
   ActivityIndicator,
   RefreshControl,
 } from "react-native";
+import { Ionicons } from "@expo/vector-icons";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useFocusEffect, router } from "expo-router";
 import { getMyTransactions, Transaction } from "../../api/contributions";
@@ -61,7 +62,7 @@ export default function TransactionsScreen() {
         <View style={styles.center}><ActivityIndicator size="large" color={COLORS.primary} /></View>
       ) : transactions.length === 0 ? (
         <View style={styles.empty}>
-          <Text style={styles.emptyEmoji}>📈</Text>
+          <Ionicons name="swap-vertical-outline" size={40} color={COLORS.border} />
           <Text style={styles.emptyTitle}>No transactions yet</Text>
           <Text style={styles.emptySub}>Your contributions and payments will appear here.</Text>
         </View>
@@ -83,9 +84,8 @@ const styles = StyleSheet.create({
   center: { flex: 1, justifyContent: "center", alignItems: "center" },
 
   empty: { flex: 1, justifyContent: "center", alignItems: "center", paddingHorizontal: 32 },
-  emptyEmoji: { fontSize: 56, marginBottom: 16 },
-  emptyTitle: { fontSize: FONTS.xl, fontWeight: "bold", color: COLORS.text, marginBottom: 8 },
-  emptySub:   { fontSize: FONTS.md, color: COLORS.textSecondary, textAlign: "center" },
+  emptyTitle: { fontSize: FONTS.md, fontWeight: "600", color: COLORS.textSecondary, marginTop: 10, marginBottom: 6 },
+  emptySub:   { fontSize: FONTS.sm, color: COLORS.textMuted, textAlign: "center", lineHeight: 20 },
 
   row: {
     flexDirection: "row", alignItems: "center",
@@ -95,12 +95,12 @@ const styles = StyleSheet.create({
   iconBox: { width: 40, height: 40, borderRadius: RADIUS.full, justifyContent: "center", alignItems: "center" },
   iconOut: { backgroundColor: COLORS.primary + "15" },
   iconIn:  { backgroundColor: COLORS.success + "15" },
-  icon:    { fontSize: 18, fontWeight: "bold", color: COLORS.primary },
+  icon:    { fontSize: 18, fontWeight: "700", color: COLORS.primary },
 
   title: { fontSize: FONTS.md, fontWeight: "600", color: COLORS.text, marginBottom: 2 },
   date:  { fontSize: FONTS.sm, color: COLORS.textMuted },
 
-  amount: { fontSize: FONTS.md, fontWeight: "bold" },
+  amount: { fontSize: FONTS.md, fontWeight: "600" },
   amountOut: { color: COLORS.text },
   amountIn: { color: COLORS.success },
 

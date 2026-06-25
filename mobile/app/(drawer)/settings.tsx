@@ -757,10 +757,8 @@ const s = StyleSheet.create({
 
   sectionHeader: {
     fontSize: FONTS.xs,
-    fontWeight: "700",
+    fontWeight: "600",
     color: COLORS.textMuted,
-    textTransform: "uppercase",
-    letterSpacing: 0.9,
     marginTop: 16,
     marginBottom: 6,
     paddingHorizontal: 4,
@@ -787,8 +785,6 @@ const s = StyleSheet.create({
     fontSize: FONTS.xs,
     color: COLORS.textMuted,
     fontWeight: "600",
-    textTransform: "uppercase",
-    letterSpacing: 0.6,
   },
 
   row: {
