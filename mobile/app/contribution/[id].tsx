@@ -967,8 +967,12 @@ export default function ContributionDetailScreen() {
       )}
 
       <ScrollView contentContainerStyle={{ paddingBottom: 32 }}>
-        {/* Hero */}
+        {/* Hero — physical card style */}
         <View style={styles.hero}>
+          <View style={styles.heroTopRow}>
+            <Text style={styles.heroLabel}>Pool Balance</Text>
+            <Ionicons name="card-outline" size={20} color="rgba(255,255,255,0.35)" />
+          </View>
           <Text style={styles.heroAmount}>KES {cur.toLocaleString()}</Text>
           {tgt > 0 && (
             <>
@@ -978,36 +982,32 @@ export default function ContributionDetailScreen() {
               <Text style={styles.progressLabel}>{Math.round(pct)}% of KES {tgt.toLocaleString()}</Text>
             </>
           )}
-          {/* Config badges */}
-          <View style={styles.heroBadges}>
-            <View style={styles.heroBadge}>
-              <Text style={styles.heroBadgeText}>{contribution.frequency.charAt(0).toUpperCase() + contribution.frequency.slice(1)}</Text>
-            </View>
-            <View style={styles.heroBadge}>
-              <Text style={styles.heroBadgeText}>
-                {contribution.amount_type === 'fixed' && contribution.fixed_amount
-                  ? `KES ${Number(contribution.fixed_amount).toLocaleString()} fixed`
-                  : 'Open amount'}
-              </Text>
-            </View>
-            <View style={styles.heroBadge}>
-              <Text style={styles.heroBadgeText}>{contribution.voting_label}</Text>
-            </View>
-            {contribution.tenure_type !== 'open' && (
+          <View style={styles.heroFooter}>
+            <Text style={styles.heroMeta}>
+              {contribution.participant_count} member{contribution.participant_count !== 1 ? 's' : ''}
+            </Text>
+            <View style={styles.heroBadges}>
               <View style={styles.heroBadge}>
-                <Text style={styles.heroBadgeText}>
-                  {contribution.tenure_type === 'date' && contribution.end_date
-                    ? `Ends ${contribution.end_date}`
-                    : contribution.tenure_type === 'period' && contribution.period_months
-                    ? `${contribution.period_months}mo term`
-                    : ''}
-                </Text>
+                <Text style={styles.heroBadgeText}>{contribution.frequency.charAt(0).toUpperCase() + contribution.frequency.slice(1)}</Text>
               </View>
-            )}
+              {contribution.amount_type === 'fixed' && contribution.fixed_amount ? (
+                <View style={styles.heroBadge}>
+                  <Text style={styles.heroBadgeText}>KES {Number(contribution.fixed_amount).toLocaleString()} fixed</Text>
+                </View>
+              ) : null}
+              {contribution.tenure_type !== 'open' && (
+                <View style={styles.heroBadge}>
+                  <Text style={styles.heroBadgeText}>
+                    {contribution.tenure_type === 'date' && contribution.end_date
+                      ? `Until ${contribution.end_date}`
+                      : contribution.tenure_type === 'period' && contribution.period_months
+                      ? `${contribution.period_months}mo`
+                      : ''}
+                  </Text>
+                </View>
+              )}
+            </View>
           </View>
-          <Text style={styles.heroMeta}>
-            {contribution.participant_count} member{contribution.participant_count !== 1 ? 's' : ''}
-          </Text>
         </View>
 
         {/* M-Pesa CTA — only for active participants */}
@@ -1016,8 +1016,8 @@ export default function ContributionDetailScreen() {
             style={styles.mpesaBtn}
             onPress={() => { if (requireKYC()) setShowMpesa(true); }}
           >
-            <Ionicons name="phone-portrait-outline" size={18} color={COLORS.white} />
-            <Text style={styles.mpesaBtnText}>Pay with M-Pesa</Text>
+            <Ionicons name="add-circle-outline" size={18} color={COLORS.white} />
+            <Text style={styles.mpesaBtnText}>Contribute</Text>
           </TouchableOpacity>
         )}
 
@@ -1074,8 +1074,8 @@ export default function ContributionDetailScreen() {
           </TouchableOpacity>
         )}
 
-        {/* Tab bar */}
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.tabScroll} contentContainerStyle={{ paddingHorizontal: 16, gap: 8 }}>
+        {/* Tab bar — underline style */}
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.tabScroll} contentContainerStyle={{ paddingHorizontal: 4 }}>
           {tabs.map((t) => (
             <TouchableOpacity
               key={t.key}
@@ -1090,6 +1090,7 @@ export default function ContributionDetailScreen() {
                   </View>
                 )}
               </View>
+              {activeTab === t.key && <View style={styles.tabUnderline} />}
             </TouchableOpacity>
           ))}
         </ScrollView>
@@ -1208,44 +1209,39 @@ export default function ContributionDetailScreen() {
         {activeTab === 'disbursements' && (
           <View style={styles.section}>
 
-            {/* Standing Orders — summary entry point */}
-            {isAdmin && (
-              <>
+            {/* Payout options grid */}
+            <View style={styles.payoutGrid}>
+              <TouchableOpacity
+                style={styles.payoutOption}
+                onPress={() => { if (requireKYC()) setShowDisbursement(true); }}
+                activeOpacity={0.7}
+              >
+                <View style={[styles.payoutIcon, { backgroundColor: COLORS.primaryPale }]}>
+                  <Ionicons name="arrow-up-circle-outline" size={22} color={COLORS.primary} />
+                </View>
+                <Text style={styles.payoutOptionTitle}>Request Payout</Text>
+                <Text style={styles.payoutOptionSub}>Submit for approval</Text>
+              </TouchableOpacity>
+              {isAdmin && (
                 <TouchableOpacity
-                  style={styles.soSummaryRow}
+                  style={styles.payoutOption}
                   onPress={() => setShowManageOrders(true)}
                   activeOpacity={0.7}
                 >
-                  <View style={styles.soSummaryLeft}>
-                    <Ionicons name="calendar-outline" size={20} color={COLORS.primary} />
-                    <View style={{ flex: 1 }}>
-                      <Text style={styles.sectionLabel}>STANDING ORDERS</Text>
-                      <Text style={styles.soSummarySubtitle}>
-                        {activeOrderCount > 0
-                          ? `${activeOrderCount} active · tap to manage`
-                          : 'None set up yet · tap to create'}
-                      </Text>
-                    </View>
+                  <View style={[styles.payoutIcon, { backgroundColor: "#f0fdf4" }]}>
+                    <Ionicons name="calendar-outline" size={22} color={COLORS.success} />
                   </View>
-                  <View style={styles.soSummaryRight}>
-                    {activeOrderCount > 0 && (
-                      <View style={styles.soBadge}>
-                        <Text style={styles.soBadgeText}>{activeOrderCount}</Text>
-                      </View>
-                    )}
-                    <Ionicons name="chevron-forward" size={16} color={COLORS.textMuted} />
-                  </View>
+                  <Text style={styles.payoutOptionTitle}>Standing Order</Text>
+                  <Text style={styles.payoutOptionSub}>
+                    {activeOrderCount > 0 ? `${activeOrderCount} active` : 'Auto-payout'}
+                  </Text>
                 </TouchableOpacity>
-                <View style={styles.dividerLine} />
-              </>
-            )}
+              )}
+            </View>
 
             {/* Disbursement Requests */}
             <View style={styles.sectionHead}>
-              <Text style={styles.sectionLabel}>DISBURSEMENT REQUESTS</Text>
-              <TouchableOpacity onPress={() => { if (requireKYC()) setShowDisbursement(true); }}>
-                <Text style={styles.sectionAction}>+ Request</Text>
-              </TouchableOpacity>
+              <Text style={styles.sectionLabel}>REQUESTS</Text>
             </View>
             <Text style={styles.secNote}>
               Requires {contribution.voting_label} approval before funds move.
@@ -1814,15 +1810,18 @@ const styles = StyleSheet.create({
   statusBannerArchived: { backgroundColor: COLORS.textMuted },
   statusBannerText:     { color: COLORS.white, fontSize: FONTS.sm, fontWeight: "600", flex: 1 },
 
-  hero:         { backgroundColor: COLORS.primary, padding: 24, paddingTop: 20 },
-  heroAmount:   { fontSize: 36, fontWeight: "700", color: COLORS.white, marginBottom: 12 },
-  progressBg:   { height: 6, backgroundColor: "rgba(255,255,255,0.3)", borderRadius: RADIUS.full, overflow: "hidden", marginBottom: 6 },
-  progressFill: { height: "100%", backgroundColor: COLORS.white },
-  progressLabel: { fontSize: FONTS.sm, color: "rgba(255,255,255,0.8)", marginBottom: 10 },
-  heroBadges:   { flexDirection: "row", flexWrap: "wrap", gap: 6, marginBottom: 10 },
-  heroBadge:    { paddingHorizontal: 8, paddingVertical: 3, backgroundColor: "rgba(255,255,255,0.2)", borderRadius: RADIUS.full },
-  heroBadgeText: { fontSize: 11, fontWeight: "700", color: COLORS.white },
-  heroMeta:     { fontSize: FONTS.sm, color: "rgba(255,255,255,0.75)" },
+  hero:          { backgroundColor: COLORS.primary, paddingHorizontal: 24, paddingTop: 20, paddingBottom: 24 },
+  heroTopRow:    { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 8 },
+  heroLabel:     { fontSize: FONTS.sm, color: "rgba(255,255,255,0.6)", fontWeight: "500", letterSpacing: 0.3 },
+  heroAmount:    { fontSize: 34, fontWeight: "700", color: COLORS.white, marginBottom: 14 },
+  progressBg:    { height: 5, backgroundColor: "rgba(255,255,255,0.25)", borderRadius: RADIUS.full, overflow: "hidden", marginBottom: 6 },
+  progressFill:  { height: "100%", backgroundColor: COLORS.white },
+  progressLabel: { fontSize: FONTS.sm, color: "rgba(255,255,255,0.75)", marginBottom: 14 },
+  heroFooter:    { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginTop: 4 },
+  heroBadges:    { flexDirection: "row", flexWrap: "wrap", gap: 5 },
+  heroBadge:     { paddingHorizontal: 8, paddingVertical: 3, backgroundColor: "rgba(255,255,255,0.18)", borderRadius: RADIUS.full },
+  heroBadgeText: { fontSize: 11, fontWeight: "600", color: COLORS.white },
+  heroMeta:      { fontSize: FONTS.sm, color: "rgba(255,255,255,0.65)" },
 
   joinRequestEntry: {
     flexDirection: "row", alignItems: "center", justifyContent: "space-between",
@@ -1858,15 +1857,23 @@ const styles = StyleSheet.create({
   shareText: { fontSize: FONTS.sm, color: COLORS.textMuted },
   shareCode: { color: COLORS.primary, fontWeight: "700", fontFamily: "monospace" },
 
-  tabScroll:     { paddingVertical: 12 },
-  tab:           { paddingHorizontal: 14, paddingVertical: 7, borderRadius: RADIUS.full, backgroundColor: COLORS.white, borderWidth: 1, borderColor: COLORS.border },
-  tabActive:     { backgroundColor: COLORS.primary, borderColor: COLORS.primary },
-  tabText:       { fontSize: FONTS.sm, color: COLORS.textMuted, fontWeight: "600" },
-  tabTextActive: { color: COLORS.white },
+  tabScroll:     { borderBottomWidth: 1, borderBottomColor: COLORS.divider, backgroundColor: COLORS.white },
+  tab:           { paddingHorizontal: 16, paddingVertical: 11, position: "relative" },
+  tabActive:     {},
+  tabUnderline:  { position: "absolute", bottom: 0, left: 16, right: 16, height: 2, backgroundColor: COLORS.primary, borderRadius: 1 },
+  tabText:       { fontSize: FONTS.sm, color: COLORS.textMuted, fontWeight: "500" },
+  tabTextActive: { color: COLORS.text, fontWeight: "600" },
 
-  section:     { paddingHorizontal: 16, paddingBottom: 16 },
+  // Payout options grid
+  payoutGrid:        { flexDirection: "row", gap: 10, marginBottom: 20 },
+  payoutOption:      { flex: 1, backgroundColor: COLORS.white, borderRadius: RADIUS.md, padding: 14, borderWidth: 1, borderColor: COLORS.border, alignItems: "flex-start", gap: 6 },
+  payoutIcon:        { width: 40, height: 40, borderRadius: RADIUS.md, justifyContent: "center", alignItems: "center", marginBottom: 4 },
+  payoutOptionTitle: { fontSize: FONTS.sm, fontWeight: "600", color: COLORS.text },
+  payoutOptionSub:   { fontSize: 11, color: COLORS.textMuted, lineHeight: 15 },
+
+  section:     { paddingHorizontal: 16, paddingTop: 16, paddingBottom: 16 },
   sectionHead: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 8 },
-  sectionLabel: { fontSize: 11, fontWeight: "700", color: COLORS.textMuted, letterSpacing: 0.8 },
+  sectionLabel: { fontSize: 11, fontWeight: "600", color: COLORS.textMuted },
   sectionAction: { fontSize: FONTS.sm, fontWeight: "700", color: COLORS.primary },
   secNote:     { fontSize: FONTS.sm, color: COLORS.textSecondary, backgroundColor: COLORS.primaryPale, padding: 10, borderRadius: RADIUS.md, marginBottom: 12, lineHeight: 18 },
   empty:       { color: COLORS.textMuted, fontSize: FONTS.sm, fontStyle: "italic", marginTop: 8 },
