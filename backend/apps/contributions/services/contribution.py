@@ -39,10 +39,12 @@ class ContributionService:
                 except User.DoesNotExist:
                     pass
 
-        ActivityService.log_activity(
-            user=user,
-            activity_type='contribution_created',
-            message=f"{_dn(user)} created contribution '{contribution.title}'",
+        ActivityService.record(
+            actor=user,
+            verb='contribution_created',
+            params={"contribution_title": contribution.title},
+            visibility=Activity.Visibility.COMMUNITY,
+            community=contribution.community,
         )
         return contribution
 
@@ -259,10 +261,12 @@ class ContributionService:
         )
 
         # ── Side effects ──────────────────────────────────────────────────────
-        ActivityService.log_activity(
-            user=user,
-            activity_type='contribution_payment',
-            message=f"{_dn(user)} contributed KES {amount:,.0f} to {contribution.title}",
+        # Amount is sensitive — keep the payer's own contribution private.
+        ActivityService.record(
+            actor=user,
+            verb='contribution_payment',
+            params={"amount": str(amount), "contribution_title": contribution.title},
+            visibility=Activity.Visibility.PRIVATE,
         )
 
         pool_total = fund_balance('contribution', contribution.id)
