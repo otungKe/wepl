@@ -141,6 +141,7 @@ REST_FRAMEWORK = {
         'user': '300/minute',
         'otp_request': '3/hour',
         'pin_login': '5/minute',
+        'stk_push': '5/minute',   # per-user cap on STK prompts (curbs prompt-spam)
     },
     # OpenAPI schema generation (P1 #6).
     'DEFAULT_SCHEMA_CLASS': 'drf_spectacular.openapi.AutoSchema',

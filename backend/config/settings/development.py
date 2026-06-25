@@ -79,6 +79,7 @@ REST_FRAMEWORK = {
         'user':        '600/minute',
         'otp_request': '60/hour',    # was 3/hour  — allows repeated test signups
         'pin_login':   '60/minute',  # was 5/minute — allows repeated test logins
+        'stk_push':    '5/minute',   # per-user cap on STK prompts (curbs prompt-spam)
     },
 }
 

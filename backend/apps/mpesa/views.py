@@ -16,6 +16,7 @@ Key fixes applied:
     SAFARICOM_CALLBACK_IPS is empty, enforced in production).
 """
 import logging
+import re
 from datetime import datetime
 from decimal import Decimal, InvalidOperation
 
@@ -26,6 +27,7 @@ from django.utils import timezone
 from rest_framework import status
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
+from rest_framework.throttling import UserRateThrottle
 from rest_framework.views import APIView
 
 from apps.contributions.models import Contribution, WelfareFund, SharesFund
@@ -36,18 +38,39 @@ from .services import MpesaService, _normalize_phone
 
 logger = logging.getLogger(__name__)
 
+# Canonical Kenyan MSISDN after normalisation: 2547XXXXXXXX / 2541XXXXXXXX.
+_KE_MSISDN = re.compile(r"^254(7|1)\d{8}$")
+
+
+class STKPushThrottle(UserRateThrottle):
+    """Per-user rate limit on STK pushes (rate: settings 'stk_push'). Curbs
+    prompt-spam now that a push may target a number other than the caller's."""
+    scope = 'stk_push'
+
 
 class STKPushView(APIView):
     """Initiate an M-Pesa STK Push for a contribution, welfare fund, or shares fund."""
     permission_classes = [IsAuthenticated]
+    throttle_classes   = [STKPushThrottle]
 
     def post(self, request):
         payment_type = request.data.get("payment_type", "contribution")
         amount       = request.data.get("amount")
 
-        # Security: default to the authenticated user's own phone — do not
-        # blindly accept any phone from the request body (harassment vector).
-        phone = request.user.phone_number
+        # Target phone: default to the caller's own number; allow an explicit
+        # phone_number in the body (e.g. pay from a different M-Pesa line, or pay
+        # on someone's behalf). Validated to a Kenyan MSISDN; STKPushThrottle caps
+        # per-user volume to curb prompt-spam.
+        raw_phone = (request.data.get("phone_number") or "").strip()
+        if raw_phone:
+            phone = _normalize_phone(raw_phone)
+            if not _KE_MSISDN.match(phone):
+                return Response(
+                    {"error": "Invalid phone number. Use a Kenyan number, e.g. 0712345678."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+        else:
+            phone = request.user.phone_number
 
         if not amount:
             return Response({"error": "amount is required"}, status=status.HTTP_400_BAD_REQUEST)
