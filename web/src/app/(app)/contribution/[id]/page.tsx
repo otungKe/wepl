@@ -1,7 +1,7 @@
 'use client'
 import { useEffect, useState, useCallback } from 'react'
 import { useParams } from 'next/navigation'
-import { Receipt, Users, Banknote, FileEdit, Plus, Smartphone, Check, X } from 'lucide-react'
+import { Receipt, Users, Banknote, FileEdit, Plus, Smartphone, Check, X, CreditCard, ArrowUpCircle, CalendarClock } from 'lucide-react'
 import {
   contributions, payments, apiError,
   type Contribution, type Transaction, type Participant, type DisbursementRequest, type ContributionAmendment,
@@ -39,8 +39,41 @@ export default function ContributionDetailPage() {
       <PageHeader title={c.title} subtitle={c.description || `${c.frequency} contribution`} back
         action={<Button size="sm" onClick={() => setPayOpen(true)}><Smartphone size={15} /> Contribute</Button>} />
 
-      <div className="mb-5 grid gap-3 sm:grid-cols-3">
-        <StatCard accent label="Pool balance" value={formatMoney(c.current_amount)} icon={Banknote} />
+      {/* Pool balance — physical card style */}
+      <div className="mb-4 overflow-hidden rounded-xl bg-primary px-6 py-5">
+        <div className="flex items-center justify-between">
+          <p className="text-sm text-white/60 font-medium">Pool Balance</p>
+          <CreditCard size={18} className="text-white/30" />
+        </div>
+        <p className="mt-1.5 text-3xl font-bold text-white tabular-nums">{formatMoney(c.current_amount)}</p>
+        {Number(c.target_amount) > 0 && (
+          <>
+            <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-white/20">
+              <div className="h-full rounded-full bg-white/80 transition-all"
+                style={{ width: `${Math.min((Number(c.current_amount) / Number(c.target_amount)) * 100, 100)}%` }} />
+            </div>
+            <p className="mt-1.5 text-xs text-white/60">
+              {Math.round((Number(c.current_amount) / Number(c.target_amount)) * 100)}% of {formatMoney(c.target_amount)}
+            </p>
+          </>
+        )}
+        <div className="mt-4 flex items-center justify-between">
+          <p className="text-xs text-white/50">{c.participant_count} member{c.participant_count !== 1 ? 's' : ''}</p>
+          <div className="flex gap-2">
+            <span className="rounded-full bg-white/15 px-2.5 py-1 text-[10px] font-semibold text-white">
+              {c.frequency.charAt(0).toUpperCase() + c.frequency.slice(1)}
+            </span>
+            {c.end_date && (
+              <span className="rounded-full bg-white/15 px-2.5 py-1 text-[10px] font-semibold text-white">
+                Until {c.end_date}
+              </span>
+            )}
+          </div>
+        </div>
+      </div>
+
+      {/* Secondary stats */}
+      <div className="mb-5 grid gap-3 sm:grid-cols-2">
         <StatCard label="Your balance" value={formatMoney(c.user_balance ?? '0')} />
         <StatCard label="Members" value={String(c.participant_count)} icon={Users} />
       </div>
@@ -169,7 +202,34 @@ function DisbursementsTab({ id, isAdmin }: { id: string; isAdmin: boolean }) {
 
   return (
     <div>
-      <div className="mb-3 flex justify-end"><Button size="sm" onClick={() => setOpen(true)}><Plus size={15} /> Request payout</Button></div>
+      {/* Payout options grid */}
+      <div className={`mb-5 grid gap-3 ${isAdmin ? 'grid-cols-2' : 'grid-cols-1'}`}>
+        <button
+          onClick={() => setOpen(true)}
+          className="flex flex-col items-start gap-2 rounded-lg border border-border bg-surface p-4 text-left transition-colors hover:border-primary/40 hover:bg-primary-bg/40"
+        >
+          <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-primary-pale text-primary">
+            <ArrowUpCircle size={18} />
+          </div>
+          <div>
+            <p className="text-sm font-semibold text-text">Request Payout</p>
+            <p className="text-xs text-text-muted">Submit for group approval</p>
+          </div>
+        </button>
+        {isAdmin && (
+          <div className="flex flex-col items-start gap-2 rounded-lg border border-border bg-surface p-4">
+            <div className="flex h-9 w-9 items-center justify-center rounded-lg text-[#059669]" style={{ backgroundColor: '#f0fdf4' }}>
+              <CalendarClock size={18} />
+            </div>
+            <div>
+              <p className="text-sm font-semibold text-text">Standing Order</p>
+              <p className="text-xs text-text-muted">Auto-payout configuration</p>
+            </div>
+          </div>
+        )}
+      </div>
+
+      <p className="mb-3 text-xs font-semibold text-text-muted">REQUESTS</p>
       {items.length === 0 ? (
         <EmptyState icon={Banknote} title="No disbursement requests" description="Request a payout from the pool — members vote to approve it." />
       ) : (

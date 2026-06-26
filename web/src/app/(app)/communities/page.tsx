@@ -1,7 +1,7 @@
 'use client'
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
-import { Users, Plus, Search, Lock, Coins } from 'lucide-react'
+import { Users, Plus, Search, Lock, Coins, Tag } from 'lucide-react'
 import { communities, apiError, type Community } from '@/lib/api'
 import { PageHeader } from '@/components/app/PageHeader'
 import { Button } from '@/components/ui/Button'
@@ -41,11 +41,31 @@ export default function CommunitiesPage() {
         } />
 
       {items.length > 0 && (
-        <div className="relative mb-4">
-          <Search size={18} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-text-muted" />
-          <input value={q} onChange={e => setQ(e.target.value)} placeholder="Search communities"
-            className="h-11 w-full rounded-lg border border-border bg-white pl-10 pr-3 text-base focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20" />
-        </div>
+        <>
+          {/* Stats bar */}
+          <div className="mb-4 flex gap-6 rounded-lg border border-border bg-surface px-5 py-3">
+            <div className="text-center">
+              <p className="text-lg font-bold text-text tabular-nums">{items.length}</p>
+              <p className="text-xs text-text-muted">Groups</p>
+            </div>
+            <div className="w-px bg-divider" />
+            <div className="text-center">
+              <p className="text-lg font-bold text-text tabular-nums">{items.filter(c => c.has_welfare_fund).length}</p>
+              <p className="text-xs text-text-muted">Welfare</p>
+            </div>
+            <div className="w-px bg-divider" />
+            <div className="text-center">
+              <p className="text-lg font-bold text-text tabular-nums">{items.filter(c => c.has_shares_fund).length}</p>
+              <p className="text-xs text-text-muted">Shares</p>
+            </div>
+          </div>
+          {/* Search */}
+          <div className="relative mb-4">
+            <Search size={15} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-text-muted" />
+            <input value={q} onChange={e => setQ(e.target.value)} placeholder="Search communities"
+              className="h-10 w-full rounded-lg border border-border bg-surface pl-9 pr-3 text-sm focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20" />
+          </div>
+        </>
       )}
 
       {loading ? (
@@ -57,21 +77,36 @@ export default function CommunitiesPage() {
           description="Create a community or join one with an invite to get started."
           action={<Button onClick={() => setCreateOpen(true)}><Plus size={16} /> Create community</Button>} />
       ) : (
-        <div className="grid gap-3 sm:grid-cols-2">
+        <div className="divide-y divide-divider overflow-hidden rounded-lg border border-border bg-surface">
           {filtered.map(c => (
             <Link key={c.id} href={`/community/${c.id}`}
-              className="flex items-center gap-3 rounded-lg border border-border bg-surface p-4 transition-shadow hover:shadow-card">
-              <Avatar name={c.name} src={c.community_photo} size={48} />
+              className="flex items-center gap-3 px-4 py-3 transition-colors hover:bg-primary-bg/40">
+              <div className="relative shrink-0">
+                <Avatar name={c.name} src={c.community_photo} size={44} />
+                {c.is_private && (
+                  <span className="absolute -bottom-0.5 -right-0.5 flex h-4 w-4 items-center justify-center rounded-full border border-white bg-text-muted">
+                    <Lock size={8} className="text-white" />
+                  </span>
+                )}
+              </div>
               <div className="min-w-0 flex-1">
-                <div className="flex items-center gap-1.5">
+                <div className="flex items-center gap-2">
                   <p className="truncate font-semibold text-text">{c.name}</p>
-                  {c.is_private && <Lock size={13} className="shrink-0 text-text-muted" />}
+                  {c.category && (
+                    <span className="shrink-0 rounded px-1.5 py-0.5 text-[10px] font-semibold text-primary" style={{ backgroundColor: 'rgba(26,92,56,0.08)' }}>
+                      {c.category}
+                    </span>
+                  )}
                 </div>
-                <p className="truncate text-sm text-text-muted">{c.member_count} members{c.location ? ` · ${c.location}` : ''}</p>
-                <div className="mt-1.5 flex flex-wrap gap-1">
-                  {c.has_welfare_fund && <Badge tone="success">Welfare</Badge>}
-                  {c.has_shares_fund && <Badge tone="warning"><Coins size={11} /> Shares</Badge>}
-                </div>
+                <p className="text-xs text-text-muted">
+                  {c.member_count} {c.member_count === 1 ? 'member' : 'members'}
+                  {c.has_welfare_fund ? ' · Welfare' : ''}
+                  {c.has_shares_fund ? ' · Shares' : ''}
+                  {c.location ? ` · ${c.location}` : ''}
+                </p>
+                {c.description && (
+                  <p className="mt-0.5 truncate text-xs text-text-secondary">{c.description}</p>
+                )}
               </div>
             </Link>
           ))}
