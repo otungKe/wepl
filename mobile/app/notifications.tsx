@@ -16,6 +16,7 @@ import {
   markAllRead,
   Notification,
 } from "../api/notifications";
+import { Ionicons } from "@expo/vector-icons";
 import { COLORS, FONTS, RADIUS } from "../constants/theme";
 import AppHeader from "../components/app/AppHeader";
 
@@ -124,7 +125,7 @@ export default function NotificationsScreen() {
         <View style={styles.center}><ActivityIndicator size="large" color={COLORS.primary} /></View>
       ) : notifications.length === 0 ? (
         <View style={styles.empty}>
-          <Text style={styles.emptyEmoji}>🔔</Text>
+          <Ionicons name="notifications-outline" size={40} color={COLORS.border} />
           <Text style={styles.emptyTitle}>All caught up!</Text>
           <Text style={styles.emptySub}>
             Notifications about contributions, messages and community activity will appear here.
@@ -148,9 +149,8 @@ const styles = StyleSheet.create({
   center: { flex: 1, justifyContent: "center", alignItems: "center" },
 
   empty: { flex: 1, justifyContent: "center", alignItems: "center", paddingHorizontal: 32 },
-  emptyEmoji: { fontSize: 56, marginBottom: 16 },
-  emptyTitle: { fontSize: FONTS.xl, fontWeight: "bold", color: COLORS.text, marginBottom: 8 },
-  emptySub: { fontSize: FONTS.md, color: COLORS.textSecondary, textAlign: "center", lineHeight: 22 },
+  emptyTitle: { fontSize: FONTS.md, fontWeight: "600", color: COLORS.textSecondary, marginTop: 10, marginBottom: 6 },
+  emptySub: { fontSize: FONTS.sm, color: COLORS.textMuted, textAlign: "center", lineHeight: 20 },
 
   item: {
     flexDirection: "row",

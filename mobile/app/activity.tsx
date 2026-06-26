@@ -206,7 +206,7 @@ const dh = StyleSheet.create({
     fontSize: FONTS.xs,
     color: COLORS.textMuted,
     fontWeight: "700",
-    textTransform: "uppercase",
+    
     letterSpacing: 0.7,
     paddingHorizontal: 10,
   },

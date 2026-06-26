@@ -337,7 +337,7 @@ const ots = StyleSheet.create({
 
   label: {
     fontSize: FONTS.sm, fontWeight: "600", color: COLORS.textSecondary,
-    marginBottom: 8, textTransform: "uppercase", letterSpacing: 0.5,
+    marginBottom: 8,
   },
   input: {
     borderWidth: 1.5, borderColor: COLORS.border, borderRadius: RADIUS.md,

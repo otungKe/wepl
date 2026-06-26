@@ -228,7 +228,7 @@ const styles = StyleSheet.create({
   header: { marginBottom: 40 },
   title: {
     fontSize: FONTS.xxl,
-    fontWeight: "bold",
+    fontWeight: "700",
     color: COLORS.text,
     marginBottom: 8,
   },
@@ -238,7 +238,7 @@ const styles = StyleSheet.create({
   },
   phone: {
     fontSize: FONTS.lg,
-    fontWeight: "bold",
+    fontWeight: "600",
     color: COLORS.primary,
     marginTop: 4,
   },
@@ -250,8 +250,6 @@ const styles = StyleSheet.create({
     fontWeight: "600",
     color: COLORS.textSecondary,
     marginBottom: 8,
-    textTransform: "uppercase",
-    letterSpacing: 0.5,
   },
   input: {
     borderWidth: 1.5,
@@ -294,7 +292,7 @@ const styles = StyleSheet.create({
   buttonDisabled: { opacity: 0.5 },
   buttonText: {
     color: COLORS.white,
-    fontWeight: "bold",
+    fontWeight: "700",
     fontSize: FONTS.md,
   },
 

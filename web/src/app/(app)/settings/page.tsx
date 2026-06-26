@@ -14,7 +14,7 @@ type Prefs = { push_enabled: boolean; payments: boolean; contributions: boolean;
 
 const ROWS: { key: keyof Prefs; label: string; desc: string }[] = [
   { key: 'push_enabled',  label: 'Push notifications', desc: 'Master switch for all alerts' },
-  { key: 'payments',      label: 'Payments',           desc: 'M-Pesa confirmations & payouts' },
+  { key: 'payments',      label: 'Payments',           desc: 'M-PESA confirmations & payouts' },
   { key: 'contributions', label: 'Contributions',      desc: 'Pool activity & governance' },
   { key: 'communities',   label: 'Communities & chat', desc: 'Messages and member updates' },
   { key: 'advances',      label: 'Advances & welfare', desc: 'Loan and welfare claim updates' },

@@ -80,8 +80,8 @@ const styles = StyleSheet.create({
   bar: {
     flexDirection: "row",
     alignItems: "center",
-    paddingTop: 8,
-    paddingBottom: 12,
+    paddingTop: 6,
+    paddingBottom: 10,
     paddingHorizontal: 4,
   },
   barGreen: { backgroundColor: COLORS.primary },
@@ -95,9 +95,9 @@ const styles = StyleSheet.create({
 
   title: {
     flex: 1,
-    fontSize: FONTS.lg,
-    fontWeight: "700",
-    letterSpacing: -0.2,
+    fontSize: FONTS.md,
+    fontWeight: "600",
+    letterSpacing: -0.1,
     marginLeft: 2,
   },
   titleWhite: { color: COLORS.white },

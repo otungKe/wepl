@@ -426,7 +426,7 @@ const styles = StyleSheet.create({
     alignSelf: "flex-start",
     fontSize: FONTS.sm, fontWeight: "600", color: COLORS.textSecondary,
     marginTop: 16, marginBottom: 8,
-    textTransform: "uppercase", letterSpacing: 0.4,
+    
   },
   hint: { alignSelf: "flex-start", fontSize: FONTS.sm, color: COLORS.textMuted, marginTop: 4, lineHeight: 18 },
 

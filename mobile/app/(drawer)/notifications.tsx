@@ -353,7 +353,7 @@ export default function NotificationsScreen() {
         <View style={s.center}><ActivityIndicator size="large" color={COLORS.primary} /></View>
       ) : notifications.length === 0 ? (
         <View style={s.empty}>
-          <Ionicons name="notifications-outline" size={52} color={COLORS.textMuted} />
+          <Ionicons name="notifications-outline" size={40} color={COLORS.border} />
           <Text style={s.emptyTitle}>All caught up</Text>
           <Text style={s.emptySub}>Activity from your communities and contributions appears here.</Text>
         </View>
@@ -480,9 +480,9 @@ const s = StyleSheet.create({
 
   empty: {
     flex: 1, justifyContent: "center", alignItems: "center",
-    paddingHorizontal: 40, gap: 12,
+    paddingHorizontal: 40, gap: 8,
   },
-  emptyTitle: { fontSize: FONTS.lg, fontWeight: "700", color: COLORS.text },
+  emptyTitle: { fontSize: FONTS.md, fontWeight: "600", color: COLORS.textSecondary, marginTop: 4 },
   emptySub:   { fontSize: FONTS.sm, color: COLORS.textMuted, textAlign: "center", lineHeight: 20 },
 
   item: {

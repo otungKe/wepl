@@ -319,7 +319,7 @@ const s = StyleSheet.create({
   checklistTitle: {
     fontSize: FONTS.sm, fontWeight: "700",
     color: COLORS.text, marginBottom: 4,
-    textTransform: "uppercase", letterSpacing: 0.5,
+    
   },
   checkRow:  { flexDirection: "row", alignItems: "center", gap: 10 },
   checkLabel:{ fontSize: FONTS.md, color: COLORS.text, flex: 1 },

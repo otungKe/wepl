@@ -259,8 +259,6 @@ const s = StyleSheet.create({
     fontWeight: "600",
     color: COLORS.textSecondary,
     marginBottom: 8,
-    textTransform: "uppercase",
-    letterSpacing: 0.5,
   },
   input: {
     borderWidth: 1.5,

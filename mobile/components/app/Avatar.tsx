@@ -18,7 +18,7 @@ export default function Avatar({ name, uri, size = 46, isOnline }: Props) {
     ? <Image source={{ uri }} style={{ width: size, height: size, borderRadius: RADIUS.full }} />
     : (
       <View style={[styles.box, { width: size, height: size, borderRadius: RADIUS.full, backgroundColor: palette.bg }]}>
-        <Text style={{ fontSize, fontWeight: "bold", color: palette.text }}>
+        <Text style={{ fontSize, fontWeight: "700", color: palette.text }}>
           {initialsFor(name)}
         </Text>
       </View>

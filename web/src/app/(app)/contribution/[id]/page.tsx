@@ -83,13 +83,13 @@ function ContributeModal({ open, onClose, contributionId }: { open: boolean; onC
     setLoading(true)
     try {
       await payments.stkPush({ payment_type: 'contribution', contribution_id: contributionId, amount: amt, phone_number: phone || undefined })
-      toast.success('Check your phone to authorize the M-Pesa payment')
+      toast.success('Check your phone to authorize the M-PESA payment')
       onClose(); setAmount(''); setPhone('')
     } catch (e) { toast.error(apiError(e)) } finally { setLoading(false) }
   }
 
   return (
-    <Modal open={open} onClose={onClose} title="Contribute via M-Pesa">
+    <Modal open={open} onClose={onClose} title="Contribute via M-PESA">
       <div className="flex flex-col gap-4">
         <Input label="Amount (KES)" type="number" inputMode="decimal" value={amount} onChange={e => setAmount(e.target.value)} placeholder="1000" autoFocus />
         <Input label="Phone (optional)" type="tel" value={phone} onChange={e => setPhone(e.target.value)} placeholder="Defaults to your number" hint="An STK push will be sent to this number." />

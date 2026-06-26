@@ -280,7 +280,7 @@ function CampaignCard({
 function EmptyState({ message }: { message: string }) {
   return (
     <View style={styles.emptyWrap}>
-      <Ionicons name="search-outline" size={48} color={COLORS.border} />
+      <Ionicons name="search-outline" size={40} color={COLORS.border} />
       <Text style={styles.emptyText}>{message}</Text>
     </View>
   );
@@ -813,17 +813,11 @@ const styles = StyleSheet.create({
     alignItems:       "center",
     backgroundColor:  COLORS.white,
     marginHorizontal: 16,
-    marginVertical:   5,
+    marginVertical:   4,
     borderRadius:     RADIUS.md,
     padding:          12,
     borderWidth:      1,
     borderColor:      COLORS.divider,
-    // subtle shadow
-    shadowColor:   "#000",
-    shadowOffset:  { width: 0, height: 1 },
-    shadowOpacity: 0.05,
-    shadowRadius:  2,
-    elevation:     1,
   },
   cardAvatarWrap: {
     marginRight: 12,
@@ -952,15 +946,15 @@ const styles = StyleSheet.create({
   // ── Empty ─────────────────────────────────────────────────
   emptyWrap: {
     alignItems:  "center",
-    paddingTop:  60,
+    paddingTop:  48,
     paddingHorizontal: 32,
   },
   emptyText: {
-    marginTop:   14,
-    fontSize:    FONTS.md,
+    marginTop:   10,
+    fontSize:    FONTS.sm,
     color:       COLORS.textMuted,
     textAlign:   "center",
-    lineHeight:  22,
+    lineHeight:  20,
   },
 });
 

@@ -800,7 +800,7 @@ const ms = StyleSheet.create({
     fontSize: FONTS.sm,
     fontWeight: "700",
     color: COLORS.text,
-    textTransform: "uppercase",
+    
     letterSpacing: 0.6,
     marginBottom: 10,
     marginTop: 6,

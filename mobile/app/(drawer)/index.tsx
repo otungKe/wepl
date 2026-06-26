@@ -2,7 +2,7 @@ import { useState, useCallback, useEffect } from "react";
 import {
   View, Text, FlatList, TouchableOpacity, StyleSheet,
   ActivityIndicator, RefreshControl, TextInput, Modal,
-  KeyboardAvoidingView, Platform, Pressable,
+  KeyboardAvoidingView, Platform, Pressable, Image,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { router, useFocusEffect } from "expo-router";
@@ -14,7 +14,7 @@ import {
 } from "../../api/communities";
 import { getUnreadSummary, UnreadSummary } from "../../api/conversations";
 import { on } from "../../utils/eventBus";
-import { COLORS, FONTS, RADIUS } from "../../constants/theme";
+import { COLORS, FONTS, RADIUS, avatarColorFor, initialsFor } from "../../constants/theme";
 import Avatar from "../../components/app/Avatar";
 import FAB from "../../components/app/FAB";
 import KYCBanner from "../../components/app/KYCBanner";
@@ -127,31 +127,52 @@ export default function CommunitiesScreen() {
     );
   }
 
+  const totalUnread  = unreadSummary.total;
+  const totalPending = pendingRequests.length;
+
   return (
     <SafeAreaView style={styles.safe} edges={["top", "left", "right"]}>
       {/* Header */}
       <View style={styles.header}>
         <Text style={styles.headerTitle}>Communities</Text>
-        {pendingRequests.length > 0 && (
-          <TouchableOpacity
-            style={styles.pendingChip}
-            onPress={() => router.push("/join-requests")}
-            activeOpacity={0.8}
-          >
-            <Ionicons name="time-outline" size={13} color={COLORS.accent} />
-            <Text style={styles.pendingChipText}>
-              {pendingRequests.length} Pending
-            </Text>
-          </TouchableOpacity>
-        )}
       </View>
 
       {/* KYC verification banner — hidden once approved */}
       <KYCBanner status={kycStatus} />
 
+      {/* Stats bar */}
+      {!loading && communities.length > 0 && (
+        <View style={styles.statsBar}>
+          <View style={styles.statItem}>
+            <Text style={styles.statValue}>{communities.length}</Text>
+            <Text style={styles.statLabel}>Groups</Text>
+          </View>
+          <View style={styles.statDivider} />
+          <TouchableOpacity
+            style={styles.statItem}
+            onPress={totalUnread > 0 ? () => {} : undefined}
+          >
+            <Text style={[styles.statValue, totalUnread > 0 && { color: COLORS.primary }]}>
+              {totalUnread}
+            </Text>
+            <Text style={styles.statLabel}>Unread</Text>
+          </TouchableOpacity>
+          <View style={styles.statDivider} />
+          <TouchableOpacity
+            style={styles.statItem}
+            onPress={totalPending > 0 ? () => router.push("/join-requests") : undefined}
+          >
+            <Text style={[styles.statValue, totalPending > 0 && { color: COLORS.accent }]}>
+              {totalPending}
+            </Text>
+            <Text style={styles.statLabel}>Pending</Text>
+          </TouchableOpacity>
+        </View>
+      )}
+
       {/* Search bar */}
       <View style={styles.searchRow}>
-        <Ionicons name="search-outline" size={16} color={COLORS.textMuted} style={styles.searchIcon} />
+        <Ionicons name="search-outline" size={15} color={COLORS.textMuted} />
         <TextInput
           placeholder="Search communities..."
           placeholderTextColor={COLORS.textMuted}
@@ -167,13 +188,13 @@ export default function CommunitiesScreen() {
         <View style={styles.center}><ActivityIndicator size="large" color={COLORS.primary} /></View>
       ) : filtered.length === 0 && communities.length === 0 ? (
         <View style={styles.empty}>
-          <Ionicons name="people-outline" size={52} color={COLORS.textMuted} />
+          <Ionicons name="people-outline" size={40} color={COLORS.border} />
           <Text style={styles.emptyTitle}>No communities yet</Text>
           <Text style={styles.emptySub}>Create or join a community to start saving together.</Text>
         </View>
       ) : filtered.length === 0 ? (
         <View style={styles.empty}>
-          <Ionicons name="search-outline" size={40} color={COLORS.textMuted} />
+          <Ionicons name="search-outline" size={36} color={COLORS.border} />
           <Text style={styles.emptyTitle}>No results for "{search}"</Text>
         </View>
       ) : (
@@ -182,24 +203,68 @@ export default function CommunitiesScreen() {
           data={filtered}
           keyExtractor={(i) => String(i.id)}
           renderItem={({ item }: { item: Community }) => {
-            const hasUnread = (unreadSummary.by_community[String(item.id)] ?? 0) > 0;
+            const unreadCount = unreadSummary.by_community[String(item.id)] ?? 0;
+            const hasUnread   = unreadCount > 0;
+            const palette     = avatarColorFor(item.name);
+            const badges: string[] = [];
+            if (item.has_welfare_fund) badges.push("Welfare");
+            if (item.has_shares_fund)  badges.push("Shares");
+
             return (
               <TouchableOpacity
-                style={styles.row}
+                style={styles.card}
                 onPress={() => router.push({ pathname: "/community/[id]", params: { id: String(item.id), name: item.name } })}
                 activeOpacity={0.7}
               >
-                <Avatar name={item.name} uri={item.community_photo} size={50} />
-                <View style={styles.rowText}>
-                  <Text style={[styles.name, hasUnread && { fontWeight: "800" }]}>{item.name}</Text>
-                  <Text style={styles.meta}>
-                    {item.member_count} {item.member_count === 1 ? "member" : "members"}
-                  </Text>
+                {/* Photo */}
+                <View style={styles.cardPhotoWrap}>
+                  {item.community_photo ? (
+                    <Image source={{ uri: item.community_photo }} style={styles.cardPhoto} resizeMode="cover" />
+                  ) : (
+                    <View style={[styles.cardPhoto, styles.cardPhotoPlaceholder, { backgroundColor: palette.bg }]}>
+                      <Text style={[styles.cardPhotoInitials, { color: palette.text }]}>
+                        {initialsFor(item.name)}
+                      </Text>
+                    </View>
+                  )}
+                  {item.is_private && (
+                    <View style={styles.privateBadge}>
+                      <Ionicons name="lock-closed" size={9} color={COLORS.white} />
+                    </View>
+                  )}
                 </View>
-                {hasUnread && (
-                  <View style={styles.unreadDot} />
-                )}
-                <Ionicons name="chevron-forward" size={16} color={COLORS.textMuted} />
+
+                {/* Content */}
+                <View style={styles.cardContent}>
+                  <View style={styles.cardTitleRow}>
+                    <Text style={[styles.cardName, hasUnread && styles.cardNameUnread]} numberOfLines={1}>
+                      {item.name}
+                    </Text>
+                    {item.category ? (
+                      <View style={styles.categoryBadge}>
+                        <Text style={styles.categoryBadgeText}>{item.category}</Text>
+                      </View>
+                    ) : null}
+                  </View>
+
+                  <Text style={styles.cardMeta}>
+                    {item.member_count} {item.member_count === 1 ? "member" : "members"}
+                    {badges.length > 0 ? ` · ${badges.join(" · ")}` : ""}
+                  </Text>
+
+                  {item.description ? (
+                    <Text style={styles.cardDesc} numberOfLines={1}>{item.description}</Text>
+                  ) : null}
+                </View>
+
+                {/* Right: unread badge */}
+                <View style={styles.cardRight}>
+                  {hasUnread ? (
+                    <View style={styles.unreadBadge}>
+                      <Text style={styles.unreadBadgeText}>{unreadCount > 9 ? "9+" : unreadCount}</Text>
+                    </View>
+                  ) : null}
+                </View>
               </TouchableOpacity>
             );
           }}
@@ -353,80 +418,88 @@ export default function CommunitiesScreen() {
 }
 
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: COLORS.background },
+  safe:   { flex: 1, backgroundColor: COLORS.background },
   center: { flex: 1, justifyContent: "center", alignItems: "center" },
 
-  // Pending requests chip
-  pendingChip: {
-    flexDirection: "row", alignItems: "center", gap: 5,
-    backgroundColor: "#fef7e0",
-    paddingHorizontal: 12, paddingVertical: 6,
-    borderRadius: RADIUS.full,
-    borderWidth: 1, borderColor: "#f6d860",
-  },
-  pendingChipText: { fontSize: FONTS.sm, fontWeight: "700", color: COLORS.accent },
-
   header: {
-    flexDirection:    "row",
-    alignItems:       "center",
+    flexDirection: "row", alignItems: "center",
     paddingHorizontal: 20, paddingTop: 16, paddingBottom: 12,
-    backgroundColor:  COLORS.white,
+    backgroundColor: COLORS.white,
   },
   headerTitle: { flex: 1, fontSize: FONTS.xl, fontWeight: "700", color: COLORS.text },
-  discoverBtn: {
-    flexDirection:   "row",
-    alignItems:      "center",
-    gap:             4,
-    paddingVertical: 6,
-    paddingHorizontal: 12,
-    borderRadius:    RADIUS.full,
-    borderWidth:     1,
-    borderColor:     COLORS.primary,
+
+  // Stats bar
+  statsBar: {
+    flexDirection: "row",
+    backgroundColor: COLORS.white,
+    paddingHorizontal: 20,
+    paddingBottom: 14,
+    borderBottomWidth: 1,
+    borderBottomColor: COLORS.divider,
   },
-  discoverBtnText: {
-    fontSize:   FONTS.sm,
-    fontWeight: "600",
-    color:      COLORS.primary,
-  },
+  statItem:    { flex: 1, alignItems: "center" },
+  statValue:   { fontSize: FONTS.lg, fontWeight: "700", color: COLORS.text },
+  statLabel:   { fontSize: FONTS.xs, color: COLORS.textMuted, marginTop: 1 },
+  statDivider: { width: 1, backgroundColor: COLORS.divider, marginVertical: 2 },
 
   searchRow: {
     flexDirection: "row", alignItems: "center",
     backgroundColor: COLORS.white,
-    paddingHorizontal: 16, paddingBottom: 12,
+    paddingHorizontal: 16, paddingBottom: 10, paddingTop: 10,
     gap: 8,
     borderBottomWidth: 1, borderBottomColor: COLORS.divider,
   },
-  searchIcon: { marginLeft: 4 },
   searchInput: {
-    flex: 1,
-    height: 38,
+    flex: 1, height: 36,
     backgroundColor: COLORS.background,
     borderRadius: RADIUS.full,
-    paddingHorizontal: 14,
-    fontSize: FONTS.sm,
-    color: COLORS.text,
-    borderWidth: 1,
-    borderColor: COLORS.border,
+    paddingHorizontal: 12,
+    fontSize: FONTS.sm, color: COLORS.text,
   },
 
-  empty: { flex: 1, justifyContent: "center", alignItems: "center", paddingHorizontal: 40, gap: 10 },
-  emptyTitle: { fontSize: FONTS.lg, fontWeight: "700", color: COLORS.text },
-  emptySub: { fontSize: FONTS.sm, color: COLORS.textMuted, textAlign: "center", lineHeight: 20 },
+  empty:      { flex: 1, justifyContent: "center", alignItems: "center", paddingHorizontal: 40, gap: 8 },
+  emptyTitle: { fontSize: FONTS.md, fontWeight: "600", color: COLORS.textSecondary, marginTop: 4 },
+  emptySub:   { fontSize: FONTS.sm, color: COLORS.textMuted, textAlign: "center", lineHeight: 20 },
 
-  row: {
+  // Rich community card
+  card: {
     flexDirection: "row", alignItems: "center",
-    paddingVertical: 13, paddingHorizontal: 16,
+    paddingVertical: 12, paddingHorizontal: 16,
     backgroundColor: COLORS.white, gap: 12,
   },
-  rowText: { flex: 1 },
-  name: { fontSize: FONTS.md, fontWeight: "600", color: COLORS.text, marginBottom: 2 },
-  meta: { fontSize: FONTS.sm, color: COLORS.textMuted },
-  divider: { height: 1, backgroundColor: COLORS.divider, marginLeft: 78 },
-  unreadDot: {
-    width: 10, height: 10, borderRadius: 5,
-    backgroundColor: COLORS.success,
-    marginRight: 4,
+  cardPhotoWrap: { position: "relative" },
+  cardPhoto:     { width: 52, height: 52, borderRadius: RADIUS.md },
+  cardPhotoPlaceholder: { justifyContent: "center", alignItems: "center" },
+  cardPhotoInitials:    { fontSize: 20, fontWeight: "700" },
+  privateBadge: {
+    position: "absolute", bottom: -2, right: -2,
+    width: 16, height: 16, borderRadius: 8,
+    backgroundColor: COLORS.textMuted,
+    justifyContent: "center", alignItems: "center",
+    borderWidth: 1.5, borderColor: COLORS.white,
   },
+  cardContent:  { flex: 1, gap: 2 },
+  cardTitleRow: { flexDirection: "row", alignItems: "center", gap: 6 },
+  cardName:     { fontSize: FONTS.md, fontWeight: "500", color: COLORS.text, flexShrink: 1 },
+  cardNameUnread: { fontWeight: "700" },
+  categoryBadge: {
+    backgroundColor: COLORS.primaryPale,
+    paddingHorizontal: 6, paddingVertical: 2,
+    borderRadius: RADIUS.sm,
+  },
+  categoryBadgeText: { fontSize: 10, fontWeight: "600", color: COLORS.primary },
+  cardMeta:     { fontSize: FONTS.sm, color: COLORS.textMuted },
+  cardDesc:     { fontSize: FONTS.sm, color: COLORS.textSecondary },
+  cardRight:    { minWidth: 28, alignItems: "flex-end" },
+  divider:      { height: 1, backgroundColor: COLORS.divider, marginLeft: 80 },
+
+  unreadBadge: {
+    minWidth: 20, height: 20, borderRadius: 10,
+    backgroundColor: COLORS.primary,
+    justifyContent: "center", alignItems: "center",
+    paddingHorizontal: 4,
+  },
+  unreadBadgeText: { fontSize: 11, fontWeight: "700", color: COLORS.white },
 
   // Bottom sheet
   sheetWrap: { flex: 1, backgroundColor: "rgba(0,0,0,0.4)", justifyContent: "flex-end" },

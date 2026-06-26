@@ -516,7 +516,7 @@ const styles = StyleSheet.create({
   sheetHint:  { fontSize: FONTS.sm, color: COLORS.textMuted, marginBottom: 16, lineHeight: 18 },
   fieldLabel: {
     fontSize: FONTS.sm, fontWeight: "600", color: COLORS.textSecondary,
-    marginBottom: 6, marginTop: 12, textTransform: "uppercase", letterSpacing: 0.4,
+    marginBottom: 6, marginTop: 12,
   },
   input: {
     borderWidth: 1.5, borderColor: COLORS.border, borderRadius: RADIUS.md,
