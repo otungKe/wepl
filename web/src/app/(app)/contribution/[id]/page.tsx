@@ -46,14 +46,14 @@ export default function ContributionDetailPage() {
           <CreditCard size={18} className="text-white/30" />
         </div>
         <p className="mt-1.5 text-3xl font-bold text-white tabular-nums">{formatMoney(c.current_amount)}</p>
-        {Number(c.target_amount) > 0 && (
+        {c.target_amount && Number(c.target_amount) > 0 && (
           <>
             <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-white/20">
               <div className="h-full rounded-full bg-white/80 transition-all"
                 style={{ width: `${Math.min((Number(c.current_amount) / Number(c.target_amount)) * 100, 100)}%` }} />
             </div>
             <p className="mt-1.5 text-xs text-white/60">
-              {Math.round((Number(c.current_amount) / Number(c.target_amount)) * 100)}% of {formatMoney(c.target_amount)}
+              {Math.round((Number(c.current_amount) / Number(c.target_amount)) * 100)}% of {formatMoney(c.target_amount ?? '0')}
             </p>
           </>
         )}
