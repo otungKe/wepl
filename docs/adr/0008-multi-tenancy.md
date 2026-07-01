@@ -61,3 +61,25 @@ Isolation is enforced in two layers:
 3. RLS policies + per-request session var (P6-02) with an isolation-proof test.
 4. Tenant-aware auth/admin + cross-tenant access audit (P6-04/05).
 5. Make `tenant` non-nullable once fully backfilled and wired.
+
+## Implementation status (2026-07-01)
+
+- **RLS coverage** now spans **every table that carries a `tenant_id` column**:
+  `ledger_account` + `ledger_financialtransaction` (migration `tenants.0003`) and
+  `communities_community`, `controls_limitrule`, `payments_paymentintent`,
+  `audit_auditevent`, `files_storedfile` (migration `tenants.0005`). DB-level
+  isolation therefore now bites on the business/admin tables too, not just the
+  ledger — proven by a NON-superuser probe test on `communities_community`
+  (`tenants/tests.py::ExtendedRowLevelSecurityTests`).
+- **Deliberately fail-open when unset.** The policy is permissive when
+  `app.tenant_id` is empty so platform/system contexts (migrations, management
+  commands, platform-wide reporting, cross-tenant Celery jobs) work. This means RLS
+  is a hard backstop **only for connections that pin a tenant** (member web requests
+  via `TenantJWTAuthentication`); it is *not* a safety net for a task that forgets to
+  scope itself. Celery `task_prerun`/`task_postrun` hooks (`tenants.celery_hooks`)
+  clear the context at task boundaries so a pinned tenant cannot leak across pooled
+  connections, but per-tenant tasks must still opt in with `tenant_context(...)`.
+- **Not covered:** `contributions` funds (`Contribution`/`WelfareFund`/`SharesFund`)
+  have no `tenant_id` column of their own — they inherit tenancy via their
+  `Community` and remain **application-scoped**. Giving them a keyed RLS policy would
+  require a schema change (add + backfill a `tenant` column); deferred.
