@@ -143,10 +143,23 @@ class ActivityFeedEndpointTests(APITestCase):
         resp = active_client(outsider).get(f'/api/activity/?community={self.community.id}')
         self.assertEqual(resp.data['results'], [])
 
-    def test_feed_is_cursor_paginated(self):
+    def test_legacy_feed_shape_is_preserved(self):
+        # /api/activity/ (and /api/v1/) keep the offset shape shipped mobile
+        # binaries depend on: {count, results, has_more}, no cursor envelope.
         for i in range(3):
             ActivityService.record(actor=self.user, verb='payment_made', message=f'm{i}')
-        resp = active_client(self.user).get('/api/activity/?page_size=2')
+        resp = active_client(self.user).get('/api/activity/?limit=2&offset=0')
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.data['count'], 3)
+        self.assertEqual(len(resp.data['results']), 2)
+        self.assertTrue(resp.data['has_more'])
+        self.assertNotIn('next', resp.data)
+
+    def test_v2_feed_is_cursor_paginated(self):
+        # The cursor shape lives on /api/v2/ only (ADR-0021): {next, results}, no count.
+        for i in range(3):
+            ActivityService.record(actor=self.user, verb='payment_made', message=f'm{i}')
+        resp = active_client(self.user).get('/api/v2/activity/?page_size=2')
         self.assertEqual(resp.status_code, 200)
         self.assertEqual(len(resp.data['results']), 2)
         self.assertIsNotNone(resp.data['next'])

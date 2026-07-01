@@ -52,10 +52,22 @@ community feeds) and keyset pagination. Write-fan-out (materialized per-recipien
 feeds) is the v2 lever if a high-cardinality public feed is ever built; the typed
 event + visibility shape is exactly what a fan-out worker would consume.
 
-### Cursor pagination
-The feed endpoint uses keyset cursor pagination (`ActivityCursorPagination`,
-ordering `-created_at, -id`) instead of offset — stable under concurrent inserts
-and no total-count leak, consistent with the financial lists (ADR-0021).
+### Cursor pagination — behind a version boundary (ADR-0021)
+Keyset cursor pagination (`ActivityCursorPagination`, ordering `-created_at, -id`)
+is stable under concurrent inserts and leaks no total count. But switching a
+*live* endpoint from `{count, results, has_more}` + `limit`/`offset` to
+`{next, previous, results}` + `cursor` is a **breaking** shape change, and shipped
+mobile binaries read `count`/`has_more` and send `limit`/`offset`
+(`mobile/api/activity.ts`). Per ADR-0021 ("a breaking change ships as `/api/v2/`
+while `/api/v1/` stays stable"), the change is therefore **versioned, not
+in-place**:
+- `/api/activity/` and `/api/v1/activity/` keep the **legacy offset** shape
+  (`ActivityFeedView`) — existing clients are untouched.
+- `/api/v2/activity/` serves the **cursor** shape (`ActivityFeedViewV2`), mounted
+  via `config/api_v2_urls.py`.
+Both share one query builder (`_ActivityFeedBase`), so the visibility rule and
+typed rendering can't drift between them; only the pagination differs. New clients
+adopt `/api/v2/`; the legacy feed can be retired once no binaries call it.
 
 ### Back-compatible service surface
 `ActivityService.record(actor, verb, *, params, message, visibility, community)`
