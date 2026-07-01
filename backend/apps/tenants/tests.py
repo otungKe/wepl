@@ -224,6 +224,51 @@ class RowLevelSecurityTests(TestCase):
         self.assertEqual(codes, {'R1-A', 'R2-A'})
 
 
+class ExtendedRowLevelSecurityTests(TestCase):
+    """ADR-0008 hardening (migration 0005) — RLS now covers the non-ledger
+    tenant-columned tables too. Proves DB-level isolation on ``communities_community``
+    using the same NON-superuser probe as the ledger test above.
+    """
+
+    def setUp(self):
+        from django.contrib.auth import get_user_model
+        from django.db import connection
+        from apps.communities.models import Community
+        User = get_user_model()
+        self.t1 = Tenant.objects.create(name='ExtRLS One', slug='ext-rls-one')
+        self.t2 = Tenant.objects.create(name='ExtRLS Two', slug='ext-rls-two')
+        u1 = User.objects.create_user(phone_number='254700000050')
+        u2 = User.objects.create_user(phone_number='254700000051')
+        Community.objects.create(created_by=u1, name='ERLS-C1', tenant=self.t1)
+        Community.objects.create(created_by=u2, name='ERLS-C2', tenant=self.t2)
+        with connection.cursor() as cur:
+            cur.execute("DROP ROLE IF EXISTS ext_rls_probe")
+            cur.execute("CREATE ROLE ext_rls_probe NOSUPERUSER")
+            cur.execute("GRANT SELECT ON communities_community TO ext_rls_probe")
+
+    def _names_as_tenant(self, tenant_id):
+        from django.db import connection
+        with connection.cursor() as cur:
+            cur.execute("SET ROLE ext_rls_probe")
+            try:
+                cur.execute("SELECT set_config('app.tenant_id', %s, false)", [str(tenant_id)])
+                cur.execute("SELECT name FROM communities_community WHERE name LIKE 'ERLS-%%' ORDER BY name")
+                return [r[0] for r in cur.fetchall()]
+            finally:
+                cur.execute("RESET ROLE")
+                cur.execute("RESET app.tenant_id")
+
+    def test_rls_blocks_cross_tenant_community_reads(self):
+        self.assertEqual(self._names_as_tenant(self.t1.id), ['ERLS-C1'])
+        self.assertEqual(self._names_as_tenant(self.t2.id), ['ERLS-C2'])
+
+    def test_unset_context_probe_sees_all_communities(self):
+        # Empty app.tenant_id → the fail-open system context: the probe (even as a
+        # non-superuser) sees every tenant's rows. Documents the deliberate
+        # permissive-when-unset semantics that platform jobs rely on.
+        self.assertEqual(self._names_as_tenant(''), ['ERLS-C1', 'ERLS-C2'])
+
+
 class CrossTenantGuardTests(TestCase):
     """P6-05 — guard_tenant blocks + audits cross-tenant access; allows same/unset."""
 

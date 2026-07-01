@@ -5,10 +5,19 @@ GUC. These helpers set / clear it. When unset (empty), the policy is permissive 
 system contexts (Celery tasks, migrations, management commands, webhooks) operate
 across all tenants; a request that sets a tenant is restricted to it.
 
+RLS is enforced on every table that carries a ``tenant_id`` column:
+``ledger_account`` and ``ledger_financialtransaction`` (migration 0003), and
+``communities_community``, ``controls_limitrule``, ``payments_paymentintent``,
+``audit_auditevent`` and ``files_storedfile`` (migration 0005). Tables without a
+``tenant_id`` column (e.g. contributions funds, which inherit tenancy via their
+Community) stay application-scoped — see ADR-0008.
+
 Note: RLS is bypassed for superusers and (without FORCE) table owners. The
-migration uses ``FORCE ROW LEVEL SECURITY``; deploy the app with a NON-superuser
-DB role for isolation to bite. Until per-user tenant wiring lands (P6-04), nothing
-sets the context on web requests, so behaviour is unchanged in production.
+migrations use ``FORCE ROW LEVEL SECURITY``; deploy the app with a NON-superuser
+DB role for isolation to bite. ``TenantJWTAuthentication`` pins the context for
+member web requests (P6-04); Celery ``task_prerun``/``task_postrun`` hooks
+(``celery_hooks``) clear it at task boundaries so a pinned tenant never leaks onto
+the next task on a pooled connection.
 """
 from contextlib import contextmanager
 
