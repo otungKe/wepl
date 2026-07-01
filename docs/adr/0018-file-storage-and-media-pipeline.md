@@ -53,6 +53,24 @@ A dedicated **`files` app** as the single door for persisting user media.
 - **Real AV engine** + magic-byte sniffing in the scan hook.
 - **CDN** in front of the signed-download endpoint, and **image variants/resizing**.
 
+## Implementation status (2026-07-01) — durability enforced
+
+The pipeline stored bytes via Django's storage backend (S3/R2 when `USE_S3`), but
+`USE_S3` defaulted **off** and `render.yaml` shipped it `false`, so as deployed KYC
+docs and avatars still landed on the ephemeral dyno disk and were lost on redeploy.
+This is now **guarded at boot**, mirroring the `STAGING_OTP_BYPASS` guard:
+
+- `apps/core/deploy_checks.check_durable_media` — production (`DEBUG=False`) **refuses
+  to boot** when `USE_S3` is off, unless the operator explicitly sets
+  `ALLOW_EPHEMERAL_MEDIA=true` (for deployments that genuinely accept no user media).
+- `check_s3_credentials` — when `USE_S3=true`, missing `AWS_*`/R2 creds fail fast at
+  boot with a message naming the missing keys, instead of a 500 on first upload.
+- `render.yaml` now ships `USE_S3="true"` (+ `ALLOW_EPHEMERAL_MEDIA="false"`), making
+  durable object storage the default production posture.
+
+The consumer migration onto `StoredFile` (below) is still deferred, but media is no
+longer *silently* lost: durable storage is now the enforced default.
+
 ## Alternatives considered
 
 - **Per-model `FileField` validators.** Rejected — scatters the rules, gives no
