@@ -35,6 +35,10 @@ def _boot_production(extra_env):
         "DB_PORT": "5432",
         "REDIS_URL": "redis://127.0.0.1:6379/0",
         "REDIS_CACHE_URL": "redis://127.0.0.1:6379/0",
+        # Satisfy the durable-media boot guard (C-2) by default so tests that are
+        # about *other* concerns (OTP bypass) still boot; media-guard tests below
+        # override this explicitly.
+        "ALLOW_EPHEMERAL_MEDIA": "true",
     }
     env.update(extra_env)
     return subprocess.run(
@@ -60,6 +64,39 @@ class ProductionOtpBypassGuardTests(SimpleTestCase):
             msg="production settings booted with STAGING_OTP_BYPASS enabled",
         )
         self.assertIn("STAGING_OTP_BYPASS", result.stderr)
+
+
+class ProductionMediaDurabilityGuardTests(SimpleTestCase):
+    """C-2: production must not silently store KYC/media on the ephemeral disk."""
+
+    def test_refuses_to_boot_without_durable_media(self):
+        result = _boot_production({"USE_S3": "false", "ALLOW_EPHEMERAL_MEDIA": "false"})
+        self.assertNotEqual(
+            result.returncode, 0,
+            msg="production booted with USE_S3 off and no explicit ephemeral opt-in",
+        )
+        self.assertIn("USE_S3", result.stderr)
+
+    def test_boots_with_explicit_ephemeral_opt_in(self):
+        result = _boot_production({"USE_S3": "false", "ALLOW_EPHEMERAL_MEDIA": "true"})
+        self.assertEqual(result.returncode, 0, msg=result.stderr)
+
+    def test_refuses_s3_without_credentials(self):
+        result = _boot_production({"USE_S3": "true", "ALLOW_EPHEMERAL_MEDIA": "false"})
+        self.assertNotEqual(
+            result.returncode, 0, msg="production booted with USE_S3 on but no creds",
+        )
+        self.assertIn("AWS_", result.stderr)
+
+    def test_boots_with_s3_and_credentials(self):
+        result = _boot_production({
+            "USE_S3": "true",
+            "ALLOW_EPHEMERAL_MEDIA": "false",
+            "AWS_STORAGE_BUCKET_NAME": "b",
+            "AWS_ACCESS_KEY_ID": "k",
+            "AWS_SECRET_ACCESS_KEY": "s",
+        })
+        self.assertEqual(result.returncode, 0, msg=result.stderr)
 
 
 class TokenRefreshEndpointTests(TestCase):
