@@ -125,3 +125,37 @@
   .no-scrollbar::-webkit-scrollbar { display: none; }
   .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
 }
+
+/* ── Print receipt (UX-03) ─────────────────────────────────────────────────
+ * The receipt lives off-canvas on screen; the print rule hides all app chrome
+ * and shows only #receipt, so "Download receipt" (window.print → Save as PDF)
+ * yields a clean one-page document. Colors are explicit (a receipt is paper —
+ * always light, independent of theme). */
+.receipt-doc {
+  position: absolute;
+  left: -9999px;
+  top: 0;
+  width: 640px;
+  background: #ffffff;
+  color: #111827;
+  font-family: var(--font-inter);
+}
+.receipt-head {
+  display: flex; align-items: baseline; justify-content: space-between;
+  border-bottom: 2px solid #1a5c38; padding-bottom: 12px;
+}
+.receipt-brand { font-size: 24px; font-weight: 800; color: #1a5c38; letter-spacing: 0.02em; }
+.receipt-tag { font-size: 13px; color: #6b7280; text-transform: uppercase; letter-spacing: 0.08em; }
+.receipt-amount { font-size: 32px; font-weight: 800; color: #1a5c38; margin: 20px 0 8px; }
+.receipt-table { width: 100%; border-collapse: collapse; margin-top: 8px; }
+.receipt-table td { padding: 8px 0; border-bottom: 1px solid #e5e7eb; font-size: 14px; vertical-align: top; }
+.receipt-k { color: #6b7280; width: 40%; }
+.receipt-v { color: #111827; font-weight: 500; text-align: right; }
+.receipt-foot { margin-top: 20px; font-size: 11px; color: #9ca3af; }
+
+@media print {
+  body { background: #fff; }
+  body * { visibility: hidden; }
+  #receipt, #receipt * { visibility: visible; }
+  #receipt { position: absolute; left: 0; top: 0; width: 100%; padding: 32px; }
+}
