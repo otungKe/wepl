@@ -95,10 +95,10 @@ export default function CommunitiesPage() {
           iconBg="bg-primary-pale"
         />
         <StatTile
-          icon={<Wallet size={18} className="text-[#0891b2]" />}
+          icon={<Wallet size={18} className="text-info" />}
           value={loading || !summary ? '—' : formatMoney(summary.total_contributed)}
           label="Total managed"
-          iconBg="bg-[#e0f2fe]"
+          iconBg="bg-info/10"
         />
         <StatTile
           icon={<CircleDot size={18} className="text-accent" />}
@@ -108,10 +108,10 @@ export default function CommunitiesPage() {
           dot={summary ? summary.pending_advances > 0 : false}
         />
         <StatTile
-          icon={<TrendingUp size={18} className="text-[#16a34a]" />}
+          icon={<TrendingUp size={18} className="text-success" />}
           value={loading || growthPct === null ? '—' : `${growthPct >= 0 ? '+' : ''}${growthPct}%`}
           label="Growth this month"
-          iconBg="bg-[#dcfce7]"
+          iconBg="bg-success/10"
         />
       </div>
 
@@ -226,7 +226,7 @@ function CommunityCard({ c }: { c: Community }) {
       <div className="relative shrink-0">
         <Avatar name={c.name} src={c.community_photo} size={56} className="rounded-xl" />
         {c.is_private && (
-          <span className="absolute -bottom-1 -right-1 flex h-4 w-4 items-center justify-center rounded-full border-2 border-white bg-text-muted">
+          <span className="absolute -bottom-1 -right-1 flex h-4 w-4 items-center justify-center rounded-full border-2 border-surface bg-text-muted">
             <Lock size={7} className="text-white" />
           </span>
         )}

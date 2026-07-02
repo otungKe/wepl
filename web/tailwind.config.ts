@@ -1,47 +1,55 @@
 import type { Config } from 'tailwindcss'
 
+// Semantic color backed by a CSS variable (RGB channels in globals.css).
+// The `<alpha-value>` shim keeps Tailwind opacity modifiers (e.g. bg-primary/50).
+const v = (name: string) => `rgb(var(--color-${name}) / <alpha-value>)`
+
 const config: Config = {
   content: [
     './src/pages/**/*.{js,ts,jsx,tsx,mdx}',
     './src/components/**/*.{js,ts,jsx,tsx,mdx}',
     './src/app/**/*.{js,ts,jsx,tsx,mdx}',
   ],
+  // Dark mode is opt-in via a `.dark` class on <html> (set pre-paint in layout.tsx
+  // to avoid a flash). Token *values* live in globals.css :root / .dark.
+  darkMode: 'class',
   theme: {
     extend: {
       colors: {
         // Primary — forest green (matches mobile theme.ts)
         primary: {
-          DEFAULT: '#1A5C38',
-          dark:    '#0F3D24',
-          light:   '#2E7D4F',
-          pale:    '#E8F4ED',
-          bg:      '#F5F8F6',
+          DEFAULT: v('primary'),
+          dark:    v('primary-dark'),
+          light:   v('primary-light'),
+          pale:    v('primary-pale'),
+          bg:      v('primary-bg'),
         },
         // Accent gold
         accent: {
-          DEFAULT: '#C49A28',
-          pale:    '#FDF6E3',
+          DEFAULT: v('accent'),
+          pale:    v('accent-pale'),
         },
         // Surfaces
-        surface: '#FFFFFF',
-        border:  '#D8E5DC',
-        divider: '#EEF3EF',
+        surface: v('surface'),
+        border:  v('border'),
+        divider: v('divider'),
         // Text
         text: {
-          DEFAULT:   '#111C16',
-          secondary: '#4D6358',
-          muted:     '#8FA89A',
+          DEFAULT:   v('text'),
+          secondary: v('text-secondary'),
+          muted:     v('text-muted'),
         },
         // Status
-        success: '#1A5C38',
-        warning: '#C49A28',
-        error:   '#C0392B',
+        success: v('success'),
+        warning: v('warning'),
+        error:   v('error'),
+        info:    v('info'),
         // Chat bubbles
         bubble: {
-          sent:         '#1A5C38',
-          received:     '#EEF3EF',
-          'sent-text':  '#FFFFFF',
-          'recv-text':  '#111C16',
+          sent:         v('bubble-sent'),
+          received:     v('bubble-received'),
+          'sent-text':  v('bubble-sent-text'),
+          'recv-text':  v('bubble-recv-text'),
         },
       },
       fontFamily: {
@@ -63,9 +71,9 @@ const config: Config = {
         full: '9999px',
       },
       boxShadow: {
-        card: '0 4px 12px rgba(0,0,0,0.06)',
-        fab:  '0 4px 8px rgba(0,0,0,0.22)',
-        modal:'0 8px 32px rgba(0,0,0,0.12)',
+        card: 'var(--shadow-card)',
+        fab:  'var(--shadow-fab)',
+        modal:'var(--shadow-modal)',
       },
       keyframes: {
         slideUp: {

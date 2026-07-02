@@ -45,7 +45,7 @@ export default function DiscoverPage() {
       <div className="relative mb-4">
         <Search size={18} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-text-muted" />
         <input value={q} onChange={e => setQ(e.target.value)} placeholder="Search public communities"
-          className="h-11 w-full rounded-lg border border-border bg-white pl-10 pr-3 text-base focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20" />
+          className="h-11 w-full rounded-lg border border-border bg-surface pl-10 pr-3 text-base focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20" />
       </div>
 
       {loading ? (

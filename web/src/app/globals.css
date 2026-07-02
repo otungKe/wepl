@@ -2,9 +2,93 @@
 @tailwind components;
 @tailwind utilities;
 
+/*
+ * Design tokens (UX-01) — semantic colors as CSS variables so the palette can be
+ * themed at runtime (light/dark). Values are space-separated RGB channels so
+ * Tailwind's `rgb(var(--token) / <alpha-value>)` opacity modifiers keep working
+ * (e.g. `bg-primary/50`). tailwind.config.ts maps these to the color scale.
+ * Light and dark share the same token *names* — only the values differ.
+ */
 @layer base {
   :root {
     --font-inter: 'Inter', system-ui, sans-serif;
+    color-scheme: light;
+
+    /* Brand */
+    --color-primary:       26 92 56;    /* #1A5C38 */
+    --color-primary-dark:  15 61 36;    /* #0F3D24 */
+    --color-primary-light: 46 125 79;   /* #2E7D4F */
+    --color-primary-pale:  232 244 237; /* #E8F4ED */
+    --color-primary-bg:    245 248 246; /* #F5F8F6  app background */
+    --color-accent:        196 154 40;  /* #C49A28 */
+    --color-accent-pale:   253 246 227; /* #FDF6E3 */
+
+    /* Surfaces */
+    --color-surface: 255 255 255; /* #FFFFFF */
+    --color-border:  216 229 220; /* #D8E5DC */
+    --color-divider: 238 243 239; /* #EEF3EF */
+
+    /* Text */
+    --color-text:           17 28 22;    /* #111C16 */
+    --color-text-secondary: 77 99 88;    /* #4D6358 */
+    --color-text-muted:     143 168 154; /* #8FA89A */
+
+    /* Status */
+    --color-success: 26 92 56;   /* #1A5C38 */
+    --color-warning: 196 154 40; /* #C49A28 */
+    --color-error:   192 57 43;  /* #C0392B */
+    --color-info:    8 145 178;  /* #0891B2 */
+
+    /* Chat bubbles */
+    --color-bubble-sent:      26 92 56;    /* #1A5C38 */
+    --color-bubble-received:  238 243 239; /* #EEF3EF */
+    --color-bubble-sent-text: 255 255 255; /* #FFFFFF */
+    --color-bubble-recv-text: 17 28 22;    /* #111C16 */
+
+    /* Elevation */
+    --shadow-card:  0 4px 12px rgba(0, 0, 0, 0.06);
+    --shadow-fab:   0 4px 8px rgba(0, 0, 0, 0.22);
+    --shadow-modal: 0 8px 32px rgba(0, 0, 0, 0.12);
+  }
+
+  .dark {
+    color-scheme: dark;
+
+    /* Brand — lifted for contrast against dark surfaces */
+    --color-primary:       53 147 93;   /* #35935D */
+    --color-primary-dark:  37 107 65;   /* #256B41 */
+    --color-primary-light: 76 175 110;  /* #4CAF6E */
+    --color-primary-pale:  23 46 34;    /* #172E22  subtle green tint */
+    --color-primary-bg:    15 21 18;    /* #0F1512  app background */
+    --color-accent:        212 175 55;  /* #D4AF37 */
+    --color-accent-pale:   42 36 16;    /* #2A2410 */
+
+    /* Surfaces */
+    --color-surface: 22 33 27;  /* #16211B */
+    --color-border:  42 58 49;  /* #2A3A31 */
+    --color-divider: 34 48 42;  /* #22302A */
+
+    /* Text */
+    --color-text:           236 243 239; /* #ECF3EF */
+    --color-text-secondary: 169 190 178; /* #A9BEB2 */
+    --color-text-muted:     110 133 120; /* #6E8578 */
+
+    /* Status */
+    --color-success: 76 175 110; /* #4CAF6E */
+    --color-warning: 212 175 55; /* #D4AF37 */
+    --color-error:   224 96 85;  /* #E06055 */
+    --color-info:    56 189 220; /* #38BDDC */
+
+    /* Chat bubbles */
+    --color-bubble-sent:      46 125 79;   /* #2E7D4F */
+    --color-bubble-received:  34 48 42;    /* #22302A */
+    --color-bubble-sent-text: 255 255 255; /* #FFFFFF */
+    --color-bubble-recv-text: 236 243 239; /* #ECF3EF */
+
+    /* Elevation — deeper on dark */
+    --shadow-card:  0 4px 12px rgba(0, 0, 0, 0.5);
+    --shadow-fab:   0 4px 8px rgba(0, 0, 0, 0.6);
+    --shadow-modal: 0 8px 32px rgba(0, 0, 0, 0.6);
   }
 
   * {
@@ -13,6 +97,11 @@
 
   html {
     scroll-behavior: smooth;
+  }
+
+  body {
+    background-color: rgb(var(--color-primary-bg));
+    color: rgb(var(--color-text));
   }
 
   /* Custom scrollbar */
@@ -24,11 +113,11 @@
     background: transparent;
   }
   ::-webkit-scrollbar-thumb {
-    background: #D8E5DC;
+    background: rgb(var(--color-border));
     border-radius: 99px;
   }
   ::-webkit-scrollbar-thumb:hover {
-    background: #8FA89A;
+    background: rgb(var(--color-text-muted));
   }
 }
 

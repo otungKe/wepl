@@ -68,7 +68,7 @@ function PinForm() {
           if (!k) return <div key={i} />
           return (
             <button key={k} onClick={() => k === 'del' ? back() : press(k)} disabled={loading}
-              className="flex h-16 items-center justify-center rounded-xl border border-border bg-white text-xl font-semibold text-text transition-colors hover:bg-primary-pale hover:text-primary disabled:opacity-50">
+              className="flex h-16 items-center justify-center rounded-xl border border-border bg-surface text-xl font-semibold text-text transition-colors hover:bg-primary-pale hover:text-primary disabled:opacity-50">
               {k === 'del' ? <Delete size={20} /> : k}
             </button>
           )

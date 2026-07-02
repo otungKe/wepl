@@ -109,7 +109,7 @@ function FileField({ label, inputRef }: { label: string; inputRef: React.RefObje
     <div className="flex flex-col gap-1.5">
       <span className="text-sm font-medium text-text-secondary">{label}</span>
       <button type="button" onClick={() => inputRef.current?.click()}
-        className="flex h-11 items-center gap-2 rounded-lg border border-dashed border-border bg-white px-3.5 text-sm text-text-muted hover:bg-divider/40">
+        className="flex h-11 items-center gap-2 rounded-lg border border-dashed border-border bg-surface px-3.5 text-sm text-text-muted hover:bg-divider/40">
         <Upload size={16} /> {name || 'Choose an image'}
       </button>
       <input ref={inputRef} type="file" accept="image/*" className="hidden" onChange={e => setName(e.target.files?.[0]?.name ?? '')} />
