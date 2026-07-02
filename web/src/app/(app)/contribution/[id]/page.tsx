@@ -218,7 +218,7 @@ function DisbursementsTab({ id, isAdmin }: { id: string; isAdmin: boolean }) {
         </button>
         {isAdmin && (
           <div className="flex flex-col items-start gap-2 rounded-lg border border-border bg-surface p-4">
-            <div className="flex h-9 w-9 items-center justify-center rounded-lg text-[#059669]" style={{ backgroundColor: '#f0fdf4' }}>
+            <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-success/10 text-success">
               <CalendarClock size={18} />
             </div>
             <div>

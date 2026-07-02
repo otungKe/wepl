@@ -6,6 +6,7 @@ import { Users, Compass, Bell, User as UserIcon, Settings, LogOut, Building2, Sh
 import { useAuthStore } from '@/store/auth'
 import { notificationsApi } from '@/lib/api'
 import { Avatar } from '@/components/ui/Avatar'
+import { ThemeToggle } from '@/components/ui/ThemeToggle'
 import { cn } from '@/lib/utils'
 
 const NAV = [
@@ -77,6 +78,7 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
             <p className="truncate text-sm font-semibold text-text">{user?.name || 'WEPL user'}</p>
             <p className="truncate text-xs text-text-muted">{user?.phone_number}</p>
           </div>
+          <ThemeToggle />
           <button onClick={handleLogout} title="Log out" className="rounded-lg p-1.5 text-text-muted hover:bg-divider hover:text-error">
             <LogOut size={18} />
           </button>

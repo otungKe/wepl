@@ -69,7 +69,7 @@ export default function OtpPage() {
           <input key={i} ref={el => { refs.current[i] = el }} type="text" inputMode="numeric" maxLength={1} value={d}
             onChange={e => setDigit(i, e.target.value)}
             onKeyDown={e => { if (e.key === 'Backspace' && !digits[i] && i > 0) refs.current[i - 1]?.focus() }}
-            className={cn('h-14 w-full rounded-lg border bg-white text-center text-xl font-semibold focus:outline-none focus:border-primary focus:ring-2 focus:ring-primary/20',
+            className={cn('h-14 w-full rounded-lg border bg-surface text-center text-xl font-semibold focus:outline-none focus:border-primary focus:ring-2 focus:ring-primary/20',
               error ? 'border-error' : 'border-border')} />
         ))}
       </div>

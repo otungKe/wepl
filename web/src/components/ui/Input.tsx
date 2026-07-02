@@ -2,7 +2,7 @@ import { InputHTMLAttributes, TextareaHTMLAttributes, SelectHTMLAttributes, forw
 import { cn } from '@/lib/utils'
 
 const base =
-  'w-full rounded-lg border bg-white px-3.5 text-base text-text placeholder:text-text-muted ' +
+  'w-full rounded-lg border bg-surface px-3.5 text-base text-text placeholder:text-text-muted ' +
   'focus:outline-none focus:border-primary focus:ring-2 focus:ring-primary/20 transition-colors disabled:opacity-60'
 
 function Field({ label, error, hint, children }: { label?: string; error?: string; hint?: string; children: React.ReactNode }) {
