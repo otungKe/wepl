@@ -133,9 +133,16 @@ services:
       - key: FIREBASE_CREDENTIALS_JSON
         sync: false
       # ── Durable media storage (S3 / Cloudflare R2) ──────────────────────────
-      # Flip USE_S3 to "true" and populate the creds below so KYC/profile uploads
-      # survive redeploys (the dyno disk is ephemeral). See production.py.
+      # USE_S3 is "true" so KYC/profile uploads persist across redeploys (the dyno
+      # disk is ephemeral). Production REFUSES TO BOOT with USE_S3=false unless
+      # ALLOW_EPHEMERAL_MEDIA=true is set (see config/settings/production.py +
+      # apps/core/deploy_checks.py). Populate the AWS_*/R2 secrets below — a boot
+      # with USE_S3=true and missing creds fails fast with a clear error.
       - key: USE_S3
+        value: "true"
+      # Escape hatch for deployments that genuinely store no user media/KYC.
+      # Leave unset (or "false") for any deployment that accepts uploads.
+      - key: ALLOW_EPHEMERAL_MEDIA
         value: "false"
       - key: AWS_STORAGE_BUCKET_NAME
         sync: false

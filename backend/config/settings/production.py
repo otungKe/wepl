@@ -82,6 +82,16 @@ CSRF_COOKIE_SECURE = True
 # this is fully opt-in and dev/CI are unaffected.
 USE_S3 = config('USE_S3', default=False, cast=bool)
 
+# Fail fast if production would store KYC/media on the ephemeral dyno disk. An
+# operator can explicitly accept the risk (deployments with no user media) with
+# ALLOW_EPHEMERAL_MEDIA=true. Mirrors the STAGING_OTP_BYPASS guard above.
+from apps.core.deploy_checks import check_durable_media, check_s3_credentials
+check_durable_media(
+    debug=DEBUG,
+    use_s3=USE_S3,
+    allow_ephemeral=config('ALLOW_EPHEMERAL_MEDIA', default=False, cast=bool),
+)
+
 # Static files are served by WhiteNoise (compressed + content-hashed for cache
 # busting). collectstatic runs in the Render build, generating the manifest.
 STORAGES = {
@@ -94,11 +104,18 @@ STORAGES = {
 }
 
 if USE_S3:
-    AWS_STORAGE_BUCKET_NAME = config('AWS_STORAGE_BUCKET_NAME')
+    AWS_STORAGE_BUCKET_NAME = config('AWS_STORAGE_BUCKET_NAME', default='')
     AWS_S3_REGION_NAME      = config('AWS_S3_REGION_NAME', default='auto')
     AWS_S3_ENDPOINT_URL     = config('AWS_S3_ENDPOINT_URL', default='') or None
-    AWS_ACCESS_KEY_ID       = config('AWS_ACCESS_KEY_ID')
-    AWS_SECRET_ACCESS_KEY   = config('AWS_SECRET_ACCESS_KEY')
+    AWS_ACCESS_KEY_ID       = config('AWS_ACCESS_KEY_ID', default='')
+    AWS_SECRET_ACCESS_KEY   = config('AWS_SECRET_ACCESS_KEY', default='')
+    # Clear boot-time error if creds are missing, instead of a 500 on first upload.
+    check_s3_credentials(
+        use_s3=USE_S3,
+        bucket=AWS_STORAGE_BUCKET_NAME,
+        access_key=AWS_ACCESS_KEY_ID,
+        secret_key=AWS_SECRET_ACCESS_KEY,
+    )
     # KYC documents are sensitive: keep objects private and serve via signed URLs.
     AWS_DEFAULT_ACL       = None
     AWS_QUERYSTRING_AUTH  = True
