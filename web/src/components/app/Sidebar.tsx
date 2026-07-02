@@ -2,7 +2,7 @@
 import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
 import { useEffect, useState } from 'react'
-import { Users, Compass, Bell, User as UserIcon, Settings, LogOut, Building2, ShieldCheck, BarChart3, Clock } from 'lucide-react'
+import { Users, Compass, Bell, User as UserIcon, Settings, LogOut, Building2, ShieldCheck, BarChart3, Clock, Receipt } from 'lucide-react'
 import { useAuthStore } from '@/store/auth'
 import { notificationsApi } from '@/lib/api'
 import { Avatar } from '@/components/ui/Avatar'
@@ -13,6 +13,7 @@ const NAV = [
   { href: '/communities',  label: 'Communities',  icon: Users },
   { href: '/discover',     label: 'Discover',     icon: Compass },
   { href: '/requests',     label: 'My requests',  icon: Clock },
+  { href: '/transactions', label: 'Transactions', icon: Receipt },
   { href: '/reports',      label: 'Reports',      icon: BarChart3 },
   { href: '/notifications',label: 'Notifications',icon: Bell, key: 'notifications' },
   { href: '/kyc',          label: 'Verification', icon: ShieldCheck },
