@@ -2,12 +2,14 @@ import { cn } from '@/lib/utils'
 
 type Tone = 'neutral' | 'success' | 'warning' | 'danger' | 'info' | 'primary'
 
+// Token-backed so both themes adapt (danger/info previously used bg-red-50 /
+// bg-blue-50 built-ins that stayed light in dark mode).
 const tones: Record<Tone, string> = {
   neutral: 'bg-divider text-text-secondary',
   success: 'bg-primary-pale text-primary',
   warning: 'bg-accent-pale text-accent',
-  danger:  'bg-red-50 text-error',
-  info:    'bg-blue-50 text-blue-700',
+  danger:  'bg-error/10 text-error',
+  info:    'bg-info/10 text-info',
   primary: 'bg-primary text-white',
 }
 
