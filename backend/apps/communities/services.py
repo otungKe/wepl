@@ -18,6 +18,7 @@ from django.core.exceptions import PermissionDenied, ValidationError
 from django.db import transaction
 from django.utils import timezone
 
+from apps.activity.models import Activity
 from apps.activity.services import ActivityService
 from apps.audit.services import AuditService
 from apps.core.policy import require
@@ -118,10 +119,12 @@ class CommunityService:
             ShareHolding.objects.create(shares_fund=fund, user=user)
 
         logger.info("Community created: '%s' (id=%s) by %s", community.name, community.id, _dn(user))
-        ActivityService.log_activity(
-            user=user,
-            activity_type="community_created",
-            message=f"{_dn(user)} created community '{community.name}'",
+        ActivityService.record(
+            actor=user,
+            verb="community_created",
+            params={"community_name": community.name},
+            visibility=Activity.Visibility.COMMUNITY,
+            community=community,
         )
         return community
 
@@ -166,10 +169,12 @@ class CommunityService:
             return membership
 
         logger.info("%s joined community '%s' (id=%s)", _dn(user), community.name, community.id)
-        ActivityService.log_activity(
-            user=user,
-            activity_type="community_joined",
-            message=f"{_dn(user)} joined '{community.name}'",
+        ActivityService.record(
+            actor=user,
+            verb="community_joined",
+            params={"community_name": community.name},
+            visibility=Activity.Visibility.COMMUNITY,
+            community=community,
         )
         _notify_admins(
             community,
@@ -215,10 +220,11 @@ class CommunityService:
         membership.is_active = False
         membership.save(update_fields=["is_active"])
         logger.info("%s left community '%s' (id=%s)", _dn(user), community.name, community.id)
-        ActivityService.log_activity(
-            user=user,
-            activity_type="community_left",
-            message=f"{_dn(user)} left '{community.name}'",
+        ActivityService.record(
+            actor=user,
+            verb="community_left",
+            params={"community_name": community.name},
+            visibility=Activity.Visibility.PRIVATE,
         )
         return membership
 
@@ -398,10 +404,12 @@ class CommunityService:
             tenant=community.tenant_id,
             metadata={"from_user_id": old_owner_id, "to_user_id": new_owner.id},
         )
-        ActivityService.log_activity(
-            user=creator,
-            activity_type="community_ownership_transferred",
-            message=f"{_dn(creator)} transferred ownership of '{community.name}' to {_dn(new_owner)}",
+        ActivityService.record(
+            actor=creator,
+            verb="community_ownership_transferred",
+            params={"community_name": community.name, "new_owner_name": _dn(new_owner)},
+            visibility=Activity.Visibility.COMMUNITY,
+            community=community,
         )
         from apps.notifications.services import NotificationService
         NotificationService.create(

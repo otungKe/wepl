@@ -36,6 +36,7 @@ from ..models import (
     ContributionAmendment, ContributionAmendmentVote,
     ContributionJoinRequest,
 )
+from apps.activity.models import Activity
 from apps.activity.services import ActivityService
 from apps.ledger.permissions import FinancialPermissions
 from apps.ledger.writer import create_fin_transaction
@@ -98,7 +99,7 @@ __all__ = [
     "logging", "math", "random", "timedelta", "Decimal",
     "transaction", "F", "ValidationError", "PermissionDenied", "timezone",
     # cross-cutting services / helpers
-    "AuditService", "require", "ActivityService", "FinancialPermissions",
+    "AuditService", "require", "ActivityService", "Activity", "FinancialPermissions",
     "logger", "_dn", "_notify", "_emit_event", "_compute_next_run",
     # models
     "Contribution", "ContributionParticipant", "ContributionTransaction",

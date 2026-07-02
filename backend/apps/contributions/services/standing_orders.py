@@ -130,10 +130,11 @@ class StandingOrderService:
             next_run_at=_compute_next_run(order.frequency, now),
         )
 
-        ActivityService.log_activity(
-            user=user,
-            activity_type='standing_order_executed',
-            message=f"Standing order of KES {order.amount} paid to {recipient_phone}",
+        ActivityService.record(
+            actor=user,
+            verb='standing_order_executed',
+            params={"amount": str(order.amount), "recipient": recipient_phone},
+            visibility=Activity.Visibility.PRIVATE,
         )
 
         # ── Dispatch B2C via Celery AFTER commit ──────────────────────────────

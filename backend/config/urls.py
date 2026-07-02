@@ -53,6 +53,9 @@ urlpatterns = [
     # clients should target. See config/api_urls.py.
     path('api/',    include('config.api_urls')),
     path('api/v1/', include('config.api_urls')),
+    # /api/v2/ carries only endpoints whose contract deliberately breaks v1
+    # (e.g. the cursor-paginated activity feed). See config/api_v2_urls.py + ADR-0021.
+    path('api/v2/', include('config.api_v2_urls')),
 
     # OpenAPI schema + interactive docs (drf-spectacular).
     path('api/schema/',             SpectacularAPIView.as_view(), name='schema'),

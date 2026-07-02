@@ -37,10 +37,12 @@ class WelfareService:
             created_by=user,
         )
 
-        ActivityService.log_activity(
-            user=user,
-            activity_type='welfare_contribution',
-            message=f"{_dn(user)} contributed KES {amount:,.0f} to welfare fund",
+        # Amount is sensitive — keep the contributor's welfare payment private.
+        ActivityService.record(
+            actor=user,
+            verb='welfare_contribution',
+            params={"amount": str(amount)},
+            visibility=Activity.Visibility.PRIVATE,
         )
         fund.refresh_from_db()
         return fund
