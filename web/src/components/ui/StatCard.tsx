@@ -1,5 +1,6 @@
 import { LucideIcon } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import { Skeleton } from './Spinner'
 
 interface StatCardProps {
   label: string
@@ -8,9 +9,11 @@ interface StatCardProps {
   hint?: string
   className?: string
   accent?: boolean
+  /** Render a skeleton in place of the value while data loads. */
+  loading?: boolean
 }
 
-export function StatCard({ label, value, icon: Icon, hint, className, accent }: StatCardProps) {
+export function StatCard({ label, value, icon: Icon, hint, className, accent, loading }: StatCardProps) {
   return (
     <div className={cn(
       'rounded-lg border p-4',
@@ -21,8 +24,10 @@ export function StatCard({ label, value, icon: Icon, hint, className, accent }: 
         <p className={cn('text-sm', accent ? 'text-white/80' : 'text-text-muted')}>{label}</p>
         {Icon && <Icon size={18} className={accent ? 'text-white/80' : 'text-primary'} />}
       </div>
-      <p className={cn('mt-1.5 text-2xl font-bold tabular-nums', accent ? 'text-white' : 'text-text')}>{value}</p>
-      {hint && <p className={cn('mt-0.5 text-xs', accent ? 'text-white/70' : 'text-text-muted')}>{hint}</p>}
+      {loading
+        ? <Skeleton className={cn('mt-2 h-7 w-20', accent && 'bg-white/25')} />
+        : <p className={cn('mt-1.5 text-2xl font-bold tabular-nums', accent ? 'text-white' : 'text-text')}>{value}</p>}
+      {hint && !loading && <p className={cn('mt-0.5 text-xs', accent ? 'text-white/70' : 'text-text-muted')}>{hint}</p>}
     </div>
   )
 }
