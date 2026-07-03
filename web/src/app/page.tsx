@@ -47,14 +47,14 @@ export default function WelcomePage() {
           {/* Copy */}
           <div>
             <span className="inline-flex items-center gap-1.5 rounded-full bg-primary-pale px-3 py-1 text-xs font-semibold text-primary">
-              <Smartphone size={13} /> The financial OS for communities
+              <Users size={13} /> Built for modern communities
             </span>
             <h1 className="mt-5 text-4xl font-bold leading-[1.1] tracking-tight text-text sm:text-5xl">
-              Run your chama <span className="text-primary">end-to-end</span>, without the spreadsheets.
+              One platform for your community&apos;s <span className="text-primary">money, conversations and decisions</span>.
             </h1>
             <p className="mt-4 max-w-lg text-base text-text-secondary">
-              Contributions, ROSCA payouts, welfare funds, emergency advances and shares —
-              over M-Pesa, on one audited ledger.
+              Contributions and payouts, group chat, and shared decisions — for chamas,
+              SACCOs and welfare groups, over M-Pesa on one audited ledger.
             </p>
             <div className="mt-7 flex flex-col gap-3 sm:flex-row">
               <Link href="/login?mode=register"><Button size="lg" className="w-full sm:w-auto">Create account <ArrowUpRight size={18} /></Button></Link>
@@ -63,7 +63,7 @@ export default function WelcomePage() {
             <div className="mt-6 flex flex-wrap items-center gap-x-5 gap-y-2 text-xs text-text-muted">
               <span className="inline-flex items-center gap-1.5"><Smartphone size={14} className="text-primary" /> M-Pesa native</span>
               <span className="inline-flex items-center gap-1.5"><ShieldCheck size={14} className="text-primary" /> Double-entry ledger</span>
-              <span className="inline-flex items-center gap-1.5"><Users size={14} className="text-primary" /> Built for chamas & SACCOs</span>
+              <span className="inline-flex items-center gap-1.5"><Users size={14} className="text-primary" /> Chamas, SACCOs & welfare groups</span>
             </div>
           </div>
 
