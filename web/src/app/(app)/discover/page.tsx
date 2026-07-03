@@ -1,8 +1,9 @@
 'use client'
 import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { Compass, Search, Users } from 'lucide-react'
+import { Compass, Search, Users, Lock } from 'lucide-react'
 import { communities, apiError, type Community } from '@/lib/api'
+import { useTier } from '@/hooks/useTier'
 import { PageHeader } from '@/components/app/PageHeader'
 import { Button } from '@/components/ui/Button'
 import { Avatar } from '@/components/ui/Avatar'
@@ -16,6 +17,7 @@ export default function DiscoverPage() {
   const [loading, setLoading] = useState(true)
   const [q, setQ] = useState('')
   const [pending, setPending] = useState<number | null>(null)
+  const { isVerified } = useTier()
 
   async function load(query = '') {
     setLoading(true)
@@ -65,6 +67,11 @@ export default function DiscoverPage() {
                 <Button size="sm" variant="outline" onClick={() => router.push(`/community/${c.id}`)}>Open</Button>
               ) : c.join_request_status === 'PENDING' ? (
                 <Button size="sm" variant="ghost" disabled>Requested</Button>
+              ) : !isVerified ? (
+                // Tier 0: joining requires KYC — nudge to verification (mirrors mobile).
+                <Button size="sm" variant="outline" title="Verify your identity to join" onClick={() => router.push('/kyc')}>
+                  <Lock size={13} /> Join
+                </Button>
               ) : (
                 <Button size="sm" loading={pending === c.id} onClick={() => join(c)}>
                   {c.join_policy === 'open' ? 'Join' : 'Request'}
