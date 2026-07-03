@@ -40,6 +40,17 @@ function timeAgo(iso: string) {
   return `${Math.floor(h / 24)}d ago`
 }
 
+// Color-code the community category so the list scans at a glance (matches the
+// mobile/dashboard language). Unknown categories fall back to neutral.
+const CATEGORY_TONE: Record<string, 'success' | 'info' | 'warning' | 'primary' | 'neutral'> = {
+  savings: 'success', chama: 'success',
+  investment: 'info', sacco: 'info',
+  welfare: 'warning',
+  general: 'neutral',
+}
+const catTone = (cat?: string) => CATEGORY_TONE[(cat ?? '').toLowerCase()] ?? 'neutral'
+const catLabel = (cat?: string) => (cat ? cat.charAt(0).toUpperCase() + cat.slice(1) : '')
+
 // ─── main page ────────────────────────────────────────────────────────────────
 
 export default function CommunitiesPage() {
@@ -48,6 +59,7 @@ export default function CommunitiesPage() {
   const [activity, setActivity]   = useState<Notification[]>([])
   const [loading, setLoading]     = useState(true)
   const [q, setQ]                 = useState('')
+  const [cat, setCat]             = useState('all')
   const [createOpen, setCreateOpen] = useState(false)
   const [joinOpen, setJoinOpen]   = useState(false)
 
@@ -65,7 +77,17 @@ export default function CommunitiesPage() {
     communities.mine().then((c: Community[]) => setItems(c)).catch((e: unknown) => toast.error(apiError(e)))
   }
 
-  const filtered = items.filter(c => c.name.toLowerCase().includes(q.toLowerCase()))
+  // Category chips are derived from the communities the user actually has.
+  const categories = Array.from(new Set(items.map(c => (c.category || '').toLowerCase()).filter(Boolean)))
+  const query = q.trim().toLowerCase()
+  const filtered = items.filter(c => {
+    const matchesQ = !query
+      || c.name.toLowerCase().includes(query)
+      || (c.location || '').toLowerCase().includes(query)
+      || (c.category || '').toLowerCase().includes(query)
+    const matchesCat = cat === 'all' || (c.category || '').toLowerCase() === cat
+    return matchesQ && matchesCat
+  })
 
   // Derived stats
   const growthPct = summary && summary.last_month > 0
@@ -75,14 +97,14 @@ export default function CommunitiesPage() {
   return (
     <div>
       {/* ── Page title row ──────────────────────────────────────────── */}
-      <div className="mb-6 flex items-center justify-between">
+      <div className="mb-6 flex flex-wrap items-start justify-between gap-3">
         <div>
-          <h1 className="text-xl font-bold text-text">Communities</h1>
-          <p className="mt-0.5 text-sm text-text-muted">Your savings groups and chamas</p>
+          <h1 className="text-2xl font-bold tracking-tight text-text">Communities</h1>
+          <p className="mt-0.5 text-sm text-text-muted">Your groups, contributions and members in one place</p>
         </div>
         <div className="flex gap-2">
           <Button variant="outline" size="sm" onClick={() => setJoinOpen(true)}>Join</Button>
-          <Button size="sm" onClick={() => setCreateOpen(true)}><Plus size={15} /> New</Button>
+          <Button size="sm" onClick={() => setCreateOpen(true)}><Plus size={15} /> Create community</Button>
         </div>
       </div>
 
@@ -121,26 +143,51 @@ export default function CommunitiesPage() {
         {/* ── Left: community list ─────────────────────────────────── */}
         <div>
           {/* Search */}
-          <div className="relative mb-4">
+          <div className="relative mb-3">
             <Search size={15} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-text-muted" />
             <input
               value={q}
               onChange={e => setQ(e.target.value)}
-              placeholder="Search communities, members or transactions"
+              placeholder="Search communities, members or location"
               className="h-10 w-full rounded-lg border border-border bg-surface pl-9 pr-3 text-sm text-text placeholder:text-text-muted focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/10"
             />
           </div>
+
+          {/* Category filter */}
+          {categories.length > 1 && (
+            <div className="mb-4 flex flex-wrap gap-1.5">
+              {['all', ...categories].map(key => (
+                <button
+                  key={key}
+                  onClick={() => setCat(key)}
+                  className={`rounded-full px-3 py-1 text-xs font-semibold transition-colors ${
+                    cat === key
+                      ? 'bg-primary text-white'
+                      : 'border border-border bg-surface text-text-secondary hover:bg-divider'
+                  }`}
+                >
+                  {key === 'all' ? 'All' : catLabel(key)}
+                </button>
+              ))}
+            </div>
+          )}
 
           {loading ? (
             <div className="space-y-3">
               {Array.from({ length: 3 }).map((_, i) => <Skeleton key={i} className="h-[88px] rounded-xl" />)}
             </div>
-          ) : filtered.length === 0 ? (
+          ) : items.length === 0 ? (
             <EmptyState
               icon={Users}
               title="No communities yet"
               description="Create a community or join one with an invite to get started."
               action={<Button onClick={() => setCreateOpen(true)}><Plus size={16} /> Create community</Button>}
+            />
+          ) : filtered.length === 0 ? (
+            <EmptyState
+              icon={Search}
+              title="No matches"
+              description="No communities match your search or filter."
             />
           ) : (
             <div className="space-y-2">
@@ -236,11 +283,7 @@ function CommunityCard({ c }: { c: Community }) {
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-2">
           <p className="truncate font-semibold text-text">{c.name}</p>
-          {c.category && (
-            <span className="shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold text-primary bg-primary-pale">
-              {c.category}
-            </span>
-          )}
+          {c.category && <Badge tone={catTone(c.category)}>{catLabel(c.category)}</Badge>}
         </div>
         <p className="mt-0.5 text-xs text-text-muted">
           {c.member_count} {c.member_count === 1 ? 'member' : 'members'}
