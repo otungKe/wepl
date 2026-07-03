@@ -12,6 +12,13 @@ SECRET_KEY = config('SECRET_KEY')
 # Set STAGING_OTP_BYPASS=true in env. Must never be true in production.
 STAGING_OTP_BYPASS = config('STAGING_OTP_BYPASS', default=False, cast=bool)
 
+# Two-tier access model (ADR-0022, Phase B). Master switch for enforcing Tier-1
+# (KYC-approved) on the *new* gated surfaces — community create/join, contribution
+# create, chat. Default OFF so existing (unverified-active) users are unaffected;
+# flip to true in production after a KYC push. The pre-existing money-path checks
+# (contribute / request_advance) always enforce regardless of this flag.
+ACCESS_TIER_ENFORCEMENT = config('ACCESS_TIER_ENFORCEMENT', default=False, cast=bool)
+
 # ─── Firebase (FCM push notifications) ───────────────────────────────────────
 # Path to a Firebase service-account JSON file (download from Firebase Console
 # → Project Settings → Service Accounts → Generate new private key).

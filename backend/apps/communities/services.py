@@ -20,6 +20,7 @@ from django.utils import timezone
 
 from apps.activity.models import Activity
 from apps.activity.services import ActivityService
+from apps.users.tiers import AccessPolicy
 from apps.audit.services import AuditService
 from apps.core.policy import require
 
@@ -94,6 +95,7 @@ class CommunityService:
     @staticmethod
     @transaction.atomic
     def create_community(user, validated_data, share_price=None):
+        AccessPolicy.gate(user, "Verify your identity to create a community.")
         from apps.tenants.resolve import tenant_for_user
         community = Community.objects.create(
             created_by=user, tenant=tenant_for_user(user), **validated_data,
@@ -140,6 +142,7 @@ class CommunityService:
         the invite/request/approval flow, which sets _approved=True.
         Public communities can be joined directly.
         """
+        AccessPolicy.gate(user, "Verify your identity to join communities.")
         if community.is_private and not _approved:
             raise PermissionDenied(
                 "This community is private. Request to join using an invite code."

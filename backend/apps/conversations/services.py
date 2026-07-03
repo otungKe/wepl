@@ -7,6 +7,7 @@ from django.shortcuts import get_object_or_404
 from django.utils import timezone
 
 from apps.core.policy import can, require
+from apps.users.tiers import AccessPolicy
 
 from .models import Conversation, Message, ConversationReadStatus
 from apps.communities.models import Community, CommunityMembership
@@ -18,6 +19,7 @@ class ConversationService:
 
     @staticmethod
     def create_conversation(user, community, topic, photo=None):
+        AccessPolicy.gate(user, "Verify your identity to start conversations.")
         require(user, "community.view", community,
                 "You are not a member of this community.")
 
@@ -47,6 +49,7 @@ class ConversationService:
     def create_message(conversation_id, sender, content, message_type='text', attachment=None, reply_to_id=None):
         conversation = get_object_or_404(Conversation, id=conversation_id)
 
+        AccessPolicy.gate(sender, "Verify your identity to chat.")
         if not can(sender, "conversation.view", conversation):
             logger.warning(
                 "ConversationService.create_message: user %s attempted to send a message "

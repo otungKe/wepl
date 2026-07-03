@@ -6,6 +6,7 @@ class ContributionService:
     @staticmethod
     @transaction.atomic
     def create_contribution(user, validated_data, member_phones=None, add_all_members=False):
+        AccessPolicy.gate(user, "Verify your identity to create a contribution.")
         # Governance quorum is enforced at request time against the real
         # contribution row (submit_disbursement_request / propose amendment),
         # which correctly accounts for members who join after creation. A
