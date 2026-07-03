@@ -13,6 +13,29 @@ was not yet ``IsActiveSession``.
 from rest_framework.permissions import BasePermission
 
 from .auth import STAGE_OTP_RECOVERY, STAGE_OTP_VERIFIED, _token_stage
+from .tiers import AccessPolicy
+
+
+class RequiresTier1(BasePermission):
+    """
+    View-layer gate for Tier-1 (full-access) endpoints (ADR-0022). Compose it
+    *after* IsActiveSession::
+
+        permission_classes = [IsActiveSession, RequiresTier1]
+
+    Raises KYCRequired (rather than returning False) so a verified-but-not-KYC
+    caller receives the structured ``KYC_REQUIRED`` 403 from the exception handler
+    instead of a generic permission error. Phase B wires this onto the
+    money/community/chat write endpoints; Phase A ships the class + the
+    service-layer gate only.
+    """
+
+    def has_permission(self, request, view):
+        user = getattr(request, 'user', None)
+        if not (user and user.is_authenticated):
+            return False  # let the auth layer produce the standard 401/403
+        AccessPolicy.require_tier1(user)  # raises KYCRequired if not Tier 1
+        return True
 
 
 class IsOTPVerified(BasePermission):

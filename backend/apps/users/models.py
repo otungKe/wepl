@@ -59,6 +59,31 @@ class User(AbstractUser):
             return False
         return check_password(raw_pin, self.pin)
 
+    # ── Access tiers (ADR-0022) ──────────────────────────────────────────────
+    # Derived from verification state — nothing extra is stored.
+    #   Tier 0: identity verified (phone), KYC not yet approved  → discovery only
+    #   Tier 1: identity verified + KYC approved                 → full access
+    @property
+    def kyc_status(self) -> str:
+        """'not_submitted' | 'pending' | 'approved' | 'rejected' — safe if no KYC."""
+        try:
+            return self.kyc.status
+        except self.__class__.kyc.RelatedObjectDoesNotExist:
+            return 'not_submitted'
+
+    @property
+    def is_tier1(self) -> bool:
+        """Full access: phone verified AND KYC approved (pending/rejected do not qualify)."""
+        return bool(self.is_phone_verified) and self.kyc_status == 'approved'
+
+    @property
+    def is_tier0(self) -> bool:
+        """Verified identity, not yet KYC-approved."""
+        return not self.is_tier1
+
+    def has_full_access(self) -> bool:
+        return self.is_tier1
+
     def __str__(self):
         return f"{self.name} ({self.phone_number})"
 

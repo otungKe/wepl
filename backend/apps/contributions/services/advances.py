@@ -7,11 +7,9 @@ class EmergencyAdvanceService:
 
     @staticmethod
     def request_advance(contribution_id, user, amount, interest_rate, repayment_due):
-        try:
-            if user.kyc.status != 'approved':
-                raise ValidationError("Your identity verification must be approved before requesting an advance.")
-        except user.__class__.kyc.RelatedObjectDoesNotExist:
-            raise ValidationError("Please complete identity verification before requesting an advance.")
+        # Tier-1 (KYC-approved) gate — centralized (ADR-0022).
+        AccessPolicy.require_tier1(
+            user, "Your identity verification must be approved before requesting an advance.")
 
         contribution = Contribution.objects.get(id=contribution_id)
 

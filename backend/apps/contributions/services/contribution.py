@@ -177,11 +177,9 @@ class ContributionService:
         if amount <= 0:
             raise ValidationError("Amount must be greater than 0")
 
-        try:
-            if user.kyc.status != 'approved':
-                raise ValidationError("Your identity verification must be approved before you can contribute.")
-        except user.__class__.kyc.RelatedObjectDoesNotExist:
-            raise ValidationError("Please complete identity verification before contributing.")
+        # Tier-1 (KYC-approved) gate — centralized (ADR-0022).
+        AccessPolicy.require_tier1(
+            user, "Your identity verification must be approved before you can contribute.")
 
         contribution = Contribution.objects.select_for_update().get(id=contribution_id)
 
