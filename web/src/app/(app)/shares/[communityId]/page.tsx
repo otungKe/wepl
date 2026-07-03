@@ -1,8 +1,9 @@
 'use client'
 import { useEffect, useState, useCallback } from 'react'
-import { useParams } from 'next/navigation'
-import { Coins, Smartphone, TrendingUp } from 'lucide-react'
+import { useParams, useRouter } from 'next/navigation'
+import { Coins, Smartphone, TrendingUp, Lock } from 'lucide-react'
 import { shares, payments, apiError, type SharesFund } from '@/lib/api'
+import { useTier } from '@/hooks/useTier'
 import { PageHeader } from '@/components/app/PageHeader'
 import { StatCard } from '@/components/ui/StatCard'
 import { Button } from '@/components/ui/Button'
@@ -16,6 +17,8 @@ import { toast } from 'sonner'
 
 export default function SharesPage() {
   const { communityId } = useParams<{ communityId: string }>()
+  const router = useRouter()
+  const { isVerified } = useTier()
   const [fund, setFund] = useState<SharesFund | null>(null)
   const [loading, setLoading] = useState(true)
   const [payOpen, setPayOpen] = useState(false)
@@ -31,7 +34,10 @@ export default function SharesPage() {
   return (
     <div>
       <PageHeader title="Shares fund" subtitle={fund.name} back
-        action={<Button size="sm" onClick={() => setPayOpen(true)}><Smartphone size={15} /> Buy shares</Button>} />
+        action={isVerified
+          ? <Button size="sm" onClick={() => setPayOpen(true)}><Smartphone size={15} /> Buy shares</Button>
+          : <Button size="sm" variant="outline" title="Verify your identity to buy shares" onClick={() => router.push('/kyc')}><Lock size={15} /> Buy shares</Button>
+        } />
 
       <div className="mb-5 grid gap-3 sm:grid-cols-3">
         <StatCard accent label="Total pool" value={formatMoney(fund.total_pool)} icon={Coins} />

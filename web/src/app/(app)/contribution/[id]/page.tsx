@@ -1,11 +1,12 @@
 'use client'
 import { useEffect, useState, useCallback } from 'react'
-import { useParams } from 'next/navigation'
-import { Receipt, Users, Banknote, FileEdit, Plus, Smartphone, Check, X, CreditCard, ArrowUpCircle, CalendarClock } from 'lucide-react'
+import { useParams, useRouter } from 'next/navigation'
+import { Receipt, Users, Banknote, FileEdit, Plus, Smartphone, Check, X, CreditCard, ArrowUpCircle, CalendarClock, Lock } from 'lucide-react'
 import {
   contributions, payments, apiError,
   type Contribution, type Transaction, type Participant, type DisbursementRequest, type ContributionAmendment,
 } from '@/lib/api'
+import { useTier } from '@/hooks/useTier'
 import { PageHeader } from '@/components/app/PageHeader'
 import { Tabs } from '@/components/ui/Tabs'
 import { Button } from '@/components/ui/Button'
@@ -21,6 +22,8 @@ import { toast } from 'sonner'
 
 export default function ContributionDetailPage() {
   const { id } = useParams<{ id: string }>()
+  const router = useRouter()
+  const { isVerified } = useTier()
   const [c, setC] = useState<Contribution | null>(null)
   const [tab, setTab] = useState('transactions')
   const [loading, setLoading] = useState(true)
@@ -37,7 +40,10 @@ export default function ContributionDetailPage() {
   return (
     <div>
       <PageHeader title={c.title} subtitle={c.description || `${c.frequency} contribution`} back
-        action={<Button size="sm" onClick={() => setPayOpen(true)}><Smartphone size={15} /> Contribute</Button>} />
+        action={isVerified
+          ? <Button size="sm" onClick={() => setPayOpen(true)}><Smartphone size={15} /> Contribute</Button>
+          : <Button size="sm" variant="outline" title="Verify your identity to contribute" onClick={() => router.push('/kyc')}><Lock size={15} /> Contribute</Button>
+        } />
 
       {/* Pool balance — physical card style */}
       <div className="mb-4 overflow-hidden rounded-xl bg-primary px-6 py-5">
