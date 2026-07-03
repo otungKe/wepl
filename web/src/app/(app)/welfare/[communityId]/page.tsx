@@ -1,8 +1,9 @@
 'use client'
 import { useEffect, useState, useCallback } from 'react'
-import { useParams } from 'next/navigation'
-import { HeartHandshake, Plus, Check, X, Smartphone } from 'lucide-react'
+import { useParams, useRouter } from 'next/navigation'
+import { HeartHandshake, Plus, Check, X, Smartphone, Lock } from 'lucide-react'
 import { welfare, payments, apiError, type WelfareFund, type WelfareClaim } from '@/lib/api'
+import { useTier } from '@/hooks/useTier'
 import { PageHeader } from '@/components/app/PageHeader'
 import { StatCard } from '@/components/ui/StatCard'
 import { Button } from '@/components/ui/Button'
@@ -16,6 +17,8 @@ import { toast } from 'sonner'
 
 export default function WelfarePage() {
   const { communityId } = useParams<{ communityId: string }>()
+  const router = useRouter()
+  const { isVerified } = useTier()
   const [fund, setFund] = useState<WelfareFund | null>(null)
   const [claims, setClaims] = useState<WelfareClaim[]>([])
   const [loading, setLoading] = useState(true)
@@ -42,7 +45,10 @@ export default function WelfarePage() {
   return (
     <div>
       <PageHeader title="Welfare fund" subtitle={fund.name} back
-        action={<Button size="sm" onClick={() => setPayOpen(true)}><Smartphone size={15} /> Contribute</Button>} />
+        action={isVerified
+          ? <Button size="sm" onClick={() => setPayOpen(true)}><Smartphone size={15} /> Contribute</Button>
+          : <Button size="sm" variant="outline" title="Verify your identity to contribute" onClick={() => router.push('/kyc')}><Lock size={15} /> Contribute</Button>
+        } />
 
       <div className="mb-5 grid gap-3 sm:grid-cols-2">
         <StatCard accent label="Fund balance" value={formatMoney(fund.balance)} icon={HeartHandshake} />

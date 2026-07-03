@@ -32,6 +32,7 @@ from rest_framework.views import APIView
 
 from apps.contributions.models import Contribution, WelfareFund, SharesFund
 from apps.core.exceptions import TransitionError
+from apps.users.tiers import AccessPolicy
 from .models import MpesaSTKRequest, MpesaC2BTransaction
 from .permissions import SafaricomIPPermission
 from .services import MpesaService, _normalize_phone
@@ -54,6 +55,15 @@ class STKPushView(APIView):
     throttle_classes   = [STKPushThrottle]
 
     def post(self, request):
+        # Tier-1 (KYC-approved) gate — this is the single money front-door for
+        # members (all contribution/welfare/shares/advance payments flow through
+        # STK push; the direct service endpoints are disabled). Enforced
+        # unconditionally like the other money paths, independent of the
+        # ACCESS_TIER_ENFORCEMENT flag (ADR-0022).
+        AccessPolicy.require_tier1(
+            request.user,
+            "Verify your identity before making a payment.")
+
         payment_type = request.data.get("payment_type", "contribution")
         amount       = request.data.get("amount")
 
