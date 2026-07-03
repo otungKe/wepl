@@ -37,6 +37,28 @@ from rest_framework.response import Response
 from rest_framework.views import exception_handler as drf_default_handler
 
 
+class KYCRequired(PermissionDenied):
+    """
+    Raised when a Tier-0 (identity-verified but not KYC-approved) user attempts a
+    Tier-1 (full-access) action. A subclass of Django's PermissionDenied so it can
+    be raised from services, Celery tasks and WS consumers (like the policy layer),
+    but the handler renders a *structured* 403 the client can branch on:
+
+        {"code": "KYC_REQUIRED", "message": "...", "next_step": "/kyc/start"}
+
+    See apps/users/tiers.py (AccessPolicy) and ADR-0022.
+    """
+    code = 'KYC_REQUIRED'
+    default_message = 'Complete identity verification to unlock all platform features.'
+    next_step = '/kyc/start'
+
+    def __init__(self, message=None, next_step=None):
+        self.message = message or self.default_message
+        if next_step:
+            self.next_step = next_step
+        super().__init__(self.message)
+
+
 class TransitionError(Exception):
     """
     Raised by FinancialTransaction.transition_to() when:
@@ -90,6 +112,15 @@ def custom_exception_handler(exc, context):
     Augments DRF's default handler to also handle Django-native exceptions
     that DRF does not convert by default.
     """
+    # KYCRequired → 403 with the structured tier envelope. Handled BEFORE DRF's
+    # default handler, which would otherwise convert this Django PermissionDenied
+    # subclass into a generic {"detail": ...} 403 and swallow the envelope.
+    if isinstance(exc, KYCRequired):
+        return Response(
+            {'code': exc.code, 'message': exc.message, 'next_step': exc.next_step},
+            status=status.HTTP_403_FORBIDDEN,
+        )
+
     # Let DRF handle its own exceptions first (e.g. rest_framework.exceptions.*)
     response = drf_default_handler(exc, context)
     if response is not None:

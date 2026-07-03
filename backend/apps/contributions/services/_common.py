@@ -38,6 +38,7 @@ from ..models import (
 )
 from apps.activity.models import Activity
 from apps.activity.services import ActivityService
+from apps.users.tiers import AccessPolicy
 from apps.ledger.permissions import FinancialPermissions
 from apps.ledger.writer import create_fin_transaction
 from apps.ledger.models import FinancialTransaction, JournalEntry
@@ -99,7 +100,7 @@ __all__ = [
     "logging", "math", "random", "timedelta", "Decimal",
     "transaction", "F", "ValidationError", "PermissionDenied", "timezone",
     # cross-cutting services / helpers
-    "AuditService", "require", "ActivityService", "Activity", "FinancialPermissions",
+    "AuditService", "require", "ActivityService", "Activity", "AccessPolicy", "FinancialPermissions",
     "logger", "_dn", "_notify", "_emit_event", "_compute_next_run",
     # models
     "Contribution", "ContributionParticipant", "ContributionTransaction",
