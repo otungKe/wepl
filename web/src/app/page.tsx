@@ -35,7 +35,7 @@ const HERO_CHIPS = [
   { icon: Users, label: 'Real-time collaboration' },
 ]
 
-const TODAY = ['Endless WhatsApp threads', 'Spreadsheets that drift', 'Notebooks and paper records', 'Scattered payment statements']
+const TODAY = ['Endless group chats', 'Spreadsheets that drift', 'Notebooks and paper records', 'Scattered payment statements']
 const WITH_WEPL = ['One shared workspace', 'One reconciled ledger', 'One clear decision history', 'One source of truth']
 
 const TRUST = [
