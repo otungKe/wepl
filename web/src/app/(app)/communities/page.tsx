@@ -1,9 +1,9 @@
 'use client'
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import Link from 'next/link'
 import {
   Users, Plus, Search, Lock, ChevronRight,
-  TrendingUp, CircleDot, Wallet, Bell,
+  TrendingUp, CircleDot, Wallet, Bell, Pin,
 } from 'lucide-react'
 import {
   communities, reports, notificationsApi, apiError,
@@ -51,6 +51,26 @@ const CATEGORY_TONE: Record<string, 'success' | 'info' | 'warning' | 'primary' |
 const catTone = (cat?: string) => CATEGORY_TONE[(cat ?? '').toLowerCase()] ?? 'neutral'
 const catLabel = (cat?: string) => (cat ? cat.charAt(0).toUpperCase() + cat.slice(1) : '')
 
+// Pinned communities are curated per-device in localStorage — there's no backend
+// pin flag yet, so this keeps the reference's "Pinned" section honest and useful
+// without fabricating data. (Backend sync is a natural follow-up.)
+const PIN_KEY = 'wepl.pinnedCommunities'
+
+function usePinnedCommunities() {
+  const [ids, setIds] = useState<number[]>([])
+  useEffect(() => {
+    try { setIds(JSON.parse(localStorage.getItem(PIN_KEY) || '[]')) } catch { /* ignore */ }
+  }, [])
+  const toggle = useCallback((id: number) => {
+    setIds(prev => {
+      const next = prev.includes(id) ? prev.filter(x => x !== id) : [id, ...prev]
+      try { localStorage.setItem(PIN_KEY, JSON.stringify(next)) } catch { /* ignore */ }
+      return next
+    })
+  }, [])
+  return { pinnedIds: ids, toggle }
+}
+
 // ─── main page ────────────────────────────────────────────────────────────────
 
 export default function CommunitiesPage() {
@@ -62,6 +82,7 @@ export default function CommunitiesPage() {
   const [cat, setCat]             = useState('all')
   const [createOpen, setCreateOpen] = useState(false)
   const [joinOpen, setJoinOpen]   = useState(false)
+  const { pinnedIds, toggle: togglePin } = usePinnedCommunities()
 
   useEffect(() => {
     Promise.all([
@@ -88,6 +109,11 @@ export default function CommunitiesPage() {
     const matchesCat = cat === 'all' || (c.category || '').toLowerCase() === cat
     return matchesQ && matchesCat
   })
+
+  // Split into Pinned (curated) and the rest, preserving pin order.
+  const pinnedSet = new Set(pinnedIds)
+  const pinned = pinnedIds.map(id => filtered.find(c => c.id === id)).filter(Boolean) as Community[]
+  const rest = filtered.filter(c => !pinnedSet.has(c.id))
 
   // Derived stats
   const growthPct = summary && summary.last_month > 0
@@ -190,8 +216,44 @@ export default function CommunitiesPage() {
               description="No communities match your search or filter."
             />
           ) : (
-            <div className="space-y-2">
-              {filtered.map(c => <CommunityCard key={c.id} c={c} />)}
+            <div className="space-y-6">
+              {/* Pinned */}
+              {pinned.length > 0 && (
+                <div>
+                  <div className="mb-2.5 flex items-center gap-2">
+                    <Pin size={14} className="text-primary" fill="currentColor" />
+                    <p className="text-sm font-semibold text-text">Pinned</p>
+                    <span className="text-xs text-text-muted">{pinned.length}</span>
+                  </div>
+                  <div className="space-y-2.5">
+                    {pinned.map(c => (
+                      <PinnedCard key={c.id} c={c} pinned onTogglePin={() => togglePin(c.id)} />
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* All communities */}
+              {rest.length > 0 && (
+                <div>
+                  {pinned.length > 0 && (
+                    <div className="mb-2.5 flex items-center gap-2">
+                      <p className="text-sm font-semibold text-text">All communities</p>
+                      <span className="text-xs text-text-muted">{rest.length}</span>
+                    </div>
+                  )}
+                  <div className="space-y-2">
+                    {rest.map(c => (
+                      <CommunityCard
+                        key={c.id}
+                        c={c}
+                        pinned={pinnedSet.has(c.id)}
+                        onTogglePin={() => togglePin(c.id)}
+                      />
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
           )}
         </div>
@@ -261,15 +323,79 @@ export default function CommunitiesPage() {
   )
 }
 
-// ─── community card ───────────────────────────────────────────────────────────
+// ─── community cards ──────────────────────────────────────────────────────────
 
-function CommunityCard({ c }: { c: Community }) {
+/** Pin toggle. Sits inside the card <Link>, so it swallows the navigation. */
+function PinButton({ pinned, onToggle }: { pinned?: boolean; onToggle?: () => void }) {
+  if (!onToggle) return null
+  return (
+    <button
+      type="button"
+      title={pinned ? 'Unpin' : 'Pin'}
+      aria-label={pinned ? 'Unpin community' : 'Pin community'}
+      aria-pressed={pinned}
+      onClick={(e) => { e.preventDefault(); e.stopPropagation(); onToggle() }}
+      className={`rounded-lg p-1.5 transition-colors ${
+        pinned ? 'text-primary' : 'text-text-muted opacity-0 hover:bg-divider group-hover:opacity-100'
+      }`}
+    >
+      <Pin size={16} fill={pinned ? 'currentColor' : 'none'} />
+    </button>
+  )
+}
+
+function FundBadges({ c }: { c: Community }) {
+  if (!c.has_welfare_fund && !c.has_shares_fund) return null
+  return (
+    <div className="mt-1.5 flex gap-1">
+      {c.has_welfare_fund && <Badge tone="success">Welfare fund</Badge>}
+      {c.has_shares_fund && <Badge tone="warning">Shares</Badge>}
+    </div>
+  )
+}
+
+/** Richer card used in the Pinned section — larger photo, prominent title. */
+function PinnedCard({ c, pinned, onTogglePin }: { c: Community; pinned?: boolean; onTogglePin?: () => void }) {
+  return (
+    <Link
+      href={`/community/${c.id}`}
+      className="group flex gap-4 rounded-xl border border-border bg-surface p-4 transition-colors hover:border-primary/30"
+    >
+      <div className="relative shrink-0">
+        <Avatar name={c.name} src={c.community_photo} size={64} className="rounded-xl" />
+        {c.is_private && (
+          <span className="absolute -bottom-1 -right-1 flex h-4 w-4 items-center justify-center rounded-full border-2 border-surface bg-text-muted">
+            <Lock size={7} className="text-white" />
+          </span>
+        )}
+      </div>
+
+      <div className="min-w-0 flex-1">
+        <div className="flex items-start justify-between gap-2">
+          <p className="truncate text-base font-semibold text-text">{c.name}</p>
+          <PinButton pinned={pinned} onToggle={onTogglePin} />
+        </div>
+        <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-text-muted">
+          {c.category && <Badge tone={catTone(c.category)}>{catLabel(c.category)}</Badge>}
+          <span>{c.member_count} {c.member_count === 1 ? 'member' : 'members'}</span>
+          {c.location && <span>· {c.location}</span>}
+        </div>
+        {c.description && <p className="mt-2 line-clamp-2 text-sm text-text-secondary">{c.description}</p>}
+        <FundBadges c={c} />
+      </div>
+
+      <ChevronRight size={16} className="mt-1 shrink-0 self-start text-text-muted transition-transform group-hover:translate-x-0.5" />
+    </Link>
+  )
+}
+
+/** Compact card used in the "All communities" list. */
+function CommunityCard({ c, pinned, onTogglePin }: { c: Community; pinned?: boolean; onTogglePin?: () => void }) {
   return (
     <Link
       href={`/community/${c.id}`}
       className="group flex items-center gap-4 rounded-xl border border-border bg-surface px-4 py-3.5 transition-colors hover:border-primary/30 hover:bg-primary-bg/30"
     >
-      {/* Photo */}
       <div className="relative shrink-0">
         <Avatar name={c.name} src={c.community_photo} size={56} className="rounded-xl" />
         {c.is_private && (
@@ -279,7 +405,6 @@ function CommunityCard({ c }: { c: Community }) {
         )}
       </div>
 
-      {/* Info */}
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-2">
           <p className="truncate font-semibold text-text">{c.name}</p>
@@ -292,16 +417,11 @@ function CommunityCard({ c }: { c: Community }) {
         {c.description && (
           <p className="mt-1 truncate text-xs text-text-secondary">{c.description}</p>
         )}
-        {(c.has_welfare_fund || c.has_shares_fund) && (
-          <div className="mt-1.5 flex gap-1">
-            {c.has_welfare_fund && <Badge tone="success">Welfare</Badge>}
-            {c.has_shares_fund && <Badge tone="warning">Shares</Badge>}
-          </div>
-        )}
+        <FundBadges c={c} />
       </div>
 
-      {/* Right */}
-      <div className="flex shrink-0 items-center gap-2">
+      <div className="flex shrink-0 items-center gap-1">
+        <PinButton pinned={pinned} onToggle={onTogglePin} />
         <ChevronRight size={16} className="text-text-muted transition-transform group-hover:translate-x-0.5" />
       </div>
     </Link>
