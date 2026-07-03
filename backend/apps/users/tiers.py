@@ -26,11 +26,19 @@ Branch without raising::
 Extending to more tiers later: add `is_tierN` / `require_tierN` here and a matching
 derived property on User; call sites stay unchanged.
 """
+from django.conf import settings
+
 from apps.core.exceptions import KYCRequired
 
 
 class AccessPolicy:
     """Stateless helpers around the derived tier properties on ``User``."""
+
+    @staticmethod
+    def enforcement_enabled() -> bool:
+        """Master switch for the Phase-B gates (ADR-0022). Default off so existing
+        active-but-unverified users keep their current access until flipped."""
+        return bool(getattr(settings, 'ACCESS_TIER_ENFORCEMENT', False))
 
     # ── Predicates (never raise) ─────────────────────────────────────────────
     @staticmethod
@@ -45,18 +53,30 @@ class AccessPolicy:
     def has_full_access(user) -> bool:
         return AccessPolicy.is_tier1(user)
 
-    # ── Gate (raises KYCRequired) ────────────────────────────────────────────
+    # ── Gates (raise KYCRequired) ────────────────────────────────────────────
     @staticmethod
     def require_tier1(user, message=None) -> None:
-        """Allow a Tier-1 action, else raise KYCRequired (structured 403).
-
-        Superusers/staff bypass (platform operators), mirroring the policy layer.
+        """**Unconditional** Tier-1 gate — always enforces, ignoring the feature
+        flag. Used by the pre-existing money paths (contribute / request_advance),
+        which were already KYC-gated before the tier work. Staff/superusers bypass.
         """
         if user and (getattr(user, 'is_superuser', False) or getattr(user, 'is_staff', False)):
             return
         if AccessPolicy.is_tier1(user):
             return
         raise KYCRequired(message)
+
+    @staticmethod
+    def gate(user, message=None) -> None:
+        """**Flag-aware** Tier-1 gate for the *new* Phase-B surfaces (community
+        create/join, contribution create, chat, …). A no-op while
+        ACCESS_TIER_ENFORCEMENT is off, so wiring it onto currently-open endpoints
+        is safe and inert until the switch is flipped. When on, behaves like
+        ``require_tier1``.
+        """
+        if not AccessPolicy.enforcement_enabled():
+            return
+        AccessPolicy.require_tier1(user, message)
 
     # Convenience aliases so call sites read intently. All Tier-1 gated for now;
     # Phase B may add finer per-action logic here without touching call sites.

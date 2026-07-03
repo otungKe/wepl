@@ -1,6 +1,6 @@
 # ADR-0022: Two-tier access model (KYC-gated full access)
 
-- **Status:** Accepted (Phase A shipped: tier model + centralized gate + structured error + consolidation of the existing ad-hoc KYC checks. Phase B — extending the gate to communities/chat/joins/invites/payments and the tier-aware frontend — is deferred behind product decisions, see below.)
+- **Status:** Accepted. Phase A shipped (tier model + centralized gate + structured error + consolidation). **Phase B shipped the backend enforcement** — the flag-aware `gate()` wired onto community create/join, contribution create, and chat — **behind `ACCESS_TIER_ENFORCEMENT` (default off)**. The tier-aware frontend and the remaining write surfaces (invites, votes, welfare/shares, standing orders, payouts) are follow-ups. See "Phase B" below.
 - **Date:** 2026-07-03
 - **Relates to:** Onboarding & access-control spec; builds on the authorization policy layer (ADR-0009) and the API error conventions (ADR-0021).
 
@@ -87,6 +87,32 @@ improves (was a 400 `ValidationError`, now the consistent 403 `KYC_REQUIRED`).
      chat without KYC. Hard-gating those is a breaking change for existing
      unverified users; it needs a grandfathering / feature-flag / grace-period
      cutover before `RequiresTier1` is wired onto those endpoints.
+
+## Phase B — enforcement, safe by construction
+
+The three open decisions were resolved with the lowest-risk defaults:
+
+1. **Tier 0 = phone-verified** (email stays a KYC concern; no signup rebuild).
+2. **Vocabulary → real apps.** The gated surfaces are the ones that exist:
+   community create/join, contribution (pool) create, chat (conversation + message).
+   Remaining writes (invites, disbursement/amendment votes, welfare/shares
+   contributions, standing orders, payouts) are follow-ups using the same gate.
+3. **Backward compatibility = a feature flag, default off.**
+   `ACCESS_TIER_ENFORCEMENT` (settings) is the master switch. `AccessPolicy.gate()`
+   is a **no-op while it is off**, so the gate is wired onto currently-open
+   endpoints but stays inert until the switch is flipped — existing
+   active-but-unverified users are unaffected. Flip to `true` in production after a
+   KYC push. (The pre-existing money-path checks via `require_tier1` always enforce,
+   flag or not.)
+
+Two gates, by intent:
+- `AccessPolicy.require_tier1(user)` — **unconditional** (contribute / request_advance; pre-existing).
+- `AccessPolicy.gate(user)` — **flag-aware** (all new Phase-B surfaces); `RequiresTier1` uses it.
+
+Rollout: enable in staging → verify Tier-0 gets `KYC_REQUIRED` on the gated
+surfaces and Tier-1 is unaffected → announce/KYC-push → enable in production. Roll
+back instantly by flipping the flag off. A future refinement can grandfather
+pre-cutoff users instead of a hard global switch.
 
 ## Extension points
 - New tier: add the derived property + `AccessPolicy.require_tierN`.

@@ -8,7 +8,7 @@ for the consolidated money-path checks lives in the contributions suite.
 from datetime import date
 
 from django.contrib.auth import get_user_model
-from django.test import RequestFactory, TestCase
+from django.test import TestCase, override_settings
 from rest_framework.test import APIRequestFactory
 
 from apps.core.exceptions import KYCRequired, custom_exception_handler
@@ -115,6 +115,42 @@ class MoneyPathRegressionTests(TestCase):
                 999999, u, 100, 0, date.today() + timedelta(days=30))
 
 
+class EnforcementFlagTests(TestCase):
+    """`gate()` is flag-aware; `require_tier1()` is unconditional."""
+
+    def test_gate_is_noop_when_enforcement_off(self):
+        # default: ACCESS_TIER_ENFORCEMENT is off
+        AccessPolicy.gate(make_user("254700000050"))  # Tier 0, must not raise
+
+    @override_settings(ACCESS_TIER_ENFORCEMENT=True)
+    def test_gate_enforces_when_on(self):
+        with self.assertRaises(KYCRequired):
+            AccessPolicy.gate(make_user("254700000051"))  # Tier 0 → blocked
+        AccessPolicy.gate(make_user("254700000052", kyc="approved"))  # Tier 1 → ok
+
+    def test_require_tier1_always_enforces_regardless_of_flag(self):
+        # Even with the flag off, the money-path gate blocks Tier 0.
+        with self.assertRaises(KYCRequired):
+            AccessPolicy.require_tier1(make_user("254700000053"))
+
+
+@override_settings(ACCESS_TIER_ENFORCEMENT=True)
+class PhaseBServiceGateTests(TestCase):
+    """With enforcement on, the new write surfaces reject Tier 0."""
+
+    def test_create_community_blocks_tier0(self):
+        from apps.communities.services import CommunityService
+        with self.assertRaises(KYCRequired):
+            CommunityService.create_community(make_user("254700000060"), {"name": "X"})
+
+    def test_create_community_allows_tier1(self):
+        from apps.communities.services import CommunityService
+        c = CommunityService.create_community(
+            make_user("254700000061", kyc="approved"), {"name": "Chama"})
+        self.assertIsNotNone(c.id)
+
+
+@override_settings(ACCESS_TIER_ENFORCEMENT=True)
 class RequiresTier1PermissionTests(TestCase):
     def setUp(self):
         self.factory = APIRequestFactory()

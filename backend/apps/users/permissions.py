@@ -34,7 +34,7 @@ class RequiresTier1(BasePermission):
         user = getattr(request, 'user', None)
         if not (user and user.is_authenticated):
             return False  # let the auth layer produce the standard 401/403
-        AccessPolicy.require_tier1(user)  # raises KYCRequired if not Tier 1
+        AccessPolicy.gate(user)  # flag-aware: no-op while enforcement is off, else raises KYCRequired
         return True
 
 
