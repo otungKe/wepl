@@ -1,9 +1,9 @@
 'use client'
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import Link from 'next/link'
 import {
   Users, Plus, Search, Lock, ChevronRight,
-  TrendingUp, CircleDot, Wallet, Bell,
+  TrendingUp, CircleDot, Wallet, Bell, Pin,
 } from 'lucide-react'
 import {
   communities, reports, notificationsApi, apiError,
@@ -40,6 +40,37 @@ function timeAgo(iso: string) {
   return `${Math.floor(h / 24)}d ago`
 }
 
+// Color-code the community category so the list scans at a glance (matches the
+// mobile/dashboard language). Unknown categories fall back to neutral.
+const CATEGORY_TONE: Record<string, 'success' | 'info' | 'warning' | 'primary' | 'neutral'> = {
+  savings: 'success', chama: 'success',
+  investment: 'info', sacco: 'info',
+  welfare: 'warning',
+  general: 'neutral',
+}
+const catTone = (cat?: string) => CATEGORY_TONE[(cat ?? '').toLowerCase()] ?? 'neutral'
+const catLabel = (cat?: string) => (cat ? cat.charAt(0).toUpperCase() + cat.slice(1) : '')
+
+// Pinned communities are curated per-device in localStorage — there's no backend
+// pin flag yet, so this keeps the reference's "Pinned" section honest and useful
+// without fabricating data. (Backend sync is a natural follow-up.)
+const PIN_KEY = 'wepl.pinnedCommunities'
+
+function usePinnedCommunities() {
+  const [ids, setIds] = useState<number[]>([])
+  useEffect(() => {
+    try { setIds(JSON.parse(localStorage.getItem(PIN_KEY) || '[]')) } catch { /* ignore */ }
+  }, [])
+  const toggle = useCallback((id: number) => {
+    setIds(prev => {
+      const next = prev.includes(id) ? prev.filter(x => x !== id) : [id, ...prev]
+      try { localStorage.setItem(PIN_KEY, JSON.stringify(next)) } catch { /* ignore */ }
+      return next
+    })
+  }, [])
+  return { pinnedIds: ids, toggle }
+}
+
 // ─── main page ────────────────────────────────────────────────────────────────
 
 export default function CommunitiesPage() {
@@ -48,8 +79,10 @@ export default function CommunitiesPage() {
   const [activity, setActivity]   = useState<Notification[]>([])
   const [loading, setLoading]     = useState(true)
   const [q, setQ]                 = useState('')
+  const [cat, setCat]             = useState('all')
   const [createOpen, setCreateOpen] = useState(false)
   const [joinOpen, setJoinOpen]   = useState(false)
+  const { pinnedIds, toggle: togglePin } = usePinnedCommunities()
 
   useEffect(() => {
     Promise.all([
@@ -65,40 +98,59 @@ export default function CommunitiesPage() {
     communities.mine().then((c: Community[]) => setItems(c)).catch((e: unknown) => toast.error(apiError(e)))
   }
 
-  const filtered = items.filter(c => c.name.toLowerCase().includes(q.toLowerCase()))
+  // Category chips are derived from the communities the user actually has.
+  const categories = Array.from(new Set(items.map(c => (c.category || '').toLowerCase()).filter(Boolean)))
+  const query = q.trim().toLowerCase()
+  const filtered = items.filter(c => {
+    const matchesQ = !query
+      || c.name.toLowerCase().includes(query)
+      || (c.location || '').toLowerCase().includes(query)
+      || (c.category || '').toLowerCase().includes(query)
+    const matchesCat = cat === 'all' || (c.category || '').toLowerCase() === cat
+    return matchesQ && matchesCat
+  })
 
-  // Derived stats
+  // Split into Pinned (curated) and the rest, preserving pin order.
+  const pinnedSet = new Set(pinnedIds)
+  const pinned = pinnedIds.map(id => filtered.find(c => c.id === id)).filter(Boolean) as Community[]
+  const rest = filtered.filter(c => !pinnedSet.has(c.id))
+
+  // Derived stats (all from real data — no fabricated deltas)
   const growthPct = summary && summary.last_month > 0
     ? Math.round(((summary.this_month - summary.last_month) / summary.last_month) * 100)
     : null
+  const totalMembers = items.reduce((s, c) => s + (c.member_count || 0), 0)
 
   return (
     <div>
       {/* ── Page title row ──────────────────────────────────────────── */}
-      <div className="mb-6 flex items-center justify-between">
+      <div className="mb-6 flex flex-wrap items-start justify-between gap-3">
         <div>
-          <h1 className="text-xl font-bold text-text">Communities</h1>
-          <p className="mt-0.5 text-sm text-text-muted">Your savings groups and chamas</p>
+          <h1 className="text-2xl font-bold tracking-tight text-text">Communities</h1>
+          <p className="mt-0.5 text-sm text-text-muted">Your groups, contributions and members in one place</p>
         </div>
         <div className="flex gap-2">
           <Button variant="outline" size="sm" onClick={() => setJoinOpen(true)}>Join</Button>
-          <Button size="sm" onClick={() => setCreateOpen(true)}><Plus size={15} /> New</Button>
+          <Button size="sm" onClick={() => setCreateOpen(true)}><Plus size={15} /> Create community</Button>
         </div>
       </div>
 
       {/* ── Stats row ───────────────────────────────────────────────── */}
-      <div className="mb-6 grid grid-cols-2 gap-3 sm:grid-cols-4">
+      <div className="mb-5 grid grid-cols-2 gap-3 sm:grid-cols-4">
         <StatTile
           icon={<Users size={18} className="text-primary" />}
           value={loading ? '—' : String(items.length)}
           label="Active communities"
           iconBg="bg-primary-pale"
+          sub={loading ? undefined : `${totalMembers.toLocaleString()} members`}
         />
         <StatTile
           icon={<Wallet size={18} className="text-info" />}
           value={loading || !summary ? '—' : formatMoney(summary.total_contributed)}
           label="Total managed"
           iconBg="bg-info/10"
+          sub={growthPct === null ? undefined : `${growthPct >= 0 ? '+' : ''}${growthPct}% this month`}
+          subTone={growthPct !== null && growthPct < 0 ? 'down' : 'up'}
         />
         <StatTile
           icon={<CircleDot size={18} className="text-accent" />}
@@ -106,12 +158,15 @@ export default function CommunitiesPage() {
           label="Actions pending"
           iconBg="bg-accent-pale"
           dot={summary ? summary.pending_advances > 0 : false}
+          sub={!summary ? undefined : summary.pending_advances > 0 ? 'Needs your review' : 'All clear'}
+          subTone={summary && summary.pending_advances > 0 ? 'warn' : 'muted'}
         />
         <StatTile
           icon={<TrendingUp size={18} className="text-success" />}
           value={loading || growthPct === null ? '—' : `${growthPct >= 0 ? '+' : ''}${growthPct}%`}
           label="Growth this month"
           iconBg="bg-success/10"
+          sub={loading ? undefined : 'vs last month'}
         />
       </div>
 
@@ -121,30 +176,91 @@ export default function CommunitiesPage() {
         {/* ── Left: community list ─────────────────────────────────── */}
         <div>
           {/* Search */}
-          <div className="relative mb-4">
+          <div className="relative mb-3">
             <Search size={15} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-text-muted" />
             <input
               value={q}
               onChange={e => setQ(e.target.value)}
-              placeholder="Search communities, members or transactions"
+              placeholder="Search communities, members or location"
               className="h-10 w-full rounded-lg border border-border bg-surface pl-9 pr-3 text-sm text-text placeholder:text-text-muted focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/10"
             />
           </div>
+
+          {/* Category filter */}
+          {categories.length > 1 && (
+            <div className="mb-4 flex flex-wrap gap-1.5">
+              {['all', ...categories].map(key => (
+                <button
+                  key={key}
+                  onClick={() => setCat(key)}
+                  className={`rounded-full px-3 py-1 text-xs font-medium transition-colors ${
+                    cat === key
+                      ? 'bg-primary text-white'
+                      : 'bg-divider/60 text-text-secondary hover:bg-divider'
+                  }`}
+                >
+                  {key === 'all' ? 'All' : catLabel(key)}
+                </button>
+              ))}
+            </div>
+          )}
 
           {loading ? (
             <div className="space-y-3">
               {Array.from({ length: 3 }).map((_, i) => <Skeleton key={i} className="h-[88px] rounded-xl" />)}
             </div>
-          ) : filtered.length === 0 ? (
+          ) : items.length === 0 ? (
             <EmptyState
               icon={Users}
               title="No communities yet"
               description="Create a community or join one with an invite to get started."
               action={<Button onClick={() => setCreateOpen(true)}><Plus size={16} /> Create community</Button>}
             />
+          ) : filtered.length === 0 ? (
+            <EmptyState
+              icon={Search}
+              title="No matches"
+              description="No communities match your search or filter."
+            />
           ) : (
-            <div className="space-y-2">
-              {filtered.map(c => <CommunityCard key={c.id} c={c} />)}
+            <div className="space-y-6">
+              {/* Pinned */}
+              {pinned.length > 0 && (
+                <div>
+                  <div className="mb-2.5 flex items-center gap-2">
+                    <Pin size={14} className="text-primary" fill="currentColor" />
+                    <p className="text-sm font-semibold text-text">Pinned</p>
+                    <span className="text-xs text-text-muted">{pinned.length}</span>
+                  </div>
+                  <div className="space-y-2.5">
+                    {pinned.map(c => (
+                      <PinnedCard key={c.id} c={c} pinned onTogglePin={() => togglePin(c.id)} />
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* All communities */}
+              {rest.length > 0 && (
+                <div>
+                  {pinned.length > 0 && (
+                    <div className="mb-2.5 flex items-center gap-2">
+                      <p className="text-sm font-semibold text-text">All communities</p>
+                      <span className="text-xs text-text-muted">{rest.length}</span>
+                    </div>
+                  )}
+                  <div className="space-y-2">
+                    {rest.map(c => (
+                      <CommunityCard
+                        key={c.id}
+                        c={c}
+                        pinned={pinnedSet.has(c.id)}
+                        onTogglePin={() => togglePin(c.id)}
+                      />
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
           )}
         </div>
@@ -183,7 +299,7 @@ export default function CommunitiesPage() {
                       </p>
                       <p className="mt-0.5 text-xs text-text-muted">{timeAgo(n.created_at)}</p>
                     </div>
-                    {!n.is_read && <span className="mt-1.5 h-2 w-2 shrink-0 rounded-full bg-primary" />}
+                    {!n.is_read && <span className="mt-1.5 h-2 w-2 shrink-0 animate-pulse rounded-full bg-primary" />}
                   </div>
                 )
               })}
@@ -205,6 +321,9 @@ export default function CommunitiesPage() {
               <Button size="sm" variant="outline" fullWidth>Invite members</Button>
             </div>
           </div>
+
+          {/* Community health — real signals from the financial summary */}
+          {!loading && summary && <CommunityHealth summary={summary} growthPct={growthPct} />}
         </div>
       </div>
 
@@ -214,51 +333,87 @@ export default function CommunitiesPage() {
   )
 }
 
-// ─── community card ───────────────────────────────────────────────────────────
+// ─── community cards ──────────────────────────────────────────────────────────
 
-function CommunityCard({ c }: { c: Community }) {
+/** Pin toggle. Sits inside the card <Link>, so it swallows the navigation. */
+function PinButton({ pinned, onToggle }: { pinned?: boolean; onToggle?: () => void }) {
+  if (!onToggle) return null
   return (
-    <Link
-      href={`/community/${c.id}`}
-      className="group flex items-center gap-4 rounded-xl border border-border bg-surface px-4 py-3.5 transition-colors hover:border-primary/30 hover:bg-primary-bg/30"
+    <button
+      type="button"
+      title={pinned ? 'Unpin' : 'Pin'}
+      aria-label={pinned ? 'Unpin community' : 'Pin community'}
+      aria-pressed={pinned}
+      onClick={(e) => { e.preventDefault(); e.stopPropagation(); onToggle() }}
+      className={`rounded-lg p-1.5 transition-colors ${
+        pinned ? 'text-primary' : 'text-text-muted opacity-0 hover:bg-divider group-hover:opacity-100'
+      }`}
     >
-      {/* Photo */}
-      <div className="relative shrink-0">
-        <Avatar name={c.name} src={c.community_photo} size={56} className="rounded-xl" />
-        {c.is_private && (
-          <span className="absolute -bottom-1 -right-1 flex h-4 w-4 items-center justify-center rounded-full border-2 border-surface bg-text-muted">
-            <Lock size={7} className="text-white" />
-          </span>
-        )}
-      </div>
+      <Pin size={16} fill={pinned ? 'currentColor' : 'none'} />
+    </button>
+  )
+}
 
-      {/* Info */}
+// Identity-only avatar: compact rounded square, never dominant.
+function CommunityAvatar({ c, size }: { c: Community; size: number }) {
+  return (
+    <div className="relative shrink-0">
+      <Avatar name={c.name} src={c.community_photo} size={size} className="rounded-lg" />
+      {c.is_private && (
+        <span className="absolute -bottom-1 -right-1 flex h-4 w-4 items-center justify-center rounded-full border-2 border-surface bg-text-muted">
+          <Lock size={7} className="text-white" />
+        </span>
+      )}
+    </div>
+  )
+}
+
+const CARD_MOTION = 'transition-all duration-200 hover:-translate-y-0.5 hover:border-primary/30 hover:shadow-card'
+
+/** Richer card used in the Pinned section. Denser than before; identity-only avatar. */
+function PinnedCard({ c, pinned, onTogglePin }: { c: Community; pinned?: boolean; onTogglePin?: () => void }) {
+  return (
+    <Link href={`/community/${c.id}`} className={`group flex gap-3 rounded-xl border border-border bg-surface p-3.5 ${CARD_MOTION}`}>
+      <CommunityAvatar c={c} size={48} />
+      <div className="min-w-0 flex-1">
+        <div className="flex items-start justify-between gap-2">
+          <p className="truncate text-[15px] font-semibold leading-tight text-text">{c.name}</p>
+          <PinButton pinned={pinned} onToggle={onTogglePin} />
+        </div>
+        <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-text-muted">
+          {c.category && <Badge tone={catTone(c.category)}>{catLabel(c.category)}</Badge>}
+          <span>{c.member_count} {c.member_count === 1 ? 'member' : 'members'}</span>
+          {c.location && <span>· {c.location}</span>}
+          {c.has_welfare_fund && <span>· Welfare fund</span>}
+          {c.has_shares_fund && <span>· Shares</span>}
+        </div>
+        {c.description && <p className="mt-1 truncate text-xs text-text-secondary">{c.description}</p>}
+      </div>
+      <ChevronRight size={16} className="mt-0.5 shrink-0 self-start text-text-muted transition-transform group-hover:translate-x-0.5" />
+    </Link>
+  )
+}
+
+/** Compact card used in the "All communities" list. */
+function CommunityCard({ c, pinned, onTogglePin }: { c: Community; pinned?: boolean; onTogglePin?: () => void }) {
+  return (
+    <Link href={`/community/${c.id}`} className={`group flex items-center gap-3 rounded-xl border border-border bg-surface px-3.5 py-3 ${CARD_MOTION}`}>
+      <CommunityAvatar c={c} size={44} />
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-2">
-          <p className="truncate font-semibold text-text">{c.name}</p>
-          {c.category && (
-            <span className="shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold text-primary bg-primary-pale">
-              {c.category}
-            </span>
-          )}
+          <p className="truncate text-[15px] font-semibold leading-tight text-text">{c.name}</p>
+          {c.category && <Badge tone={catTone(c.category)}>{catLabel(c.category)}</Badge>}
         </div>
-        <p className="mt-0.5 text-xs text-text-muted">
+        <p className="mt-0.5 truncate text-xs text-text-muted">
           {c.member_count} {c.member_count === 1 ? 'member' : 'members'}
           {c.location ? ` · ${c.location}` : ''}
+          {c.has_welfare_fund ? ' · Welfare fund' : ''}
+          {c.has_shares_fund ? ' · Shares' : ''}
         </p>
-        {c.description && (
-          <p className="mt-1 truncate text-xs text-text-secondary">{c.description}</p>
-        )}
-        {(c.has_welfare_fund || c.has_shares_fund) && (
-          <div className="mt-1.5 flex gap-1">
-            {c.has_welfare_fund && <Badge tone="success">Welfare</Badge>}
-            {c.has_shares_fund && <Badge tone="warning">Shares</Badge>}
-          </div>
-        )}
+        {c.description && <p className="mt-0.5 truncate text-xs text-text-secondary">{c.description}</p>}
       </div>
-
-      {/* Right */}
-      <div className="flex shrink-0 items-center gap-2">
+      <div className="flex shrink-0 items-center gap-0.5">
+        <PinButton pinned={pinned} onToggle={onTogglePin} />
         <ChevronRight size={16} className="text-text-muted transition-transform group-hover:translate-x-0.5" />
       </div>
     </Link>
@@ -267,21 +422,96 @@ function CommunityCard({ c }: { c: Community }) {
 
 // ─── stat tile ────────────────────────────────────────────────────────────────
 
-function StatTile({ icon, value, label, iconBg, dot }: {
+function StatTile({ icon, value, label, iconBg, dot, sub, subTone = 'muted' }: {
   icon: React.ReactNode; value: string; label: string; iconBg: string; dot?: boolean
+  sub?: string; subTone?: 'up' | 'down' | 'warn' | 'muted'
 }) {
+  const subClass = {
+    up: 'text-success', down: 'text-error', warn: 'text-accent', muted: 'text-text-muted',
+  }[subTone]
   return (
-    <div className="flex items-center gap-3 rounded-xl border border-border bg-surface px-4 py-3.5">
-      <div className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-full ${iconBg}`}>
+    <div className="flex items-center gap-3 rounded-xl border border-border bg-surface px-3.5 py-3">
+      <div className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full ${iconBg}`}>
         {icon}
       </div>
       <div className="min-w-0">
         <div className="flex items-center gap-1.5">
-          <p className="text-lg font-bold tabular-nums text-text leading-tight">{value}</p>
+          <p className="text-lg font-bold leading-tight tabular-nums text-text">{value}</p>
           {dot && <span className="h-2 w-2 rounded-full bg-accent" />}
         </div>
         <p className="truncate text-xs text-text-muted">{label}</p>
+        {sub && <p className={`mt-0.5 truncate text-[11px] font-medium ${subClass}`}>{sub}</p>}
       </div>
+    </div>
+  )
+}
+
+// ─── community health ─────────────────────────────────────────────────────────
+
+/** Animated ring showing a 0–100 score. Fills from 0 on mount (motion). */
+function HealthRing({ score }: { score: number }) {
+  const [shown, setShown] = useState(0)
+  useEffect(() => {
+    const t = setTimeout(() => setShown(score), 60)
+    return () => clearTimeout(t)
+  }, [score])
+  const r = 24, circ = 2 * Math.PI * r
+  const off = circ - (Math.max(0, Math.min(100, shown)) / 100) * circ
+  return (
+    <div className="relative h-14 w-14 shrink-0">
+      <svg width="56" height="56" viewBox="0 0 56 56" className="-rotate-90">
+        <circle cx="28" cy="28" r={r} fill="none" strokeWidth="5" className="stroke-divider" />
+        <circle
+          cx="28" cy="28" r={r} fill="none" strokeWidth="5" strokeLinecap="round"
+          className="stroke-primary transition-[stroke-dashoffset] duration-700 ease-out"
+          strokeDasharray={circ} strokeDashoffset={off}
+        />
+      </svg>
+      <span className="absolute inset-0 flex items-center justify-center text-sm font-bold tabular-nums text-text">{score}</span>
+    </div>
+  )
+}
+
+/**
+ * Compact community-health snapshot. All figures are derived from the real
+ * FinancialSummary — the ring is contribution *consistency* (share of recent
+ * months with activity, from monthly_trend). Per-member participation is not in
+ * the payload yet and is intentionally omitted until the backend enrichment.
+ */
+function CommunityHealth({ summary, growthPct }: { summary: FinancialSummary; growthPct: number | null }) {
+  const months = summary.monthly_trend || []
+  const active = months.filter(m => m.amount > 0).length
+  const consistency = months.length ? Math.round((active / months.length) * 100) : 0
+  const poolRatio = summary.total_contributions > 0
+    ? `${summary.active_contributions}/${summary.total_contributions}`
+    : '—'
+
+  return (
+    <div className="mt-4 rounded-xl border border-border bg-surface p-4">
+      <p className="text-sm font-semibold text-text">Community health</p>
+      <div className="mt-3 flex items-center gap-4">
+        <HealthRing score={consistency} />
+        <div className="min-w-0 flex-1 space-y-1.5 text-xs">
+          <HealthRow label="Contribution consistency" value={`${consistency}%`} />
+          <HealthRow
+            label="Monthly trend"
+            value={growthPct === null ? '—' : `${growthPct >= 0 ? '+' : ''}${growthPct}%`}
+            tone={growthPct !== null && growthPct < 0 ? 'down' : 'up'}
+          />
+          <HealthRow label="Pending approvals" value={String(summary.pending_advances)} tone={summary.pending_advances > 0 ? 'warn' : 'muted'} />
+          <HealthRow label="Active pools" value={poolRatio} />
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function HealthRow({ label, value, tone = 'muted' }: { label: string; value: string; tone?: 'up' | 'down' | 'warn' | 'muted' }) {
+  const cls = { up: 'text-success', down: 'text-error', warn: 'text-accent', muted: 'text-text' }[tone]
+  return (
+    <div className="flex items-center justify-between gap-2">
+      <span className="truncate text-text-muted">{label}</span>
+      <span className={`shrink-0 font-semibold tabular-nums ${cls}`}>{value}</span>
     </div>
   )
 }

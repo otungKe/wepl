@@ -59,11 +59,13 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
               href={href}
               onClick={onNavigate}
               className={cn(
-                'flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors',
-                active ? 'bg-primary-pale text-primary' : 'text-text-secondary hover:bg-divider',
+                'flex items-center gap-3 rounded-lg px-3 py-2 text-sm transition-colors duration-150',
+                active
+                  ? 'bg-primary-pale font-semibold text-primary'
+                  : 'font-medium text-text-secondary hover:bg-divider/60 hover:text-text',
               )}
             >
-              <Icon size={19} />
+              <Icon size={18} className={active ? 'text-primary' : 'text-text-muted'} />
               <span className="flex-1">{label}</span>
               {key === 'notifications' && unread > 0 && (
                 <span className="rounded-full bg-accent px-1.5 text-xs font-semibold text-white">{unread > 99 ? '99+' : unread}</span>
