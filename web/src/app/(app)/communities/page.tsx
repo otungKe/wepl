@@ -9,7 +9,9 @@ import {
   communities, reports, notificationsApi, apiError,
   type Community, type FinancialSummary, type Notification,
 } from '@/lib/api'
+import { useAuthStore } from '@/store/auth'
 import { Button } from '@/components/ui/Button'
+import { GettingStarted } from '@/components/app/GettingStarted'
 import { Modal } from '@/components/ui/Modal'
 import { Input } from '@/components/ui/Input'
 import { Avatar } from '@/components/ui/Avatar'
@@ -83,6 +85,7 @@ export default function CommunitiesPage() {
   const [createOpen, setCreateOpen] = useState(false)
   const [joinOpen, setJoinOpen]   = useState(false)
   const { pinnedIds, toggle: togglePin } = usePinnedCommunities()
+  const user = useAuthStore(s => s.user)
 
   useEffect(() => {
     Promise.all([
@@ -134,6 +137,17 @@ export default function CommunitiesPage() {
           <Button size="sm" onClick={() => setCreateOpen(true)}><Plus size={15} /> Create community</Button>
         </div>
       </div>
+
+      {/* ── First-run getting-started (hidden once complete/dismissed) ─ */}
+      {!loading && (
+        <GettingStarted
+          userName={user?.name}
+          communitiesCount={items.length}
+          kycStatus={summary?.kyc_status}
+          txCount={summary?.tx_count ?? 0}
+          onCreateCommunity={() => setCreateOpen(true)}
+        />
+      )}
 
       {/* ── Stats row ───────────────────────────────────────────────── */}
       <div className="mb-5 grid grid-cols-2 gap-3 sm:grid-cols-4">
