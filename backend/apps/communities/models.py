@@ -117,6 +117,9 @@ class CommunityMembership(models.Model):
     role      = models.CharField(max_length=20, choices=Role.choices, default=Role.MEMBER)
     is_active = models.BooleanField(default=True)
     joined_at = models.DateTimeField(auto_now_add=True)
+    # When True, this member gets no *push* for this community's activity (the
+    # in-app record is still kept). Per-community notification mute.
+    notifications_muted = models.BooleanField(default=False)
 
     class Meta:
         unique_together = ("user", "community")

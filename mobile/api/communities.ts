@@ -20,6 +20,7 @@ export type Community = {
   created_by_name: string;
   member_count: number;
   is_member: boolean;
+  is_muted: boolean;
   join_request_status: 'PENDING' | 'APPROVED' | 'REJECTED' | null;
   created_at: string;
   // Section A governance
@@ -89,6 +90,13 @@ export const joinCommunity = async (id: number) => {
 
 export const leaveCommunity = async (id: number) => {
   const r = await API.post(`communities/${id}/leave/`);
+  return r.data;
+};
+
+/** Mute (or unmute) this community's push notifications for the current member.
+ *  The in-app record is still kept — only push is suppressed. */
+export const muteCommunity = async (id: number, muted: boolean): Promise<{ muted: boolean }> => {
+  const r = await API.post(`communities/${id}/mute/`, { muted });
   return r.data;
 };
 

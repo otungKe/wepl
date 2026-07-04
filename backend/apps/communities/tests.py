@@ -336,3 +336,33 @@ class CommunityEnrichmentTests(TestCase):
         joiner = make_user("254700020002")
         CommunityService.request_to_join(joiner, self.community)
         self.assertEqual(self._mine()["pending_count"], 1)
+
+
+class CommunityMuteTests(TestCase):
+    """Per-community notification mute: endpoint sets the flag and the serializer
+    reflects it for the requesting member."""
+
+    def setUp(self):
+        self.creator = make_user("254700000601")
+        self.c = CommunityService.create_community(self.creator, {"name": "Chama"})
+
+    def test_mute_toggles_flag_and_serializer(self):
+        r = active_client(self.creator).post(
+            f"/api/communities/{self.c.id}/mute/", {"muted": True}, format="json")
+        self.assertEqual(r.status_code, 200)
+        self.assertTrue(r.json()["muted"])
+        self.assertTrue(CommunityMembership.objects.get(
+            user=self.creator, community=self.c).notifications_muted)
+        # Serializer reflects it
+        detail = active_client(self.creator).get(f"/api/communities/{self.c.id}/")
+        self.assertTrue(detail.json()["is_muted"])
+        # Unmute
+        r2 = active_client(self.creator).post(
+            f"/api/communities/{self.c.id}/mute/", {"muted": False}, format="json")
+        self.assertFalse(r2.json()["muted"])
+
+    def test_non_member_cannot_mute(self):
+        outsider = make_user("254700000602")
+        r = active_client(outsider).post(
+            f"/api/communities/{self.c.id}/mute/", {"muted": True}, format="json")
+        self.assertEqual(r.status_code, 404)

@@ -419,3 +419,20 @@ class SecurityAlertsTests(TestCase):
         # Attempting to turn it off is ignored — it stays on.
         r2 = c.patch("/api/notifications/preferences/", {"security": False}, format="json")
         self.assertTrue(r2.data["security"])
+
+
+class DataExportTests(TestCase):
+    """Self-serve export returns the user's own data, scoped to them."""
+
+    def test_export_returns_scoped_sections(self):
+        user = get_user_model().objects.create_user(phone_number="254700000501")
+        tokens = issue_tokens(user, STAGE_ACTIVE)
+        c = APIClient(); c.credentials(HTTP_AUTHORIZATION=f"Bearer {tokens['access']}")
+        r = c.get("/api/users/data-export/")
+        self.assertEqual(r.status_code, 200, msg=r.content)
+        body = r.json()
+        self.assertEqual(body["account"]["phone_number"], "254700000501")
+        for key in ("account", "identity_verification", "privacy_preferences",
+                    "communities", "contributions", "transactions",
+                    "payment_methods", "exported_at"):
+            self.assertIn(key, body)

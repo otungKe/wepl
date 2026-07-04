@@ -9,12 +9,14 @@ from .privacy import PrivacyPreferencesView
 from .account import AccountDeletionView
 from .verification import VerificationRequestListView, VerificationRequestRespondView
 from .payment_methods import PaymentMethodListCreateView, PaymentMethodDetailView
+from .data_export import DataExportView
 
 __all__ = [
     "VerificationRequestListView",
     "VerificationRequestRespondView",
     "PaymentMethodListCreateView",
     "PaymentMethodDetailView",
+    "DataExportView",
     "PINLoginThrottle",
     "OTPRequestThrottle",
     "RequestOTPView",

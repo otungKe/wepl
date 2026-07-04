@@ -18,6 +18,7 @@ import {
   KeyboardAvoidingView,
   Linking,
   Animated,
+  Share,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { router, useFocusEffect, useLocalSearchParams } from "expo-router";
@@ -171,6 +172,9 @@ export default function SettingsScreen() {
   const [deleteVisible, setDeleteVisible] = useState(false);
   const [deleteText,    setDeleteText]    = useState("");
   const [deleting,      setDeleting]      = useState(false);
+
+  // Self-serve data export
+  const [exporting, setExporting] = useState(false);
 
   // Success banner — shown when returning from change-pin with pinChanged=1
   const { pinChanged } = useLocalSearchParams<{ pinChanged?: string }>();
@@ -363,6 +367,26 @@ export default function SettingsScreen() {
         "Cannot delete account",
         msg || "Please resolve any outstanding advances or community ownership before deleting.",
       );
+    }
+  }
+
+  async function handleDataExport() {
+    if (exporting) return;
+    setExporting(true);
+    try {
+      const { data } = await API.get("users/data-export/");
+      const json = JSON.stringify(data, null, 2);
+      await Share.share({
+        title:   "My Wepl data",
+        message: json,
+      });
+    } catch (e: any) {
+      Alert.alert(
+        "Export failed",
+        e?.response?.data?.error || "We couldn't build your data export. Please try again.",
+      );
+    } finally {
+      setExporting(false);
     }
   }
 
@@ -588,8 +612,9 @@ export default function SettingsScreen() {
           <Divider />
           <Row
             icon="download-outline"
-            label="Request my data"
-            onPress={() => Linking.openURL("mailto:support@wepl.app?subject=Data%20Export%20Request")}
+            label="Export my data"
+            value={exporting ? "Preparing…" : undefined}
+            onPress={handleDataExport}
           />
         </Card>
 

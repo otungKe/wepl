@@ -24,6 +24,7 @@ from .views import (
     VerificationRequestRespondView,
     PaymentMethodListCreateView,
     PaymentMethodDetailView,
+    DataExportView,
 )
 
 urlpatterns = [
@@ -69,6 +70,9 @@ urlpatterns = [
     path('payment-methods/',                 PaymentMethodListCreateView.as_view()),
     path('payment-methods/<int:pk>/',        PaymentMethodDetailView.as_view()),
     path('payment-methods/<int:pk>/default/', PaymentMethodDetailView.as_view()),
+
+    # DATA — self-serve export (data rights)
+    path('data-export/', DataExportView.as_view()),
 
     # PRIVACY PREFERENCES
     path('privacy/', PrivacyPreferencesView.as_view()),

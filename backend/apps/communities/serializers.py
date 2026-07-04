@@ -16,6 +16,7 @@ class CommunitySerializer(serializers.ModelSerializer):
     total_managed       = serializers.SerializerMethodField()
     last_activity       = serializers.SerializerMethodField()
     pending_count       = serializers.SerializerMethodField()
+    is_muted            = serializers.SerializerMethodField()
 
     class Meta:
         model = Community
@@ -24,7 +25,7 @@ class CommunitySerializer(serializers.ModelSerializer):
             "invite_code", "has_welfare_fund", "has_shares_fund", "category",
             "location", "created_by", "created_by_name", "member_count",
             "is_member", "join_request_status", "created_at",
-            "total_managed", "last_activity", "pending_count",
+            "total_managed", "last_activity", "pending_count", "is_muted",
             # Section A governance settings
             "join_policy", "invite_permission", "contribution_permission",
             "member_list_visibility", "max_members",
@@ -87,6 +88,14 @@ class CommunitySerializer(serializers.ModelSerializer):
     def get_pending_count(self, obj):
         """Items awaiting action (join requests + disbursements + welfare claims)."""
         return getattr(obj, "pending_count", None)
+
+    def get_is_muted(self, obj):
+        """Whether the requesting member has muted this community's push."""
+        user = self._request_user()
+        if user is None or not user.is_authenticated:
+            return False
+        m = obj.memberships.filter(user=user, is_active=True).only("notifications_muted").first()
+        return bool(m and m.notifications_muted)
 
 
 class CommunityWriteSerializer(serializers.ModelSerializer):

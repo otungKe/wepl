@@ -331,6 +331,24 @@ class LeaveCommunityView(APIView):
         return Response({"message": f"You left {community.name}"})
 
 
+class CommunityMuteView(APIView):
+    """POST /communities/<id>/mute/ {muted: bool} — mute/unmute this community's
+    push notifications for the requesting member (in-app activity still shows)."""
+    permission_classes = [IsActiveSession]
+
+    def post(self, request, community_id):
+        muted = bool(request.data.get('muted', True))
+        m = CommunityMembership.objects.filter(
+            community_id=community_id, user=request.user, is_active=True,
+        ).first()
+        if not m:
+            return Response({"error": "You are not a member of this community."},
+                            status=status.HTTP_404_NOT_FOUND)
+        m.notifications_muted = muted
+        m.save(update_fields=['notifications_muted'])
+        return Response({"muted": m.notifications_muted})
+
+
 class CommunityMembersView(APIView):
     """
     GET /communities/<id>/members/
