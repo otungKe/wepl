@@ -7,7 +7,10 @@ from .models import Notification, NotificationPreferences
 from .serializers import NotificationSerializer
 from .services import NotificationService
 
+# Writable via PATCH. 'security' is intentionally excluded — security & sign-in
+# alerts are mandatory, so they're returned (read-only) but can't be turned off.
 PREF_FIELDS = ('push_enabled', 'payments', 'contributions', 'reminders', 'communities', 'advances')
+READ_PREF_FIELDS = PREF_FIELDS + ('security',)
 
 VALID_PLATFORMS = {'android', 'ios'}
 
@@ -136,7 +139,7 @@ class NotificationPreferencesView(APIView):
 
     def get(self, request):
         prefs, _ = NotificationPreferences.objects.get_or_create(user=request.user)
-        return Response({f: getattr(prefs, f) for f in PREF_FIELDS})
+        return Response({f: getattr(prefs, f) for f in READ_PREF_FIELDS})
 
     def patch(self, request):
         prefs, _ = NotificationPreferences.objects.get_or_create(user=request.user)
@@ -153,4 +156,4 @@ class NotificationPreferencesView(APIView):
                 changed = True
         if changed:
             prefs.save()
-        return Response({f: getattr(prefs, f) for f in PREF_FIELDS})
+        return Response({f: getattr(prefs, f) for f in READ_PREF_FIELDS})

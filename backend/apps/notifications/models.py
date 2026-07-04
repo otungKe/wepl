@@ -112,6 +112,9 @@ class NotificationPreferences(models.Model):
     reminders     = models.BooleanField(default=True)  # scheduled reminders
     communities   = models.BooleanField(default=True)  # community & chat activity
     advances      = models.BooleanField(default=True)  # advances & welfare
+    # Security & sign-in alerts (new device, PIN change). Mandatory — the UI
+    # surfaces these as always-on and never lets them be turned off.
+    security      = models.BooleanField(default=True)
 
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -160,6 +163,10 @@ NOTIF_CATEGORY_MAP: dict[str, str] = {
     'advance_rejected':          'advances',
     'welfare_claim':             'advances',
     'welfare_rejected':          'advances',
+    # Security & sign-in (mandatory category — the pref defaults True and the
+    # client never lets it be disabled).
+    'security_new_signin':       'security',
+    'security_pin_changed':      'security',
 }
 
 

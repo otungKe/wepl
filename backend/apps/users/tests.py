@@ -382,3 +382,40 @@ class PaymentMethodTests(TestCase):
         tok = issue_tokens(other, STAGE_ACTIVE)
         c2 = APIClient(); c2.credentials(HTTP_AUTHORIZATION=f"Bearer {tok['access']}")
         self.assertEqual(len(c2.get("/api/users/payment-methods/").data), 0)
+
+
+class SecurityAlertsTests(TestCase):
+    """Security & sign-in alerts fire on a PIN change and a new-device sign-in,
+    and the security notification category is mandatory (can't be disabled)."""
+
+    def test_pin_change_alerts_but_first_set_does_not(self):
+        from apps.users.services import PINService
+        from apps.core.models import OutboxEvent
+        user = get_user_model().objects.create_user(phone_number="254700000401")
+        PINService.set_pin(user, "123456")  # first-ever set — no alert
+        self.assertFalse(OutboxEvent.objects.filter(event_type="security_pin_changed").exists())
+        PINService.set_pin(user, "654321")  # change — alert
+        self.assertTrue(OutboxEvent.objects.filter(
+            event_type="security_pin_changed", payload__user_id=user.id).exists())
+
+    def test_new_device_signin_alerts_once(self):
+        from types import SimpleNamespace
+        from apps.users.sessions import create_session
+        from apps.core.models import OutboxEvent
+        user = get_user_model().objects.create_user(phone_number="254700000402")
+        req = SimpleNamespace(META={"HTTP_USER_AGENT": "Wepl/1.0 (iPhone; iOS 17)", "REMOTE_ADDR": "1.2.3.4"})
+        create_session(user, req)
+        create_session(user, req)  # same device — no second alert
+        self.assertEqual(OutboxEvent.objects.filter(
+            event_type="security_new_signin", payload__user_id=user.id).count(), 1)
+
+    def test_security_pref_is_returned_and_not_disableable(self):
+        user = get_user_model().objects.create_user(phone_number="254700000403")
+        tokens = issue_tokens(user, STAGE_ACTIVE)
+        c = APIClient(); c.credentials(HTTP_AUTHORIZATION=f"Bearer {tokens['access']}")
+        r = c.get("/api/notifications/preferences/")
+        self.assertEqual(r.status_code, 200)
+        self.assertTrue(r.data["security"])
+        # Attempting to turn it off is ignored — it stays on.
+        r2 = c.patch("/api/notifications/preferences/", {"security": False}, format="json")
+        self.assertTrue(r2.data["security"])

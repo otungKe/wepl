@@ -475,6 +475,18 @@ export default function SettingsScreen() {
                 <Text style={s.subSectionLabel}>Notify me about</Text>
               </View>
               <Row
+                icon="shield-checkmark-outline"
+                label="Security & sign-in"
+                showArrow={false}
+                rightEl={
+                  <View style={s.alwaysOn}>
+                    <Ionicons name="lock-closed" size={11} color={COLORS.textMuted} />
+                    <Text style={s.alwaysOnText}>Always on</Text>
+                  </View>
+                }
+              />
+              <Divider />
+              <Row
                 icon="card-outline"
                 iconColor={COLORS.accent}
                 label="Payments & M-Pesa"
