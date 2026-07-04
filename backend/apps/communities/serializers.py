@@ -11,6 +11,11 @@ class CommunitySerializer(serializers.ModelSerializer):
     is_member           = serializers.SerializerMethodField()
     join_request_status = serializers.SerializerMethodField()
     invite_code         = serializers.SerializerMethodField()
+    # Per-community highlights — populated (via the view) only for the caller's
+    # own communities; null on the public discover feed. See _enrich_communities.
+    total_managed       = serializers.SerializerMethodField()
+    last_activity       = serializers.SerializerMethodField()
+    pending_count       = serializers.SerializerMethodField()
 
     class Meta:
         model = Community
@@ -19,6 +24,7 @@ class CommunitySerializer(serializers.ModelSerializer):
             "invite_code", "has_welfare_fund", "has_shares_fund", "category",
             "location", "created_by", "created_by_name", "member_count",
             "is_member", "join_request_status", "created_at",
+            "total_managed", "last_activity", "pending_count",
             # Section A governance settings
             "join_policy", "invite_permission", "contribution_permission",
             "member_list_visibility", "max_members",
@@ -66,6 +72,21 @@ class CommunitySerializer(serializers.ModelSerializer):
         Leaking it on the public discover feed defeats the purpose of private groups.
         """
         return obj.invite_code if self._is_active_member(obj) else None
+
+    def get_total_managed(self, obj):
+        """Pooled money across the community's funds (ledger). None when the
+        view didn't enrich this row (e.g. the public discover feed)."""
+        val = getattr(obj, "total_managed", None)
+        return str(val) if val is not None else None
+
+    def get_last_activity(self, obj):
+        """Most recent activity timestamp (annotated by MyCommunitiesView)."""
+        val = getattr(obj, "last_activity", None)
+        return val.isoformat() if val is not None else None
+
+    def get_pending_count(self, obj):
+        """Items awaiting action (join requests + disbursements + welfare claims)."""
+        return getattr(obj, "pending_count", None)
 
 
 class CommunityWriteSerializer(serializers.ModelSerializer):

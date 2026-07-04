@@ -5,6 +5,8 @@ Covers what the platform-hardening review flagged as missing for this app:
   * membership lifecycle and the last-admin invariant,
   * cross-tenant isolation of community resources.
 """
+from decimal import Decimal
+
 from django.contrib.auth import get_user_model
 from django.contrib.auth.models import AnonymousUser
 from django.core.exceptions import PermissionDenied, ValidationError
@@ -294,3 +296,43 @@ class OwnershipTransferTests(TestCase):
         other = Tenant.objects.create(slug="org-c", name="Org C")
         clear_current_tenant()
         guard_tenant(other.id, resource_type="community", resource_id=1)  # must not raise
+
+
+class CommunityEnrichmentTests(TestCase):
+    """The my-communities list carries real per-community highlights:
+    total_managed (ledger), pending_count, last_activity."""
+
+    def setUp(self):
+        from datetime import date
+        from apps.users.models import KYCProfile
+        self.creator = make_user("254700020001", is_phone_verified=True)
+        KYCProfile.objects.create(  # → Tier 1 so contribute() (money path) is allowed
+            user=self.creator, status="approved", given_names="T", surname="U",
+            id_number="IDENR1", date_of_birth=date(1990, 1, 1),
+        )
+        self.community = CommunityService.create_community(self.creator, {"name": "Chama"})
+
+    def _mine(self):
+        r = active_client(self.creator).get("/api/communities/")
+        self.assertEqual(r.status_code, 200)
+        return next(c for c in r.json() if c["id"] == self.community.id)
+
+    def test_fields_present_and_default(self):
+        row = self._mine()
+        # A brand-new community with no funds/requests: zeroed but present.
+        self.assertEqual(Decimal(row["total_managed"]), Decimal("0"))
+        self.assertEqual(row["pending_count"], 0)
+        self.assertIsNotNone(row["last_activity"])
+
+    def test_total_managed_reflects_ledger(self):
+        from apps.contributions.services.contribution import ContributionService
+        contribution = ContributionService.create_contribution(
+            self.creator, {"title": "Pool", "contribution_type": "POOL",
+                           "visibility": "open", "community": self.community})
+        ContributionService.contribute(self.creator, contribution.id, 500)
+        self.assertEqual(Decimal(self._mine()["total_managed"]), Decimal("500"))
+
+    def test_pending_count_counts_join_requests(self):
+        joiner = make_user("254700020002")
+        CommunityService.request_to_join(joiner, self.community)
+        self.assertEqual(self._mine()["pending_count"], 1)

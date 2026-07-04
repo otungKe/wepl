@@ -368,6 +368,23 @@ function PinButton({ pinned, onToggle }: { pinned?: boolean; onToggle?: () => vo
   )
 }
 
+// Real per-community highlights from the enriched list payload (total_managed /
+// last_activity). Renders nothing when the backend didn't supply them (e.g. a
+// community with no funds yet) — no fabricated figures.
+function CommunityMetrics({ c }: { c: Community }) {
+  const managed = c.total_managed != null && Number(c.total_managed) > 0
+    ? formatMoney(c.total_managed) : null
+  const active = c.last_activity ? formatRelative(c.last_activity) : null
+  if (!managed && !active) return null
+  return (
+    <div className="mt-1 flex flex-wrap items-center gap-x-2 text-xs text-text-muted">
+      {managed && <span className="font-medium text-text-secondary">{managed} managed</span>}
+      {managed && active && <span>·</span>}
+      {active && <span>Active {active}</span>}
+    </div>
+  )
+}
+
 // Identity-only avatar: compact rounded square, never dominant.
 function CommunityAvatar({ c, size }: { c: Community; size: number }) {
   return (
@@ -398,9 +415,9 @@ function PinnedCard({ c, pinned, onTogglePin }: { c: Community; pinned?: boolean
           {c.category && <Badge tone={catTone(c.category)}>{catLabel(c.category)}</Badge>}
           <span>{c.member_count} {c.member_count === 1 ? 'member' : 'members'}</span>
           {c.location && <span>· {c.location}</span>}
-          {c.has_welfare_fund && <span>· Welfare fund</span>}
-          {c.has_shares_fund && <span>· Shares</span>}
+          {!!c.pending_count && <Badge tone="warning">{c.pending_count} pending</Badge>}
         </div>
+        <CommunityMetrics c={c} />
         {c.description && <p className="mt-1 truncate text-xs text-text-secondary">{c.description}</p>}
       </div>
       <ChevronRight size={16} className="mt-0.5 shrink-0 self-start text-text-muted transition-transform group-hover:translate-x-0.5" />
@@ -424,9 +441,10 @@ function CommunityCard({ c, pinned, onTogglePin }: { c: Community; pinned?: bool
           {c.has_welfare_fund ? ' · Welfare fund' : ''}
           {c.has_shares_fund ? ' · Shares' : ''}
         </p>
-        {c.description && <p className="mt-0.5 truncate text-xs text-text-secondary">{c.description}</p>}
+        <CommunityMetrics c={c} />
       </div>
-      <div className="flex shrink-0 items-center gap-0.5">
+      <div className="flex shrink-0 items-center gap-1.5">
+        {!!c.pending_count && <Badge tone="warning">{c.pending_count}</Badge>}
         <PinButton pinned={pinned} onToggle={onTogglePin} />
         <ChevronRight size={16} className="text-text-muted transition-transform group-hover:translate-x-0.5" />
       </div>

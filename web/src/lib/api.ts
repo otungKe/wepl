@@ -109,6 +109,10 @@ export interface Community {
   member_list_visibility: 'all' | 'admins'
   max_members: number | null
   cooling_off_days: number
+  // Per-community highlights — present on the my-communities list (null on discover).
+  total_managed: string | null
+  last_activity: string | null
+  pending_count: number | null
 }
 
 export interface CommunityMember {

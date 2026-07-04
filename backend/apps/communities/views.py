@@ -30,6 +30,71 @@ def _ctx(request):
     return {"request": request}
 
 
+def _enrich_communities(communities):
+    """Attach real per-community highlight figures used by the web/mobile cards:
+
+      • total_managed — pooled money held across the community's funds (each
+        contribution pool + welfare + shares), read from the ledger balance
+        projection in batch (not per-fund).
+      • pending_count — items awaiting action: pending join requests +
+        pending disbursement requests + pending welfare claims.
+
+    Attached as plain attributes (mirrors annotated_member_count); only set on
+    the caller's own communities, so the discover feed leaves them None. Runs a
+    fixed handful of queries regardless of how many communities are passed.
+    """
+    from collections import defaultdict
+    from decimal import Decimal
+    from apps.contributions.models import (
+        Contribution, WelfareFund, SharesFund, DisbursementRequest, WelfareClaim,
+    )
+    from apps.ledger.balances import fund_balances
+
+    ids = [c.id for c in communities]
+    if not ids:
+        return communities
+
+    # ── total_managed: sum ledger balances of every fund owned by the community
+    contribs = list(Contribution.objects.filter(community_id__in=ids)
+                    .values_list("id", "community_id"))
+    welfares = list(WelfareFund.objects.filter(community_id__in=ids)
+                    .values_list("id", "community_id"))
+    shares   = list(SharesFund.objects.filter(community_id__in=ids)
+                    .values_list("id", "community_id"))
+
+    contrib_bal = fund_balances("contribution", [f for f, _ in contribs])
+    welfare_bal = fund_balances("welfare",      [f for f, _ in welfares])
+    shares_bal  = fund_balances("shares",       [f for f, _ in shares])
+
+    totals = defaultdict(lambda: Decimal("0"))
+    for fund_id, cid in contribs:
+        totals[cid] += contrib_bal.get(fund_id, Decimal("0"))
+    for fund_id, cid in welfares:
+        totals[cid] += welfare_bal.get(fund_id, Decimal("0"))
+    for fund_id, cid in shares:
+        totals[cid] += shares_bal.get(fund_id, Decimal("0"))
+
+    # ── pending_count: join requests + disbursement requests + welfare claims
+    pending = defaultdict(int)
+    for cid, n in (CommunityJoinRequest.objects
+                   .filter(community_id__in=ids, status="PENDING")
+                   .values_list("community_id").annotate(c=Count("id"))):
+        pending[cid] += n
+    for cid, n in (DisbursementRequest.objects
+                   .filter(contribution__community_id__in=ids, status="PENDING")
+                   .values_list("contribution__community_id").annotate(c=Count("id"))):
+        pending[cid] += n
+    for cid, n in (WelfareClaim.objects
+                   .filter(fund__community_id__in=ids, status="PENDING")
+                   .values_list("fund__community_id").annotate(c=Count("id"))):
+        pending[cid] += n
+
+    for c in communities:
+        c.total_managed = totals.get(c.id, Decimal("0"))
+        c.pending_count = pending.get(c.id, 0)
+    return communities
+
+
 # ── My communities ─────────────────────────────────────────────────────────────
 
 class MyCommunitiesView(APIView):
@@ -57,6 +122,7 @@ class MyCommunitiesView(APIView):
             )
             .order_by("-last_activity")
         )
+        communities = _enrich_communities(list(communities))
         return Response(CommunitySerializer(communities, many=True, context=_ctx(request)).data)
 
 
