@@ -54,6 +54,16 @@ def send_notification(
         )
         return
 
+    # Per-community mute — drop push (keep the in-app record) when the recipient
+    # has muted this community's activity.
+    if community_id and 'push' in keys:
+        from apps.communities.models import CommunityMembership
+        if CommunityMembership.objects.filter(
+            community_id=community_id, user_id=user_id,
+            is_active=True, notifications_muted=True,
+        ).exists():
+            keys = [k for k in keys if k != 'push']
+
     # The in-app row is the durable record — retry it (idempotent via event_id),
     # and dead-letter only once retries are exhausted so it is never lost.
     if 'in_app' in keys:

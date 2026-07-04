@@ -22,7 +22,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { router, useLocalSearchParams, useFocusEffect } from "expo-router";
 import AsyncStorage from "@react-native-async-storage/async-storage"; // used for non-sensitive conv timestamps
 import * as storage from "../../utils/secureStorage";
-import { getCommunity, getCommunityMembers, deleteCommunity, leaveCommunity, assignMemberRole, removeMember, updateCommunity, requestToJoinById, Community, CommunityMember } from "../../api/communities";
+import { getCommunity, getCommunityMembers, deleteCommunity, leaveCommunity, assignMemberRole, removeMember, updateCommunity, requestToJoinById, muteCommunity, Community, CommunityMember } from "../../api/communities";
 import { getCommunityConversations, Conversation } from "../../api/conversations";
 import { on } from "../../utils/eventBus";
 import { getCommunityContributions, Contribution } from "../../api/contributions";
@@ -375,6 +375,20 @@ export default function CommunityDetailScreen() {
         },
       ]
     );
+  };
+
+  const handleToggleMute = async () => {
+    setMenuVisible(false);
+    if (!community) return;
+    const next = !community.is_muted;
+    // Optimistic — reflect immediately, roll back on failure.
+    setCommunity({ ...community, is_muted: next });
+    try {
+      await muteCommunity(communityId, next);
+    } catch (e: any) {
+      setCommunity((prev) => prev ? { ...prev, is_muted: !next } : prev);
+      Alert.alert("Error", e?.response?.data?.error || "Could not update notifications.");
+    }
   };
 
   // handleEditOpen removed — edit is now handled by community/settings.tsx
@@ -813,6 +827,11 @@ export default function CommunityDetailScreen() {
               icon="share-outline"
               label="Share Invite Link"
               onPress={handleShare}
+            />
+            <MenuItem
+              icon={community?.is_muted ? "notifications-off-outline" : "notifications-outline"}
+              label={community?.is_muted ? "Unmute Notifications" : "Mute Notifications"}
+              onPress={handleToggleMute}
             />
             {isAdmin && (
               <MenuItem
