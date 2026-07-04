@@ -3,6 +3,12 @@ databases:
     databaseName: wepl
     user: wepl
     plan: free
+  # Staging DB — kept fully separate from production so validating the Tier-1
+  # enforcement rollout (ADR-0022) never touches real data.
+  - name: wepl-db-staging
+    databaseName: wepl_staging
+    user: wepl_staging
+    plan: free
 
 services:
   - type: redis
@@ -169,3 +175,148 @@ services:
         value: https://wepl-api.onrender.com/api
       - key: NEXT_PUBLIC_WS_URL
         value: wss://wepl-api.onrender.com
+
+  # ══════════════════════════════════════════════════════════════════════════
+  # STAGING — a full, isolated mirror of the stack (own DB + Redis) used to
+  # validate the two-tier enforcement rollout (ADR-0022) before flipping it in
+  # production. The only intentional difference from prod is
+  # ACCESS_TIER_ENFORCEMENT="true" on wepl-api-staging. Once the Tier-0
+  # experience checks out here, set the same flag on wepl-api.
+  # ══════════════════════════════════════════════════════════════════════════
+  - type: redis
+    name: wepl-redis-staging
+    plan: free
+    ipAllowList: []
+
+  - type: web
+    name: wepl-api-staging
+    runtime: python
+    rootDir: backend
+    plan: free
+    buildCommand: pip install -r requirements.txt && python manage.py collectstatic --noinput
+    startCommand: bash start.sh
+    healthCheckPath: /health/
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.12"
+      - key: DJANGO_SETTINGS_MODULE
+        value: config.settings.production
+      - key: SECRET_KEY
+        generateValue: true
+      - key: ALLOWED_HOSTS
+        value: wepl-api-staging.onrender.com
+      - key: CORS_ALLOWED_ORIGINS
+        value: https://wepl-api-staging.onrender.com,https://wepl-web-staging.onrender.com
+      # Production settings forbid STAGING_OTP_BYPASS while DEBUG=False, so keep it
+      # off here too; SMS_BACKEND=console logs the OTP so testers can read it.
+      - key: STAGING_OTP_BYPASS
+        value: "false"
+      # The reason this staging stack exists: enforcement ON, ahead of production.
+      - key: ACCESS_TIER_ENFORCEMENT
+        value: "true"
+      - key: SMS_BACKEND
+        value: console
+      - key: BREVO_API_KEY
+        sync: false
+      - key: EMAIL_BACKEND
+        value: django.core.mail.backends.smtp.EmailBackend
+      - key: EMAIL_HOST
+        value: smtp-relay.brevo.com
+      - key: EMAIL_PORT
+        value: "587"
+      - key: EMAIL_USE_TLS
+        value: "true"
+      - key: EMAIL_HOST_USER
+        sync: false
+      - key: EMAIL_HOST_PASSWORD
+        sync: false
+      - key: DEFAULT_FROM_EMAIL
+        value: WEPL Staging <no-reply@wepl.app>
+      - key: ADMIN_PHONE
+        sync: false
+      - key: ADMIN_PASSWORD
+        sync: false
+      - key: DB_NAME
+        fromDatabase:
+          name: wepl-db-staging
+          property: database
+      - key: DB_USER
+        fromDatabase:
+          name: wepl-db-staging
+          property: user
+      - key: DB_PASSWORD
+        fromDatabase:
+          name: wepl-db-staging
+          property: password
+      - key: DB_HOST
+        fromDatabase:
+          name: wepl-db-staging
+          property: host
+      - key: DB_PORT
+        fromDatabase:
+          name: wepl-db-staging
+          property: port
+      - key: REDIS_URL
+        fromService:
+          type: redis
+          name: wepl-redis-staging
+          property: connectionString
+      - key: REDIS_CACHE_URL
+        fromService:
+          type: redis
+          name: wepl-redis-staging
+          property: connectionString
+      - key: MPESA_CONSUMER_KEY
+        sync: false
+      - key: MPESA_CONSUMER_SECRET
+        sync: false
+      - key: MPESA_SHORTCODE
+        sync: false
+      - key: MPESA_PASSKEY
+        sync: false
+      - key: MPESA_BASE_URL
+        value: https://sandbox.safaricom.co.ke
+      - key: MPESA_CALLBACK_URL
+        value: https://wepl-api-staging.onrender.com/api/mpesa/stk/callback/
+      - key: MPESA_B2C_RESULT_URL
+        value: https://wepl-api-staging.onrender.com/api/mpesa/b2c/result/
+      - key: MPESA_B2C_TIMEOUT_URL
+        value: https://wepl-api-staging.onrender.com/api/mpesa/b2c/timeout/
+      - key: AT_API_KEY
+        sync: false
+      - key: AT_USERNAME
+        sync: false
+      - key: AT_SENDER_ID
+        sync: false
+      - key: SENTRY_DSN
+        sync: false
+      - key: FIREBASE_CREDENTIALS_JSON
+        sync: false
+      - key: USE_S3
+        value: "false"
+      - key: AWS_STORAGE_BUCKET_NAME
+        sync: false
+      - key: AWS_S3_REGION_NAME
+        value: auto
+      - key: AWS_S3_ENDPOINT_URL
+        sync: false
+      - key: AWS_ACCESS_KEY_ID
+        sync: false
+      - key: AWS_SECRET_ACCESS_KEY
+        sync: false
+
+  - type: web
+    name: wepl-web-staging
+    runtime: node
+    rootDir: web
+    plan: free
+    buildCommand: npm install && npm run build
+    startCommand: node node_modules/next/dist/bin/next start
+    healthCheckPath: /
+    envVars:
+      - key: NODE_VERSION
+        value: "20"
+      - key: NEXT_PUBLIC_API_URL
+        value: https://wepl-api-staging.onrender.com/api
+      - key: NEXT_PUBLIC_WS_URL
+        value: wss://wepl-api-staging.onrender.com
