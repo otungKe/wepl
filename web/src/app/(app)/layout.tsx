@@ -9,10 +9,11 @@ import { useTier } from '@/hooks/useTier'
 import { getAccessToken, isTokenValid } from '@/lib/auth'
 import { auth } from '@/lib/api'
 
-// Routes a Tier 0 (unverified) user may reach — everything that leads toward
-// verification. All other in-app routes are verified-only, matching the mobile
-// tab bar where an unverified user only ever sees Profile (ADR-0022).
-const TIER0_ALLOWED = ['/profile', '/kyc', '/settings']
+// Routes a Tier 0 (unverified) user may reach: the paths that lead toward
+// verification, plus read-only Discover so they can browse public communities
+// and campaigns (joining/supporting stays locked behind KYC). All other in-app
+// routes are verified-only (ADR-0022).
+const TIER0_ALLOWED = ['/profile', '/kyc', '/settings', '/discover']
 
 export default function AppLayout({ children }: { children: React.ReactNode }) {
   const router = useRouter()

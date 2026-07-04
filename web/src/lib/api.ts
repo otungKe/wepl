@@ -153,6 +153,7 @@ export interface Contribution {
   } | null
   is_active: boolean
   status: 'active' | 'closed' | 'archived'
+  is_campaign: boolean
   participant_count: number
   user_balance: string | null
   is_admin: boolean
@@ -462,4 +463,28 @@ export const notificationsApi = {
   remove:    (id: number) => api.delete(`/notifications/${id}/delete/`),
   prefs:     () => api.get('/notifications/preferences/'),
   updatePrefs: (patch: Record<string, boolean>) => api.patch('/notifications/preferences/', patch),
+}
+
+// ─────────────────────────────────────────────────────────────
+// Reminders
+// ─────────────────────────────────────────────────────────────
+export interface Reminder {
+  id: number
+  reminder_type: string
+  title: string
+  note: string | null
+  contribution_id: number | null
+  community_id: number | null
+  scheduled_for: string
+  recurrence: 'none' | 'daily' | 'weekly' | 'monthly'
+  next_fire_at: string
+  is_active: boolean
+  is_overdue: boolean
+  created_at: string
+}
+
+export const reminders = {
+  upcoming: async (limit?: number) =>
+    unwrap<Reminder>((await api.get('/reminders/upcoming/', { params: limit ? { limit } : {} })).data),
+  list:     async () => unwrap<Reminder>((await api.get('/reminders/')).data),
 }
