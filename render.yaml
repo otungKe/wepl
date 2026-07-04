@@ -48,11 +48,14 @@ services:
       - key: STAGING_OTP_BYPASS
         value: "false"
       # Two-tier access (ADR-0022). Master switch for enforcing Tier-1 (KYC) on the
-      # new gated surfaces (community create/join, contribution create, chat).
-      # Default off so existing users are unaffected; flip to "true" after a KYC
-      # push. Money-path checks (contribute/advance) always enforce regardless.
+      # flag-aware gated surfaces (community create/join + join requests,
+      # contribution create, chat, disbursement/amendment requests + votes,
+      # welfare claims, standing orders). ENABLED in production — unverified
+      # (Tier 0) users are redirected to KYC on these actions. Money-path checks
+      # (contribute/advance/STK push) always enforce regardless. Validated on the
+      # staging stack first; roll back instantly by setting this to "false".
       - key: ACCESS_TIER_ENFORCEMENT
-        value: "false"
+        value: "true"
       - key: SMS_BACKEND
         value: console
       # Email delivery via Brevo. Render's free tier blocks outbound SMTP, so we
