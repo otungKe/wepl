@@ -1,0 +1,266 @@
+/**
+ * Verification Center — a single hub (à la PayPal / Payoneer) that consolidates
+ * every verification requirement in one place instead of scattering them across
+ * the profile. Each requirement is a row with its own status and action:
+ *
+ *   • Phone number        — verified at sign-up
+ *   • Identity (KYC)       — ID + selfie; start / view status / re-submit
+ *   • Email address        — verified as part of KYC
+ *   • Supporting documents — requested only if a review needs them
+ */
+import { useCallback, useState } from "react";
+import {
+  View, Text, StyleSheet, TouchableOpacity, ScrollView, ActivityIndicator,
+} from "react-native";
+import { SafeAreaView } from "react-native-safe-area-context";
+import { router, useFocusEffect } from "expo-router";
+import { Ionicons } from "@expo/vector-icons";
+import { getKYCStatus, getProfile } from "../api/auth";
+import { COLORS, FONTS, RADIUS } from "../constants/theme";
+import AppHeader from "../components/app/AppHeader";
+
+type KYCStatus = "not_submitted" | "pending" | "approved" | "rejected";
+type KYCData = {
+  status: KYCStatus;
+  email_verified: boolean;
+  email: string;
+};
+
+type ItemState = "done" | "pending" | "action" | "optional";
+
+const STATE_META: Record<ItemState, { label: string; color: string; bg: string; icon: string }> = {
+  done:     { label: "Verified",     color: COLORS.success,  bg: COLORS.primaryPale, icon: "checkmark-circle" },
+  pending:  { label: "Under review", color: "#B45309",       bg: "#FEF3C7",          icon: "time" },
+  action:   { label: "Required",     color: COLORS.primary,  bg: COLORS.primaryPale, icon: "alert-circle" },
+  optional: { label: "If needed",    color: COLORS.textMuted, bg: COLORS.background,  icon: "lock-closed" },
+};
+
+const UNLOCKS = ["Payments", "Contributions", "Advances", "Communities"];
+
+export default function VerificationCenterScreen() {
+  const [kyc, setKyc] = useState<KYCData | null>(null);
+  const [phone, setPhone] = useState<string>("");
+  const [loading, setLoading] = useState(true);
+
+  useFocusEffect(useCallback(() => {
+    Promise.all([
+      getKYCStatus().then(d => setKyc(d as KYCData)).catch(() => {}),
+      getProfile().then(p => setPhone(p?.phone_number ?? "")).catch(() => {}),
+    ]).finally(() => setLoading(false));
+  }, []));
+
+  const status: KYCStatus = kyc?.status ?? "not_submitted";
+  const isVerified = status === "approved";
+
+  // Overall header state
+  const overall = isVerified
+    ? { title: "Account verified", sub: "All features are unlocked.", color: COLORS.success, icon: "shield-checkmark" }
+    : status === "pending"
+    ? { title: "Verification in review", sub: "We're checking your documents.", color: "#B45309", icon: "time" }
+    : status === "rejected"
+    ? { title: "Action needed", sub: "Your last submission needs attention.", color: COLORS.error, icon: "alert-circle" }
+    : { title: "Get verified", sub: "Complete a quick check to unlock everything.", color: COLORS.primary, icon: "shield-outline" };
+
+  // Identity row action + state
+  const identityState: ItemState =
+    status === "approved" ? "done" : status === "pending" ? "pending" : "action";
+  const identityAction = () =>
+    status === "pending" ? router.push("/kyc-status")
+    : status === "rejected" ? router.push("/kyc")
+    : router.push("/kyc");
+
+  const emailState: ItemState =
+    status === "not_submitted" ? "action" : kyc?.email_verified ? "done" : "pending";
+
+  const items: {
+    key: string; icon: string; title: string; sub: string;
+    state: ItemState; onPress?: () => void;
+  }[] = [
+    {
+      key: "phone", icon: "call-outline", title: "Phone number",
+      sub: phone || "Verified at sign-up", state: "done",
+    },
+    {
+      key: "identity", icon: "card-outline", title: "Identity (KYC)",
+      sub: "National ID & selfie", state: identityState, onPress: identityAction,
+    },
+    {
+      key: "email", icon: "mail-outline", title: "Email address",
+      sub: status === "not_submitted" ? "Added during verification" : (kyc?.email || "Verified with your documents"),
+      state: emailState,
+      onPress: status === "pending" && !kyc?.email_verified ? () => router.push("/kyc-status") : undefined,
+    },
+    {
+      key: "docs", icon: "document-text-outline", title: "Supporting documents",
+      sub: "Requested only if a review needs them", state: "optional",
+    },
+  ];
+
+  const completed = items.filter(i => i.state === "done").length;
+  const required = items.filter(i => i.state !== "optional").length;
+
+  if (loading) {
+    return (
+      <SafeAreaView style={s.safe}>
+        <AppHeader title="Verification Center" variant="light" leading="back"
+          onBack={() => router.back()} />
+        <View style={s.center}><ActivityIndicator size="large" color={COLORS.primary} /></View>
+      </SafeAreaView>
+    );
+  }
+
+  return (
+    <SafeAreaView style={s.safe} edges={["left", "right"]}>
+      <AppHeader title="Verification Center" variant="light" leading="back"
+        onBack={() => router.back()} />
+      <ScrollView contentContainerStyle={s.scroll} showsVerticalScrollIndicator={false}>
+
+        {/* Overview */}
+        <View style={s.overview}>
+          <View style={[s.overviewIcon, { backgroundColor: overall.color + "18" }]}>
+            <Ionicons name={overall.icon as any} size={30} color={overall.color} />
+          </View>
+          <Text style={s.overviewTitle}>{overall.title}</Text>
+          <Text style={s.overviewSub}>{overall.sub}</Text>
+
+          {/* Progress */}
+          <View style={s.progressTrack}>
+            <View style={[s.progressFill, { width: `${(completed / required) * 100}%`, backgroundColor: overall.color }]} />
+          </View>
+          <Text style={s.progressText}>{completed} of {required} completed</Text>
+
+          {!isVerified && (
+            <TouchableOpacity style={s.primaryBtn} onPress={identityAction}>
+              <Ionicons name="arrow-forward-circle-outline" size={18} color="#fff" />
+              <Text style={s.primaryBtnText}>
+                {status === "pending" ? "View status" : status === "rejected" ? "Re-submit" : "Start verification"}
+              </Text>
+            </TouchableOpacity>
+          )}
+        </View>
+
+        {/* Requirements list */}
+        <Text style={s.sectionLabel}>REQUIREMENTS</Text>
+        <View style={s.card}>
+          {items.map((it, idx) => {
+            const meta = STATE_META[it.state];
+            const RowInner = (
+              <>
+                <View style={[s.rowIcon, { backgroundColor: meta.bg }]}>
+                  <Ionicons name={it.icon as any} size={19} color={meta.color} />
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={s.rowTitle}>{it.title}</Text>
+                  <Text style={s.rowSub} numberOfLines={1}>{it.sub}</Text>
+                </View>
+                <View style={[s.statusChip, { backgroundColor: meta.bg }]}>
+                  <Ionicons name={meta.icon as any} size={12} color={meta.color} />
+                  <Text style={[s.statusChipText, { color: meta.color }]}>{meta.label}</Text>
+                </View>
+                {it.onPress && <Ionicons name="chevron-forward" size={16} color={COLORS.textMuted} style={{ marginLeft: 4 }} />}
+              </>
+            );
+            const rowStyle = [s.row, idx === items.length - 1 && { borderBottomWidth: 0 }];
+            return it.onPress ? (
+              <TouchableOpacity key={it.key} style={rowStyle} onPress={it.onPress} activeOpacity={0.7}>
+                {RowInner}
+              </TouchableOpacity>
+            ) : (
+              <View key={it.key} style={rowStyle}>{RowInner}</View>
+            );
+          })}
+        </View>
+
+        {/* What verification unlocks */}
+        {!isVerified && (
+          <>
+            <Text style={s.sectionLabel}>WHAT YOU UNLOCK</Text>
+            <View style={s.unlockWrap}>
+              {UNLOCKS.map(u => (
+                <View key={u} style={s.unlockChip}>
+                  <Ionicons name="lock-open-outline" size={13} color={COLORS.primary} />
+                  <Text style={s.unlockChipText}>{u}</Text>
+                </View>
+              ))}
+            </View>
+          </>
+        )}
+
+        <Text style={s.note}>
+          Your information is encrypted and used only to verify your identity.
+        </Text>
+      </ScrollView>
+    </SafeAreaView>
+  );
+}
+
+const s = StyleSheet.create({
+  safe:   { flex: 1, backgroundColor: COLORS.background },
+  center: { flex: 1, justifyContent: "center", alignItems: "center" },
+  scroll: { padding: 20, paddingBottom: 48 },
+
+  overview: {
+    backgroundColor: COLORS.white,
+    borderRadius: RADIUS.lg, padding: 22, alignItems: "center",
+    borderWidth: 1, borderColor: COLORS.border,
+  },
+  overviewIcon: {
+    width: 60, height: 60, borderRadius: 30,
+    justifyContent: "center", alignItems: "center", marginBottom: 12,
+  },
+  overviewTitle: { fontSize: FONTS.xl, fontWeight: "700", color: COLORS.text, textAlign: "center" },
+  overviewSub:   { fontSize: FONTS.sm, color: COLORS.textSecondary, textAlign: "center", marginTop: 4, lineHeight: 20 },
+
+  progressTrack: {
+    alignSelf: "stretch", height: 6, borderRadius: 3,
+    backgroundColor: COLORS.divider, marginTop: 18, overflow: "hidden",
+  },
+  progressFill: { height: "100%", borderRadius: 3 },
+  progressText: { fontSize: FONTS.xs, color: COLORS.textMuted, marginTop: 6, fontWeight: "600" },
+
+  primaryBtn: {
+    flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8,
+    alignSelf: "stretch", backgroundColor: COLORS.primary,
+    paddingVertical: 13, borderRadius: RADIUS.md, marginTop: 18,
+  },
+  primaryBtnText: { color: "#fff", fontWeight: "700", fontSize: FONTS.md },
+
+  sectionLabel: {
+    fontSize: 11, fontWeight: "700", color: COLORS.textMuted,
+    letterSpacing: 0.5, marginTop: 24, marginBottom: 8, marginLeft: 4,
+  },
+  card: {
+    backgroundColor: COLORS.white, borderRadius: RADIUS.lg,
+    borderWidth: 1, borderColor: COLORS.border, overflow: "hidden",
+  },
+  row: {
+    flexDirection: "row", alignItems: "center", gap: 12,
+    paddingHorizontal: 14, paddingVertical: 13,
+    borderBottomWidth: 1, borderBottomColor: COLORS.divider,
+  },
+  rowIcon: {
+    width: 38, height: 38, borderRadius: 10,
+    justifyContent: "center", alignItems: "center",
+  },
+  rowTitle: { fontSize: FONTS.md, fontWeight: "600", color: COLORS.text },
+  rowSub:   { fontSize: FONTS.xs, color: COLORS.textMuted, marginTop: 2 },
+
+  statusChip: {
+    flexDirection: "row", alignItems: "center", gap: 4,
+    paddingHorizontal: 8, paddingVertical: 4, borderRadius: RADIUS.full,
+  },
+  statusChipText: { fontSize: 11, fontWeight: "700" },
+
+  unlockWrap: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
+  unlockChip: {
+    flexDirection: "row", alignItems: "center", gap: 5,
+    backgroundColor: COLORS.primaryPale,
+    paddingHorizontal: 12, paddingVertical: 7, borderRadius: RADIUS.full,
+  },
+  unlockChipText: { fontSize: FONTS.sm, color: COLORS.primary, fontWeight: "600" },
+
+  note: {
+    fontSize: FONTS.xs, color: COLORS.textMuted,
+    textAlign: "center", marginTop: 24, lineHeight: 18, paddingHorizontal: 20,
+  },
+});
