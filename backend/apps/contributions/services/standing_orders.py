@@ -6,6 +6,7 @@ class StandingOrderService:
     @staticmethod
     @transaction.atomic
     def create_standing_order(user, contribution_id, data):
+        AccessPolicy.gate(user, "Verify your identity to set up a standing order.")
         contribution = Contribution.objects.get(id=contribution_id)
 
         require(user, "contribution.admin", contribution,

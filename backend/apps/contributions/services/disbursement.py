@@ -6,6 +6,7 @@ class DisbursementService:
     @staticmethod
     @transaction.atomic
     def create_request(contribution_id, user, amount, reason, recipient_phone):
+        AccessPolicy.gate(user, "Verify your identity to request a payout.")
         contribution = Contribution.objects.select_for_update().get(id=contribution_id)
 
         require(user, "contribution.participate", contribution,
@@ -53,6 +54,7 @@ class DisbursementService:
     @staticmethod
     @transaction.atomic
     def vote(request_id, voter, vote_choice):
+        AccessPolicy.gate(voter, "Verify your identity to vote on a payout.")
         req = DisbursementRequest.objects.select_for_update().get(
             id=request_id, status='PENDING'
         )
