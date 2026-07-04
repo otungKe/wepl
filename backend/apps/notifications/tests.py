@@ -122,7 +122,15 @@ class NotificationPreferencesApiTests(TestCase):
     def test_defaults_created_on_first_get(self):
         r = client_for(self.user).get("/api/notifications/preferences/")
         self.assertEqual(r.status_code, 200)
-        self.assertTrue(all(r.json().values()))  # all flags default True
+        body = r.json()
+        # Category flags default True…
+        for f in ("push_enabled", "payments", "contributions", "reminders",
+                  "communities", "advances", "security"):
+            self.assertTrue(body[f], f)
+        # …quiet hours default off with a sensible overnight window.
+        self.assertFalse(body["quiet_hours_enabled"])
+        self.assertEqual(body["quiet_start"], "22:00")
+        self.assertEqual(body["quiet_end"], "07:00")
 
     def test_patch_updates_flags(self):
         r = client_for(self.user).patch(
@@ -135,3 +143,41 @@ class NotificationPreferencesApiTests(TestCase):
         r = client_for(self.user).patch(
             "/api/notifications/preferences/", {"payments": "nope"}, format="json")
         self.assertEqual(r.status_code, 400)
+
+
+class QuietHoursTests(TestCase):
+    """Quiet hours suppress push (not in-app), and security alerts break through."""
+
+    def _prefs(self, **kw):
+        from apps.notifications.models import NotificationPreferences
+        from django.contrib.auth import get_user_model
+        from datetime import time
+        u = get_user_model().objects.create_user(phone_number=f"2547{NotificationPreferences.objects.count():08d}")
+        return NotificationPreferences.objects.create(user=u, **kw)
+
+    def test_overnight_window_membership(self):
+        from datetime import time
+        p = self._prefs(quiet_hours_enabled=True, quiet_start=time(22, 0), quiet_end=time(7, 0))
+        self.assertTrue(p.in_quiet_hours(time(23, 30)))
+        self.assertTrue(p.in_quiet_hours(time(2, 0)))
+        self.assertTrue(p.in_quiet_hours(time(6, 59)))
+        self.assertFalse(p.in_quiet_hours(time(7, 0)))
+        self.assertFalse(p.in_quiet_hours(time(12, 0)))
+
+    def test_disabled_is_never_quiet(self):
+        from datetime import time
+        p = self._prefs(quiet_hours_enabled=False, quiet_start=time(22, 0), quiet_end=time(7, 0))
+        self.assertFalse(p.in_quiet_hours(time(2, 0)))
+
+    def test_channels_suppress_push_in_quiet_hours(self):
+        from unittest.mock import patch
+        from datetime import time
+        from apps.notifications.channels import channels_for
+        p = self._prefs(quiet_hours_enabled=True, quiet_start=time(22, 0), quiet_end=time(7, 0))
+        with patch.object(type(p), "in_quiet_hours", return_value=True):
+            # A normal payments notification: push dropped, in-app kept.
+            self.assertEqual(channels_for("contribution_payment", p), ["in_app"])
+            # A security alert always breaks through.
+            self.assertEqual(channels_for("security_new_signin", p), ["in_app", "push"])
+        with patch.object(type(p), "in_quiet_hours", return_value=False):
+            self.assertEqual(channels_for("contribution_payment", p), ["in_app", "push"])

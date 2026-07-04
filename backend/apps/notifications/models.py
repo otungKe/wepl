@@ -1,3 +1,5 @@
+from datetime import time
+
 from django.conf import settings
 from django.db import models
 
@@ -116,10 +118,31 @@ class NotificationPreferences(models.Model):
     # surfaces these as always-on and never lets them be turned off.
     security      = models.BooleanField(default=True)
 
+    # Quiet hours — suppress *push* during a window; the in-app record is still
+    # kept, and security alerts always break through.
+    quiet_hours_enabled = models.BooleanField(default=False)
+    quiet_start = models.TimeField(default=time(22, 0))
+    quiet_end   = models.TimeField(default=time(7, 0))
+
     updated_at = models.DateTimeField(auto_now=True)
 
     def __str__(self):
         return f"NotifPrefs({self.user.phone_number})"
+
+    def in_quiet_hours(self, now_time=None) -> bool:
+        """True if *now_time* (local) falls inside the quiet-hours window.
+        Handles overnight windows (e.g. 22:00–07:00)."""
+        if not self.quiet_hours_enabled:
+            return False
+        if now_time is None:
+            from django.utils import timezone
+            now_time = timezone.localtime().time()
+        start, end = self.quiet_start, self.quiet_end
+        if start == end:
+            return False
+        if start < end:
+            return start <= now_time < end
+        return now_time >= start or now_time < end  # overnight
 
 
 # Maps each notification_type to one of the category fields above.

@@ -61,6 +61,9 @@ export type NotifPrefs = {
   communities:   boolean;
   advances:      boolean;
   security:      boolean;  // read-only, mandatory (server never lets it turn off)
+  quiet_hours_enabled: boolean;
+  quiet_start:   string;   // "HH:MM"
+  quiet_end:     string;   // "HH:MM"
 };
 
 /** Fetch the user's server-side notification preferences. */
