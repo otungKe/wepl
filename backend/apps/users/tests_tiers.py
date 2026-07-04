@@ -149,6 +149,45 @@ class PhaseBServiceGateTests(TestCase):
             make_user("254700000061", kyc="approved"), {"name": "Chama"})
         self.assertIsNotNone(c.id)
 
+    def test_request_to_join_blocks_tier0(self):
+        from apps.communities.services import CommunityService
+        owner = make_user("254700000062", kyc="approved")
+        community = CommunityService.create_community(owner, {"name": "Chama"})
+        with self.assertRaises(KYCRequired):
+            CommunityService.request_to_join(make_user("254700000063"), community)
+
+    # The remaining gates are the first statement in their service method, so a
+    # Tier 0 user is rejected before any row is fetched — placeholder ids suffice.
+    def test_disbursement_request_blocks_tier0(self):
+        from apps.contributions.services.disbursement import DisbursementService
+        with self.assertRaises(KYCRequired):
+            DisbursementService.create_request(999999, make_user("254700000064"), 100, "r", None)
+
+    def test_disbursement_vote_blocks_tier0(self):
+        from apps.contributions.services.disbursement import DisbursementService
+        with self.assertRaises(KYCRequired):
+            DisbursementService.vote(999999, make_user("254700000065"), "APPROVE")
+
+    def test_amendment_propose_blocks_tier0(self):
+        from apps.contributions.services.amendments import AmendmentService
+        with self.assertRaises(KYCRequired):
+            AmendmentService.propose(999999, make_user("254700000066"), {}, "r")
+
+    def test_amendment_vote_blocks_tier0(self):
+        from apps.contributions.services.amendments import AmendmentService
+        with self.assertRaises(KYCRequired):
+            AmendmentService.vote(999999, make_user("254700000067"), "APPROVE")
+
+    def test_standing_order_blocks_tier0(self):
+        from apps.contributions.services.standing_orders import StandingOrderService
+        with self.assertRaises(KYCRequired):
+            StandingOrderService.create_standing_order(make_user("254700000068"), 999999, {})
+
+    def test_welfare_claim_blocks_tier0(self):
+        from apps.contributions.services.welfare import WelfareService
+        with self.assertRaises(KYCRequired):
+            WelfareService.submit_claim(999999, make_user("254700000069"), 100, "r")
+
 
 @override_settings(ACCESS_TIER_ENFORCEMENT=True)
 class RequiresTier1PermissionTests(TestCase):

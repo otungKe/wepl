@@ -256,6 +256,7 @@ class CommunityService:
         Submit (or re-open) a join request. Returns (request, created).
         Notifies all community admins.
         """
+        AccessPolicy.gate(user, "Verify your identity to join communities.")
         if CommunityService.is_member(user, community):
             raise ValidationError("You are already a member of this community.")
 

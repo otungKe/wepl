@@ -51,6 +51,7 @@ class AmendmentService:
 
     @staticmethod
     def propose(contribution_id, user, changes: dict, reason: str = ''):
+        AccessPolicy.gate(user, "Verify your identity to propose an amendment.")
         contribution = Contribution.objects.get(id=contribution_id)
 
         # Section C — check amendment_proposer setting
@@ -164,6 +165,7 @@ class AmendmentService:
     @staticmethod
     @transaction.atomic
     def vote(amendment_id, voter, vote_choice: str):
+        AccessPolicy.gate(voter, "Verify your identity to vote on an amendment.")
         amendment    = ContributionAmendment.objects.select_for_update().get(
             id=amendment_id, status='PENDING'
         )

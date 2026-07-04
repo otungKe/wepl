@@ -1,6 +1,6 @@
 # ADR-0022: Two-tier access model (KYC-gated full access)
 
-- **Status:** Accepted. Phase A shipped (tier model + centralized gate + structured error + consolidation). **Phase B shipped the backend enforcement** — the flag-aware `gate()` wired onto community create/join, contribution create, and chat — **behind `ACCESS_TIER_ENFORCEMENT` (default off)**. The tier-aware frontend and the remaining write surfaces (invites, votes, welfare/shares, standing orders, payouts) are follow-ups. See "Phase B" below.
+- **Status:** Accepted. Phase A shipped (tier model + centralized gate + structured error + consolidation). **Phase B shipped the backend enforcement** — the flag-aware `gate()` wired onto community create/join, contribution create, and chat — **behind `ACCESS_TIER_ENFORCEMENT` (default off)**. Follow-ups now landed: the money front-door (M-Pesa STK push) is gated **unconditionally** via `require_tier1`; the remaining member write surfaces (join requests, disbursement/amendment votes + requests/proposals, welfare claim submission, standing orders) carry the flag-aware `gate()`; and the web frontend mirrors the mobile tier model (unverified nav + route guard). See "Phase B" below.
 - **Date:** 2026-07-03
 - **Relates to:** Onboarding & access-control spec; builds on the authorization policy layer (ADR-0009) and the API error conventions (ADR-0021).
 
@@ -95,8 +95,11 @@ The three open decisions were resolved with the lowest-risk defaults:
 1. **Tier 0 = phone-verified** (email stays a KYC concern; no signup rebuild).
 2. **Vocabulary → real apps.** The gated surfaces are the ones that exist:
    community create/join, contribution (pool) create, chat (conversation + message).
-   Remaining writes (invites, disbursement/amendment votes, welfare/shares
-   contributions, standing orders, payouts) are follow-ups using the same gate.
+   Remaining member writes now carry the same flag-aware gate: community join
+   requests, disbursement requests + votes, amendment proposals + votes, welfare
+   claim submission, and standing-order setup. Member money-in (welfare/shares
+   contributions) flows through the STK-push front-door, which is gated
+   **unconditionally** (`require_tier1`) rather than flag-aware, since it moves money.
 3. **Backward compatibility = a feature flag, default off.**
    `ACCESS_TIER_ENFORCEMENT` (settings) is the master switch. `AccessPolicy.gate()`
    is a **no-op while it is off**, so the gate is wired onto currently-open

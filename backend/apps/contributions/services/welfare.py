@@ -50,6 +50,7 @@ class WelfareService:
     @staticmethod
     @transaction.atomic
     def submit_claim(fund_id, user, amount_requested, reason):
+        AccessPolicy.gate(user, "Verify your identity to submit a welfare claim.")
         fund   = WelfareFund.objects.select_for_update().get(id=fund_id)
         amount = Decimal(str(amount_requested))
 
