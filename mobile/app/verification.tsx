@@ -24,6 +24,7 @@ type KYCData = {
   status: KYCStatus;
   email_verified: boolean;
   email: string;
+  rejection_reason: string;
 };
 
 type ItemState = "done" | "pending" | "action" | "optional";
@@ -54,7 +55,7 @@ export default function VerificationCenterScreen() {
 
   // Overall header state
   const overall = isVerified
-    ? { title: "Account verified", sub: "All features are unlocked.", color: COLORS.success, icon: "shield-checkmark" }
+    ? { title: "Account verified", sub: "All features are unlocked. We'll reach out here if anything ever needs your attention.", color: COLORS.success, icon: "shield-checkmark" }
     : status === "pending"
     ? { title: "Verification in review", sub: "We're checking your documents.", color: "#B45309", icon: "time" }
     : status === "rejected"
@@ -171,6 +172,32 @@ export default function VerificationCenterScreen() {
           })}
         </View>
 
+        {/* Requests & documents — the Center stays in force after verification:
+            this is where follow-up document requests, clarifications, or feedback
+            on submitted items appear. */}
+        <Text style={s.sectionLabel}>REQUESTS & DOCUMENTS</Text>
+        {status === "rejected" && kyc?.rejection_reason ? (
+          <TouchableOpacity style={s.requestCard} activeOpacity={0.7} onPress={() => router.push("/kyc")}>
+            <View style={[s.rowIcon, { backgroundColor: "#FEF2F2" }]}>
+              <Ionicons name="alert-circle" size={19} color={COLORS.error} />
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={s.rowTitle}>Feedback on your submission</Text>
+              <Text style={s.requestBody}>{kyc.rejection_reason}</Text>
+              <Text style={s.requestAction}>Tap to update and re-submit →</Text>
+            </View>
+          </TouchableOpacity>
+        ) : (
+          <View style={s.emptyCard}>
+            <Ionicons name="checkmark-done-outline" size={20} color={COLORS.textMuted} />
+            <Text style={s.emptyText}>
+              No outstanding requests. If we ever need supporting documents or a
+              clarification — for example about a transaction or your address —
+              it&apos;ll appear here.
+            </Text>
+          </View>
+        )}
+
         {/* What verification unlocks */}
         {!isVerified && (
           <>
@@ -250,6 +277,21 @@ const s = StyleSheet.create({
     paddingHorizontal: 8, paddingVertical: 4, borderRadius: RADIUS.full,
   },
   statusChipText: { fontSize: 11, fontWeight: "700" },
+
+  requestCard: {
+    flexDirection: "row", alignItems: "flex-start", gap: 12,
+    backgroundColor: COLORS.white, borderRadius: RADIUS.lg, padding: 14,
+    borderWidth: 1, borderColor: COLORS.border,
+    borderLeftWidth: 3, borderLeftColor: COLORS.error,
+  },
+  requestBody:   { fontSize: FONTS.sm, color: COLORS.textSecondary, marginTop: 3, lineHeight: 19 },
+  requestAction: { fontSize: FONTS.xs, color: COLORS.primary, fontWeight: "700", marginTop: 6 },
+  emptyCard: {
+    flexDirection: "row", alignItems: "flex-start", gap: 10,
+    backgroundColor: COLORS.white, borderRadius: RADIUS.lg, padding: 14,
+    borderWidth: 1, borderColor: COLORS.border,
+  },
+  emptyText: { flex: 1, fontSize: FONTS.sm, color: COLORS.textMuted, lineHeight: 19 },
 
   unlockWrap: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
   unlockChip: {
