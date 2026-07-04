@@ -7,10 +7,20 @@ from .models import Notification, NotificationPreferences
 from .serializers import NotificationSerializer
 from .services import NotificationService
 
-# Writable via PATCH. 'security' is intentionally excluded — security & sign-in
-# alerts are mandatory, so they're returned (read-only) but can't be turned off.
-PREF_FIELDS = ('push_enabled', 'payments', 'contributions', 'reminders', 'communities', 'advances')
-READ_PREF_FIELDS = PREF_FIELDS + ('security',)
+# Writable boolean flags via PATCH. 'security' is intentionally excluded —
+# security & sign-in alerts are mandatory (returned read-only, never disableable).
+PREF_FIELDS = ('push_enabled', 'payments', 'contributions', 'reminders',
+               'communities', 'advances', 'quiet_hours_enabled')
+READ_PREF_FIELDS = ('push_enabled', 'payments', 'contributions', 'reminders',
+                    'communities', 'advances', 'security', 'quiet_hours_enabled')
+QUIET_TIME_FIELDS = ('quiet_start', 'quiet_end')
+
+
+def _serialize_prefs(prefs):
+    data = {f: getattr(prefs, f) for f in READ_PREF_FIELDS}
+    data['quiet_start'] = prefs.quiet_start.strftime('%H:%M')
+    data['quiet_end']   = prefs.quiet_end.strftime('%H:%M')
+    return data
 
 VALID_PLATFORMS = {'android', 'ios'}
 
@@ -139,21 +149,31 @@ class NotificationPreferencesView(APIView):
 
     def get(self, request):
         prefs, _ = NotificationPreferences.objects.get_or_create(user=request.user)
-        return Response({f: getattr(prefs, f) for f in READ_PREF_FIELDS})
+        return Response(_serialize_prefs(prefs))
 
     def patch(self, request):
+        from datetime import datetime
         prefs, _ = NotificationPreferences.objects.get_or_create(user=request.user)
         changed = False
+
         for field in PREF_FIELDS:
             if field in request.data:
                 val = request.data[field]
                 if not isinstance(val, bool):
-                    return Response(
-                        {'error': f"'{field}' must be a boolean."},
-                        status=status.HTTP_400_BAD_REQUEST,
-                    )
+                    return Response({'error': f"'{field}' must be a boolean."},
+                                    status=status.HTTP_400_BAD_REQUEST)
                 setattr(prefs, field, val)
                 changed = True
+
+        for field in QUIET_TIME_FIELDS:
+            if field in request.data:
+                try:
+                    setattr(prefs, field, datetime.strptime(str(request.data[field]), '%H:%M').time())
+                except (ValueError, TypeError):
+                    return Response({'error': f"'{field}' must be a time like '22:00'."},
+                                    status=status.HTTP_400_BAD_REQUEST)
+                changed = True
+
         if changed:
             prefs.save()
-        return Response({f: getattr(prefs, f) for f in READ_PREF_FIELDS})
+        return Response(_serialize_prefs(prefs))

@@ -23,6 +23,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { router, useFocusEffect, useLocalSearchParams } from "expo-router";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { Ionicons } from "@expo/vector-icons";
+import DateTimePicker from "@react-native-community/datetimepicker";
 import Constants from "expo-constants";
 import * as storage from "../../utils/secureStorage";
 import API from "../../api/client";
@@ -150,6 +151,12 @@ export default function SettingsScreen() {
   const [notif,          setNotif]          = useState<NotifPrefs>(DEFAULT_NOTIF);
   const [biometric,      setBiometric]      = useState(false);
 
+  // Quiet hours (push suppressed during the window; in-app kept)
+  const [quietEnabled, setQuietEnabled] = useState(false);
+  const [quietStart,   setQuietStart]   = useState("22:00");
+  const [quietEnd,     setQuietEnd]     = useState("07:00");
+  const [picker,       setPicker]       = useState<null | "start" | "end">(null);
+
   // PIN confirmation overlay for biometric toggle
   const [pinOverlay,      setPinOverlay]      = useState(false);
   const [pinError,        setPinError]        = useState("");
@@ -208,6 +215,9 @@ export default function SettingsScreen() {
               communities:   serverPrefs.communities,
               advances:      serverPrefs.advances,
             });
+            setQuietEnabled(serverPrefs.quiet_hours_enabled);
+            if (serverPrefs.quiet_start) setQuietStart(serverPrefs.quiet_start);
+            if (serverPrefs.quiet_end)   setQuietEnd(serverPrefs.quiet_end);
           }
           setBiometric(rawBio === "true");
         } finally {
@@ -232,6 +242,25 @@ export default function SettingsScreen() {
       setNotif(notif);
     }
   }
+
+  async function toggleQuiet(val: boolean) {
+    setQuietEnabled(val);
+    try { await updateNotifPrefs({ quiet_hours_enabled: val } as any); }
+    catch { setQuietEnabled(!val); }
+  }
+
+  async function saveQuietTime(which: "start" | "end", date: Date) {
+    const hhmm = `${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`;
+    const field = which === "start" ? "quiet_start" : "quiet_end";
+    const prev = which === "start" ? quietStart : quietEnd;
+    (which === "start" ? setQuietStart : setQuietEnd)(hhmm);
+    try { await updateNotifPrefs({ [field]: hhmm } as any); }
+    catch { (which === "start" ? setQuietStart : setQuietEnd)(prev); }
+  }
+
+  // "HH:MM" → Date (today) for the time picker; and a friendly "10:00 PM" label.
+  const hhmmToDate = (t: string) => { const [h, m] = t.split(":").map(Number); const d = new Date(); d.setHours(h || 0, m || 0, 0, 0); return d; };
+  const prettyTime = (t: string) => hhmmToDate(t).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
 
   /** Step 1 — user taps toggle: open PIN overlay first */
   function saveBiometric(val: boolean) {
@@ -526,6 +555,24 @@ export default function SettingsScreen() {
                 value={notif.advances}
                 onChange={v => saveNotifPref("advances", v)}
               />
+
+              <View style={s.subSection}>
+                <Text style={s.subSectionLabel}>Quiet hours</Text>
+              </View>
+              <ToggleRow
+                icon="moon-outline"
+                label="Pause push notifications"
+                value={quietEnabled}
+                onChange={toggleQuiet}
+              />
+              {quietEnabled && (
+                <>
+                  <Divider />
+                  <Row icon="time-outline" label="From" value={prettyTime(quietStart)} onPress={() => setPicker("start")} />
+                  <Divider />
+                  <Row icon="time-outline" label="To" value={prettyTime(quietEnd)} onPress={() => setPicker("end")} />
+                </>
+              )}
             </>
           )}
         </Card>
@@ -596,6 +643,20 @@ export default function SettingsScreen() {
 
         <View style={{ height: 40 }} />
       </ScrollView>
+
+      {/* Quiet-hours time picker */}
+      {picker && (
+        <DateTimePicker
+          value={hhmmToDate(picker === "start" ? quietStart : quietEnd)}
+          mode="time"
+          is24Hour={false}
+          onChange={(event, date) => {
+            const which = picker;
+            setPicker(null);
+            if (event.type === "set" && date && which) saveQuietTime(which, date);
+          }}
+        />
+      )}
 
       {/* ── Delete-account confirmation (typed) ──────────── */}
       <Modal

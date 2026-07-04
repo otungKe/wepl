@@ -83,4 +83,8 @@ def channels_for(notification_type: str, prefs) -> list[str]:
     category = NOTIF_CATEGORY_MAP.get(notification_type)
     if category and not getattr(prefs, category, True):
         return []
+    # Quiet hours suppress *push* only (the in-app record is always kept), and
+    # security alerts always break through.
+    if category != "security" and prefs.in_quiet_hours():
+        return ["in_app"]
     return ["in_app", "push"]
