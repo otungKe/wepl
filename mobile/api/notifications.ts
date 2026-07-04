@@ -60,6 +60,7 @@ export type NotifPrefs = {
   reminders:     boolean;
   communities:   boolean;
   advances:      boolean;
+  security:      boolean;  // read-only, mandatory (server never lets it turn off)
 };
 
 /** Fetch the user's server-side notification preferences. */

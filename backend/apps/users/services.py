@@ -197,8 +197,19 @@ class PINService:
     def set_pin(user, raw_pin: str) -> User:
         if not raw_pin.isdigit() or len(raw_pin) != 6:
             raise ValidationError("PIN must be a 6-digit number.")
+        had_pin = user.is_pin_set
         user.set_pin(raw_pin)
         logger.info(f"PIN set/reset for user {user.id}")
+        # Alert on a *change* (mandatory security category) — not the first-ever set.
+        if had_pin:
+            from apps.core.events import emit
+            emit(
+                "security_pin_changed",
+                user_id=user.id,
+                title="Your PIN was changed",
+                message="Your account PIN was just changed. If this wasn't you, "
+                        "contact support immediately.",
+            )
         return user
 
     @staticmethod

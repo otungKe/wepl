@@ -40,14 +40,33 @@ def _device_label(request) -> str:
 
 
 def create_session(user, request=None) -> UserSession:
-    """Create a session row and return it; its ``sid`` goes into the token."""
+    """Create a session row and return it; its ``sid`` goes into the token.
+
+    A sign-in from a device the account hasn't been seen on before raises a
+    mandatory security alert so the user can spot unauthorised access.
+    """
+    label = _device_label(request)
+    is_new_device = bool(label) and not UserSession.objects.filter(
+        user=user, device_label=label
+    ).exists()
+
     session = UserSession.objects.create(
         user=user,
-        device_label=_device_label(request),
+        device_label=label,
         user_agent=(request.META.get("HTTP_USER_AGENT", "")[:400] if request else ""),
         ip_address=_client_ip(request),
     )
     logger.info("Session created for user %s (sid=%s)", user.id, session.sid)
+
+    if is_new_device:
+        from apps.core.events import emit
+        emit(
+            "security_new_signin",
+            user_id=user.id,
+            title="New sign-in to your account",
+            message=f"Your account was signed in on {label}. "
+                    f"If this wasn't you, change your PIN and sign out that device.",
+        )
     return session
 
 
