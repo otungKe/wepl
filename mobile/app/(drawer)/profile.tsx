@@ -405,20 +405,15 @@ export default function ProfileScreen() {
               </View>
             </View>
             <Text style={s.discoverHint}>
-              See what&apos;s active in your area. Verify your identity to join or support.
+              A peek at what&apos;s active near you. Explore everything in Discover —
+              verify your identity to join or support.
             </Text>
-            {communities.map((c, idx) => (
-              <View
-                key={c.id}
-                style={[s.discoverRow, idx === communities.length - 1 && { borderBottomWidth: 0 }]}
-              >
-                {/* Community avatar — photo if available, else initials */}
+
+            {/* Sneak peek — a couple of items only; the full list lives in Discover. */}
+            {communities.slice(0, 2).map((c) => (
+              <View key={c.id} style={s.discoverRow}>
                 {c.community_photo ? (
-                  <Image
-                    source={{ uri: c.community_photo }}
-                    style={s.discoverAvatarImg}
-                    resizeMode="cover"
-                  />
+                  <Image source={{ uri: c.community_photo }} style={s.discoverAvatarImg} resizeMode="cover" />
                 ) : (
                   <View style={[s.discoverAvatar, { backgroundColor: avatarColorFor(c.name).bg }]}>
                     <Text style={[s.discoverAvatarText, { color: avatarColorFor(c.name).text }]}>
@@ -433,49 +428,31 @@ export default function ProfileScreen() {
                     {c.category ? ` · ${c.category}` : ""}
                   </Text>
                 </View>
-                {/* Locked join button */}
-                <TouchableOpacity
-                  style={s.joinLockedBtn}
-                  onPress={() => router.push("/kyc")}
-                >
-                  <Ionicons name="lock-closed-outline" size={12} color={COLORS.primary} />
-                  <Text style={s.joinLockedText}>Join</Text>
-                </TouchableOpacity>
+                <View style={s.peekTag}><Ionicons name="people-outline" size={13} color={COLORS.textMuted} /></View>
               </View>
             ))}
 
-            {/* Public campaigns */}
-            {campaigns.length > 0 && (
-              <>
-                {communities.length > 0 && (
-                  <Text style={s.discoverSubhead}>Public campaigns</Text>
-                )}
-                {campaigns.map((c, idx) => (
-                  <View
-                    key={`camp-${c.id}`}
-                    style={[s.discoverRow, idx === campaigns.length - 1 && { borderBottomWidth: 0 }]}
-                  >
-                    <View style={[s.discoverAvatar, { backgroundColor: COLORS.accentPale }]}>
-                      <Ionicons name="megaphone-outline" size={18} color={COLORS.accent} />
-                    </View>
-                    <View style={s.discoverInfo}>
-                      <Text style={s.discoverName} numberOfLines={1}>{c.title}</Text>
-                      <Text style={s.discoverMeta}>
-                        {fmtKES(c.current_amount)}
-                        {c.target_amount ? ` of ${fmtKES(c.target_amount)}` : " raised"}
-                      </Text>
-                    </View>
-                    <TouchableOpacity
-                      style={s.joinLockedBtn}
-                      onPress={() => router.push("/kyc")}
-                    >
-                      <Ionicons name="lock-closed-outline" size={12} color={COLORS.primary} />
-                      <Text style={s.joinLockedText}>Support</Text>
-                    </TouchableOpacity>
-                  </View>
-                ))}
-              </>
-            )}
+            {campaigns.slice(0, 1).map((c) => (
+              <View key={`camp-${c.id}`} style={s.discoverRow}>
+                <View style={[s.discoverAvatar, { backgroundColor: COLORS.accentPale }]}>
+                  <Ionicons name="megaphone-outline" size={18} color={COLORS.accent} />
+                </View>
+                <View style={s.discoverInfo}>
+                  <Text style={s.discoverName} numberOfLines={1}>{c.title}</Text>
+                  <Text style={s.discoverMeta}>
+                    {fmtKES(c.current_amount)}
+                    {c.target_amount ? ` of ${fmtKES(c.target_amount)}` : " raised"}
+                  </Text>
+                </View>
+                <View style={s.peekTag}><Ionicons name="megaphone-outline" size={13} color={COLORS.textMuted} /></View>
+              </View>
+            ))}
+
+            {/* Direct to the full Discover page */}
+            <TouchableOpacity style={s.exploreBtn} onPress={() => router.push("/discover")}>
+              <Text style={s.exploreText}>Explore all in Discover</Text>
+              <Ionicons name="arrow-forward" size={16} color={COLORS.primary} />
+            </TouchableOpacity>
           </View>
         )}
 
@@ -811,6 +788,18 @@ const s = StyleSheet.create({
     letterSpacing: 0.4, textTransform: "uppercase",
     marginTop: 14, marginBottom: 2,
   },
+  peekTag: {
+    width: 28, height: 28, borderRadius: 14,
+    backgroundColor: COLORS.background,
+    justifyContent: "center", alignItems: "center",
+  },
+  exploreBtn: {
+    flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6,
+    marginTop: 12, paddingVertical: 12,
+    borderRadius: RADIUS.md, borderWidth: 1, borderColor: COLORS.primary,
+    backgroundColor: COLORS.primaryPale,
+  },
+  exploreText: { fontSize: FONTS.md, fontWeight: "700", color: COLORS.primary },
   discoverRow: {
     flexDirection: "row", alignItems: "center", gap: 12,
     paddingVertical: 10,
@@ -825,14 +814,6 @@ const s = StyleSheet.create({
   discoverInfo:       { flex: 1 },
   discoverName:       { fontSize: FONTS.md, fontWeight: "600", color: COLORS.text },
   discoverMeta:       { fontSize: FONTS.xs, color: COLORS.textMuted, marginTop: 2 },
-  joinLockedBtn: {
-    flexDirection: "row", alignItems: "center", gap: 4,
-    paddingHorizontal: 12, paddingVertical: 6,
-    borderRadius: RADIUS.full,
-    borderWidth: 1.5, borderColor: COLORS.primary + "60",
-    backgroundColor: COLORS.primaryPale,
-  },
-  joinLockedText: { fontSize: FONTS.xs, color: COLORS.primary, fontWeight: "700" },
 
   // Edit sheet
   sheet: {
