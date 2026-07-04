@@ -5,6 +5,16 @@ export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs))
 }
 
+/**
+ * Where to send a user after sign-in / registration. Verified (Tier 1) users
+ * land in Communities; unverified (Tier 0) users land on Profile — the only
+ * surface open to them until they verify (ADR-0022). Keeps post-auth redirects
+ * from bouncing off the app-layout tier guard.
+ */
+export function landingPath(kycStatus?: string): string {
+  return kycStatus === 'approved' ? '/communities' : '/profile'
+}
+
 export function formatMoney(amount: number | string, currency = 'KES'): string {
   const n = typeof amount === 'string' ? parseFloat(amount) : amount
   return `${currency} ${n.toLocaleString('en-KE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
