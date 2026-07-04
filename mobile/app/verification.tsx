@@ -183,7 +183,7 @@ export default function VerificationCenterScreen() {
   }
 
   return (
-    <SafeAreaView style={s.safe} edges={["left", "right"]}>
+    <SafeAreaView style={s.safe}>
       <AppHeader title="Verification Center" variant="light" leading="back"
         onBack={() => router.back()} />
       <ScrollView contentContainerStyle={s.scroll} showsVerticalScrollIndicator={false}>
