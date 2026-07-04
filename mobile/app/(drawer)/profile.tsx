@@ -213,12 +213,7 @@ export default function ProfileScreen() {
           {/* KYC status badge */}
           <TouchableOpacity
             style={[s.kycBadge, { backgroundColor: kyc.bg }]}
-            onPress={() => kycStatus === "pending"
-              ? router.push("/kyc-status")
-              : kycStatus === "rejected"
-              ? router.push("/kyc")
-              : null
-            }
+            onPress={() => router.push("/verification")}
           >
             <Ionicons name={kyc.icon as any} size={13} color={kyc.color} />
             <Text style={[s.kycBadgeText, { color: kyc.color }]}>{kyc.label}</Text>
@@ -247,40 +242,11 @@ export default function ProfileScreen() {
             </Text>
             <TouchableOpacity
               style={s.ctaBtn}
-              onPress={() =>
-                kycStatus === "pending"
-                  ? router.push("/kyc-status")
-                  : router.push("/kyc")
-              }
+              onPress={() => router.push("/verification")}
             >
               <Ionicons name="arrow-forward-circle-outline" size={18} color={COLORS.white} />
-              <Text style={s.ctaBtnText}>{kyc.cta || "Verify Now"}</Text>
+              <Text style={s.ctaBtnText}>Open Verification Center</Text>
             </TouchableOpacity>
-
-            {/* Verification checklist — identity today; documents only if needed later */}
-            <View style={s.verifyList}>
-              {[
-                {
-                  label: "Identity (KYC)", hint: "National ID & selfie",
-                  status: kycStatus === "pending" ? "Under review" : "Required",
-                  icon: kycStatus === "pending" ? "time-outline" : "alert-circle-outline",
-                  color: kycStatus === "pending" ? "#B45309" : COLORS.primary,
-                },
-                {
-                  label: "Supporting documents", hint: "Requested only if needed later",
-                  status: "If needed", icon: "lock-closed-outline", color: COLORS.textMuted,
-                },
-              ].map((it, idx) => (
-                <View key={it.label} style={[s.verifyItem, idx === 1 && { borderBottomWidth: 0 }]}>
-                  <Ionicons name={it.icon as any} size={16} color={it.color} />
-                  <View style={{ flex: 1 }}>
-                    <Text style={s.verifyLabel}>{it.label}</Text>
-                    <Text style={s.verifyHint}>{it.hint}</Text>
-                  </View>
-                  <Text style={s.verifyStatus}>{it.status}</Text>
-                </View>
-              ))}
-            </View>
 
             {/* What gets unlocked */}
             {kycStatus === "not_submitted" && (
@@ -516,6 +482,11 @@ export default function ProfileScreen() {
         {/* ── Menu ────────────────────────────────────────────────────── */}
         <View style={s.menuSection}>
           <MenuItem
+            icon="shield-checkmark-outline"
+            label="Verification Center"
+            onPress={() => router.push("/verification")}
+          />
+          <MenuItem
             icon="settings-outline"
             label="Settings"
             onPress={() => router.push("/settings")}
@@ -706,19 +677,6 @@ const s = StyleSheet.create({
     marginBottom: 16,
   },
   ctaBtnText: { color: COLORS.white, fontWeight: "700", fontSize: FONTS.md },
-  verifyList: {
-    alignSelf: "stretch",
-    borderTopWidth: 1, borderTopColor: COLORS.divider,
-    marginBottom: 16,
-  },
-  verifyItem: {
-    flexDirection: "row", alignItems: "center", gap: 10,
-    paddingVertical: 10,
-    borderBottomWidth: 1, borderBottomColor: COLORS.divider,
-  },
-  verifyLabel: { fontSize: FONTS.sm, fontWeight: "600", color: COLORS.text },
-  verifyHint:  { fontSize: FONTS.xs, color: COLORS.textMuted, marginTop: 1 },
-  verifyStatus: { fontSize: FONTS.xs, color: COLORS.textMuted, fontWeight: "600" },
   unlockRow: {
     flexDirection: "row", flexWrap: "wrap", gap: 6, justifyContent: "center",
   },

@@ -2,7 +2,7 @@ import re
 from datetime import date
 
 from rest_framework import serializers
-from .models import User, KYCProfile, UserSession
+from .models import User, KYCProfile, UserSession, VerificationRequest
 
 
 # ─────────────────────────────────────────────────────────────
@@ -265,3 +265,31 @@ class UserSessionSerializer(serializers.ModelSerializer):
 
     def get_is_current(self, obj) -> bool:
         return str(obj.sid) == self.context.get("current_sid")
+
+
+class VerificationRequestSerializer(serializers.ModelSerializer):
+    """Read serializer for the mobile Verification Center's requests section."""
+    kind_label   = serializers.CharField(source='get_kind_display', read_only=True)
+    status_label = serializers.CharField(source='get_status_display', read_only=True)
+
+    class Meta:
+        model = VerificationRequest
+        fields = (
+            'id', 'kind', 'kind_label', 'title', 'detail',
+            'status', 'status_label', 'response_note', 'document',
+            'review_note', 'created_at', 'responded_at', 'resolved_at',
+        )
+        read_only_fields = fields
+
+
+class VerificationRespondSerializer(serializers.Serializer):
+    """User's answer to an open request: a note and/or a document."""
+    response_note = serializers.CharField(required=False, allow_blank=True, default='')
+    document      = serializers.FileField(required=False)
+
+    def validate(self, attrs):
+        if not (attrs.get('response_note') or '').strip() and not attrs.get('document'):
+            raise serializers.ValidationError(
+                "Add a note or attach a document to submit your response."
+            )
+        return attrs

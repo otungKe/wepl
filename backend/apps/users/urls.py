@@ -20,6 +20,8 @@ from .views import (
     FinancialSummaryView,
     PrivacyPreferencesView,
     AccountDeletionView,
+    VerificationRequestListView,
+    VerificationRequestRespondView,
 )
 
 urlpatterns = [
@@ -56,6 +58,10 @@ urlpatterns = [
     path('kyc/resend-verification/',   KYCResendEmailView.as_view()),
     path('kyc/check-id/',              KYCCheckIDView.as_view()),
     path('kyc/check-email/',           KYCCheckEmailView.as_view()),
+
+    # VERIFICATION CENTER — ongoing compliance requests
+    path('verification-requests/',                 VerificationRequestListView.as_view()),
+    path('verification-requests/<int:pk>/respond/', VerificationRequestRespondView.as_view()),
 
     # PRIVACY PREFERENCES
     path('privacy/', PrivacyPreferencesView.as_view()),
