@@ -26,7 +26,7 @@ import { Ionicons } from "@expo/vector-icons";
 import Constants from "expo-constants";
 import * as storage from "../../utils/secureStorage";
 import API from "../../api/client";
-import { getProfile, updateProfile } from "../../api/auth";
+import { getProfile } from "../../api/auth";
 import { getNotifPrefs, updateNotifPrefs } from "../../api/notifications";
 import { COLORS, FONTS, RADIUS } from "../../constants/theme";
 import AppHeader from "../../components/app/AppHeader";
@@ -160,11 +160,10 @@ export default function SettingsScreen() {
   // Raw axios — bypasses the 401 interceptor so a wrong PIN doesn't log the user out
   const rawAxios = axios.create({ baseURL: API_BASE_URL });
 
-  // Edit modal
-  const [editVisible, setEditVisible] = useState(false);
-  const [editName,    setEditName]    = useState("");
-  const [editBio,     setEditBio]     = useState("");
-  const [saving,      setSaving]      = useState(false);
+  // Delete-account confirmation
+  const [deleteVisible, setDeleteVisible] = useState(false);
+  const [deleteText,    setDeleteText]    = useState("");
+  const [deleting,      setDeleting]      = useState(false);
 
   // Success banner — shown when returning from change-pin with pinChanged=1
   const { pinChanged } = useLocalSearchParams<{ pinChanged?: string }>();
@@ -308,96 +307,34 @@ export default function SettingsScreen() {
     );
   }
 
-  function openEditProfile() {
-    setEditName(profile.name);
-    setEditBio(profile.bio);
-    setEditVisible(true);
-  }
-
-  async function handleSaveProfile() {
-    if (!editName.trim()) {
-      Alert.alert("Name required", "Please enter your display name.");
-      return;
-    }
-    setSaving(true);
-    try {
-      const updated = await updateProfile({ name: editName.trim(), bio: editBio.trim() });
-      setProfile(p => ({ ...p, name: updated.name ?? editName.trim(), bio: updated.bio ?? editBio.trim() }));
-      if (editName.trim()) await storage.setItem("name", editName.trim());
-      setEditVisible(false);
-    } catch {
-      Alert.alert("Error", "Could not save profile. Please try again.");
-    } finally {
-      setSaving(false);
-    }
-  }
-
   function handleResetPIN() {
     // New flow: verify current PIN → new PIN → confirm → OTP → done.
     // All steps handled by the change-pin screen.
     router.push("/change-pin");
   }
 
-  async function handleClearCache() {
-    Alert.alert(
-      "Clear Cache",
-      "This clears cached preferences and local data. Your account data is not affected.",
-      [
-        { text: "Cancel", style: "cancel" },
-        {
-          text:    "Clear",
-          style:   "destructive",
-          onPress: async () => {
-            const allKeys  = await AsyncStorage.getAllKeys();
-            const safeKeys = allKeys.filter(k => !["access","refresh","phone","name"].includes(k));
-            if (safeKeys.length) await AsyncStorage.multiRemove(safeKeys);
-            setNotif(DEFAULT_NOTIF);
-            setBiometric(false);
-            Alert.alert("Done", "Cache cleared successfully.");
-          },
-        },
-      ]
-    );
+  function handleDeleteAccount() {
+    setDeleteText("");
+    setDeleteVisible(true);
   }
 
-  function handleDeleteAccount() {
-    Alert.alert(
-      "Delete your account?",
-      "Your personal data will be permanently erased. Financial records are retained for legal compliance. This cannot be undone.",
-      [
-        { text: "Cancel", style: "cancel" },
-        {
-          text:  "Delete Account",
-          style: "destructive",
-          onPress: () =>
-            Alert.alert(
-              "Are you absolutely sure?",
-              "Type DELETE in the next step to confirm, or tap Cancel.",
-              [
-                { text: "Cancel", style: "cancel" },
-                {
-                  text:    "Yes, delete my account",
-                  style:   "destructive",
-                  onPress: async () => {
-                    try {
-                      await API.delete("users/account/");
-                      await storage.multiRemove(["access", "refresh", "phone", "name"]);
-                      await AsyncStorage.removeItem(BIOMETRIC_KEY);
-                      router.replace("/");
-                    } catch (e: any) {
-                      const msg = e?.response?.data?.error;
-                      Alert.alert(
-                        "Cannot delete account",
-                        msg || "Please resolve any outstanding advances or community ownership before deleting.",
-                      );
-                    }
-                  },
-                },
-              ]
-            ),
-        },
-      ]
-    );
+  async function confirmDelete() {
+    if (deleteText.trim().toUpperCase() !== "DELETE") return;
+    setDeleting(true);
+    try {
+      await API.delete("users/account/");
+      await storage.multiRemove(["access", "refresh", "phone", "name"]);
+      await AsyncStorage.removeItem(BIOMETRIC_KEY);
+      router.replace("/");
+    } catch (e: any) {
+      setDeleting(false);
+      setDeleteVisible(false);
+      const msg = e?.response?.data?.error;
+      Alert.alert(
+        "Cannot delete account",
+        msg || "Please resolve any outstanding advances or community ownership before deleting.",
+      );
+    }
   }
 
   function handleSignOut() {
@@ -457,40 +394,8 @@ export default function SettingsScreen() {
 
       <ScrollView contentContainerStyle={s.body} showsVerticalScrollIndicator={false}>
 
-        {/* ── Account ─────────────────────────────────────── */}
-        <SectionHeader title="Account" />
-        <Card>
-          <Row
-            icon="person-circle-outline"
-            label="Display Name"
-            value={profile.name || "Tap to set"}
-            onPress={openEditProfile}
-          />
-          <Divider />
-          <Row
-            icon="call-outline"
-            label="Phone Number"
-            value={profile.phone_number}
-            showArrow={false}
-          />
-          <Divider />
-          <Row
-            icon="shield-checkmark-outline"
-            iconColor={kycColor}
-            iconBg={kycColor + "18"}
-            label="Identity (KYC)"
-            value={kycLabel}
-            onPress={
-              profile.kyc_status === "approved"   ? undefined :
-              profile.kyc_status === "pending"     ? () => router.push("/kyc-status") :
-              /* not_submitted | rejected */          () => router.push("/kyc")
-            }
-            showArrow={profile.kyc_status !== "approved"}
-          />
-        </Card>
-
-        {/* ── Security ─────────────────────────────────────── */}
-        <SectionHeader title="Security" />
+        {/* ── Security & sign-in ───────────────────────────── */}
+        <SectionHeader title="Security & sign-in" />
         <Card>
           <Row
             icon="key-outline"
@@ -503,6 +408,43 @@ export default function SettingsScreen() {
             label="Biometric Login"
             value={biometric}
             onChange={saveBiometric}
+          />
+          <Divider />
+          <Row
+            icon="phone-portrait-outline"
+            label="Active devices"
+            onPress={() => router.push("/sessions")}
+          />
+        </Card>
+
+        {/* ── Verification ─────────────────────────────────── */}
+        <SectionHeader title="Verification" />
+        <Card>
+          <Row
+            icon="shield-checkmark-outline"
+            iconColor={kycColor}
+            iconBg={kycColor + "18"}
+            label="Verification Center"
+            value={kycLabel}
+            onPress={() => router.push("/verification")}
+          />
+        </Card>
+
+        {/* ── Account ─────────────────────────────────────── */}
+        <SectionHeader title="Account" />
+        <Card>
+          <Row
+            icon="person-circle-outline"
+            label="Display Name"
+            value={profile.name || "Not set"}
+            onPress={() => router.replace("/(drawer)/profile")}
+          />
+          <Divider />
+          <Row
+            icon="call-outline"
+            label="Phone Number"
+            value={profile.phone_number}
+            showArrow={false}
           />
         </Card>
 
@@ -532,12 +474,17 @@ export default function SettingsScreen() {
               <View style={s.subSection}>
                 <Text style={s.subSectionLabel}>Notify me about</Text>
               </View>
-              <ToggleRow
+              <Row
                 icon="card-outline"
                 iconColor={COLORS.accent}
                 label="Payments & M-Pesa"
-                value={notif.payments}
-                onChange={v => saveNotifPref("payments", v)}
+                showArrow={false}
+                rightEl={
+                  <View style={s.alwaysOn}>
+                    <Ionicons name="lock-closed" size={11} color={COLORS.textMuted} />
+                    <Text style={s.alwaysOnText}>Always on</Text>
+                  </View>
+                }
               />
               <Divider />
               <ToggleRow
@@ -571,84 +518,64 @@ export default function SettingsScreen() {
           )}
         </Card>
 
-        {/* ── Preferences ──────────────────────────────────── */}
-        <SectionHeader title="Preferences" />
-        <Card>
-          <Row icon="language-outline"      label="Language"  value="English" showArrow={false} />
-          <Divider />
-          <Row icon="cash-outline"          label="Currency"  value="KES (Kenyan Shilling)" showArrow={false} />
-          <Divider />
-          <Row icon="color-palette-outline" label="Theme"     value="Light" showArrow={false} />
-        </Card>
-
-        {/* ── Privacy & Data ───────────────────────────────── */}
-        <SectionHeader title="Privacy & Data" />
+        {/* ── Privacy ──────────────────────────────────────── */}
+        <SectionHeader title="Privacy" />
         <Card>
           <Row
-            icon="download-outline"
-            label="Export My Data"
-            onPress={() => Linking.openURL("mailto:support@wepl.app?subject=Data%20Export%20Request")}
+            icon="eye-outline"
+            label="Privacy controls"
+            onPress={() => router.push("/privacy")}
           />
           <Divider />
           <Row
-            icon="trash-bin-outline"
-            label="Clear Cache"
-            onPress={handleClearCache}
+            icon="download-outline"
+            label="Request my data"
+            onPress={() => Linking.openURL("mailto:support@wepl.app?subject=Data%20Export%20Request")}
+          />
+        </Card>
+
+        {/* ── Support & about ──────────────────────────────── */}
+        <SectionHeader title="Support & about" />
+        <Card>
+          <Row
+            icon="help-circle-outline"
+            label="Help & support"
+            onPress={() => Linking.openURL("mailto:support@wepl.app")}
           />
           <Divider />
           <Row
             icon="document-text-outline"
-            label="Privacy Policy"
+            label="Privacy policy"
             onPress={() => Linking.openURL("https://wepl.app/privacy")}
           />
           <Divider />
           <Row
             icon="reader-outline"
-            label="Terms of Service"
+            label="Terms of service"
             onPress={() => Linking.openURL("https://wepl.app/terms")}
           />
-        </Card>
-
-        {/* ── About ────────────────────────────────────────── */}
-        <SectionHeader title="About" />
-        <Card>
+          <Divider />
           <Row
             icon="information-circle-outline"
-            label="App Version"
+            label="App version"
             value={`v${version}`}
             showArrow={false}
           />
-          <Divider />
-          <Row
-            icon="help-circle-outline"
-            label="Help & Support"
-            onPress={() => Linking.openURL("mailto:support@wepl.app")}
-          />
-          <Divider />
-          <Row
-            icon="star-outline"
-            iconColor={COLORS.accent}
-            label="Rate WEPL"
-            onPress={() =>
-              Alert.alert("Rate WEPL", "App Store rating coming soon. Thank you for using WEPL!")
-            }
-          />
         </Card>
 
-        {/* ── Danger Zone ──────────────────────────────────── */}
-        <SectionHeader title="Danger Zone" />
+        {/* ── Account actions ──────────────────────────────── */}
+        <SectionHeader title="Account actions" />
         <Card>
           <Row
             icon="log-out-outline"
             label="Sign out"
-            danger
             onPress={handleSignOut}
             showArrow={false}
           />
           <Divider />
           <Row
             icon="close-circle-outline"
-            label="Delete Account"
+            label="Delete account"
             danger
             onPress={handleDeleteAccount}
             showArrow={false}
@@ -658,51 +585,55 @@ export default function SettingsScreen() {
         <View style={{ height: 40 }} />
       </ScrollView>
 
-      {/* ── Edit Profile Modal ───────────────────────────── */}
+      {/* ── Delete-account confirmation (typed) ──────────── */}
       <Modal
-        visible={editVisible}
+        visible={deleteVisible}
         transparent
         animationType="slide"
-        onRequestClose={() => setEditVisible(false)}
+        onRequestClose={() => setDeleteVisible(false)}
       >
         <KeyboardAvoidingView
           style={{ flex: 1 }}
           behavior={Platform.OS === "ios" ? "padding" : "height"}
         >
-          <Pressable style={s.backdrop} onPress={() => setEditVisible(false)}>
+          <Pressable style={s.backdrop} onPress={() => setDeleteVisible(false)}>
             <Pressable style={s.sheet} onStartShouldSetResponder={() => true}>
               <View style={s.handle} />
-              <Text style={s.sheetTitle}>Edit Profile</Text>
+              <View style={s.delIconWrap}>
+                <Ionicons name="warning-outline" size={26} color={COLORS.error} />
+              </View>
+              <Text style={s.delTitle}>Delete your account?</Text>
+              <Text style={s.delBody}>
+                Your personal data will be permanently erased. Financial records are
+                retained for legal compliance. <Text style={{ fontWeight: "700" }}>This cannot be undone.</Text>
+              </Text>
 
-              <Text style={s.fieldLabel}>Display Name</Text>
+              <Text style={s.fieldLabel}>Type DELETE to confirm</Text>
               <TextInput
-                value={editName}
-                onChangeText={setEditName}
-                placeholder="Your name"
+                value={deleteText}
+                onChangeText={setDeleteText}
+                placeholder="DELETE"
                 placeholderTextColor={COLORS.textMuted}
+                autoCapitalize="characters"
+                autoCorrect={false}
                 style={s.input}
-                autoFocus
-              />
-
-              <Text style={s.fieldLabel}>Bio</Text>
-              <TextInput
-                value={editBio}
-                onChangeText={setEditBio}
-                placeholder="Tell others about yourself..."
-                placeholderTextColor={COLORS.textMuted}
-                style={[s.input, s.textarea]}
-                multiline
               />
 
               <TouchableOpacity
-                style={[s.saveBtn, saving && { opacity: 0.6 }]}
-                onPress={handleSaveProfile}
-                disabled={saving}
+                style={[
+                  s.deleteBtn,
+                  (deleteText.trim().toUpperCase() !== "DELETE" || deleting) && { opacity: 0.5 },
+                ]}
+                onPress={confirmDelete}
+                disabled={deleteText.trim().toUpperCase() !== "DELETE" || deleting}
               >
-                {saving
+                {deleting
                   ? <ActivityIndicator color={COLORS.white} size="small" />
-                  : <Text style={s.saveBtnText}>Save Changes</Text>
+                  : <Text style={s.saveBtnText}>Delete my account</Text>
                 }
+              </TouchableOpacity>
+              <TouchableOpacity style={s.cancelBtn} onPress={() => setDeleteVisible(false)} disabled={deleting}>
+                <Text style={s.cancelText}>Cancel</Text>
               </TouchableOpacity>
             </Pressable>
           </Pressable>
@@ -888,4 +819,22 @@ const s = StyleSheet.create({
     fontWeight: "700",
     fontSize: FONTS.md,
   },
+
+  alwaysOn: { flexDirection: "row", alignItems: "center", gap: 4 },
+  alwaysOnText: { fontSize: FONTS.xs, color: COLORS.textMuted, fontWeight: "600" },
+
+  // Delete-account modal
+  delIconWrap: {
+    width: 52, height: 52, borderRadius: 26, alignSelf: "center",
+    backgroundColor: COLORS.error + "14", justifyContent: "center", alignItems: "center",
+    marginBottom: 12,
+  },
+  delTitle: { fontSize: FONTS.lg, fontWeight: "700", color: COLORS.text, textAlign: "center", marginBottom: 8 },
+  delBody: { fontSize: FONTS.sm, color: COLORS.textSecondary, textAlign: "center", lineHeight: 20, marginBottom: 18, paddingHorizontal: 4 },
+  deleteBtn: {
+    backgroundColor: COLORS.error, borderRadius: RADIUS.md,
+    paddingVertical: 14, alignItems: "center", marginTop: 8,
+  },
+  cancelBtn: { paddingVertical: 14, alignItems: "center", marginTop: 4 },
+  cancelText: { fontSize: FONTS.md, fontWeight: "600", color: COLORS.textSecondary },
 });

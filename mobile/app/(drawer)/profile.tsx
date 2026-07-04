@@ -469,11 +469,6 @@ export default function ProfileScreen() {
             onPress={() => router.push("/settings")}
           />
           <MenuItem
-            icon="eye-outline"
-            label="Account & Privacy"
-            onPress={() => router.push("/privacy")}
-          />
-          <MenuItem
             icon="people-outline"
             label="Invite a Friend"
             onPress={() => router.push("/invite")}
