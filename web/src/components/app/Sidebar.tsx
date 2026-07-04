@@ -16,7 +16,7 @@ import { cn } from '@/lib/utils'
 const NAV = [
   { href: '/communities',  label: 'Communities',  icon: Users },
   { href: '/contributions', label: 'Contributions', icon: Coins },
-  { href: '/discover',     label: 'Discover',     icon: Compass },
+  { href: '/discover',     label: 'Discover',     icon: Compass, tier0: true },
   { href: '/requests',     label: 'My requests',  icon: Clock },
   { href: '/transactions', label: 'Transactions', icon: Receipt },
   { href: '/reports',      label: 'Reports',      icon: BarChart3 },

@@ -3,10 +3,14 @@ import { useEffect, useRef, useState } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import {
-  Camera, Save, ShieldCheck, ShieldAlert, Clock, ArrowRight, Lock,
-  Wallet, PiggyBank, Receipt, Zap, CreditCard, Users, Coins,
+  Camera, Save, ShieldCheck, ShieldAlert, Clock, ArrowRight, Lock, ChevronRight,
+  Wallet, PiggyBank, Receipt, Zap, CreditCard, Users, Coins, Compass, Megaphone,
+  Bell, AlarmClock, Settings, LifeBuoy, FileText, Check,
 } from 'lucide-react'
-import { auth, reports, communities, apiError, type FinancialSummary, type Community } from '@/lib/api'
+import {
+  auth, reports, communities, contributions, notificationsApi, reminders as remindersApi,
+  apiError, type FinancialSummary, type Community, type Contribution, type Notification, type Reminder,
+} from '@/lib/api'
 import { useAuthStore } from '@/store/auth'
 import { useTier, KYC_PROMPT } from '@/hooks/useTier'
 import { PageHeader } from '@/components/app/PageHeader'
@@ -15,7 +19,7 @@ import { Input, Textarea } from '@/components/ui/Input'
 import { Button } from '@/components/ui/Button'
 import { Badge } from '@/components/ui/Badge'
 import { Skeleton } from '@/components/ui/Spinner'
-import { formatMoney } from '@/lib/utils'
+import { formatMoney, formatRelative } from '@/lib/utils'
 import { toast } from 'sonner'
 
 const UNLOCKS = [
@@ -39,13 +43,18 @@ export default function ProfilePage() {
 
   const [summary, setSummary] = useState<FinancialSummary | null>(null)
   const [discover, setDiscover] = useState<Community[]>([])
+  const [campaigns, setCampaigns] = useState<Contribution[]>([])
+  const [notifs, setNotifs] = useState<Notification[]>([])
+  const [reminders, setReminders] = useState<Reminder[]>([])
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
     Promise.all([
       reports.financialSummary().then(r => setSummary(r.data)).catch(() => {}),
-      // Public communities for the locked discover section (unverified users).
-      communities.discover().then(setDiscover).catch(() => {}),
+      communities.discover().then(c => setDiscover(c.slice(0, 3))).catch(() => {}),
+      contributions.open().then(c => setCampaigns(c.filter(x => x.is_campaign).slice(0, 2))).catch(() => {}),
+      notificationsApi.list().then(n => setNotifs(n.slice(0, 3))).catch(() => {}),
+      remindersApi.upcoming(3).then(setReminders).catch(() => {}),
     ]).finally(() => setLoading(false))
   }, [])
 
@@ -66,6 +75,7 @@ export default function ProfilePage() {
 
   const badgeTone = isVerified ? 'success' : kycStatus === 'pending' ? 'warning' : 'neutral'
   const BadgeIcon = isVerified ? ShieldCheck : kycStatus === 'pending' ? Clock : ShieldAlert
+  const hasDiscover = discover.length > 0 || campaigns.length > 0
 
   return (
     <div className="mx-auto max-w-2xl">
@@ -88,30 +98,98 @@ export default function ProfilePage() {
         {memberSince && <p className="mt-2 text-xs text-text-muted">Member since {memberSince}</p>}
       </div>
 
-      {/* ── Verify hero (unverified only) ───────────────────────────────── */}
-      {!isVerified && (
-        <div className="mt-6 rounded-2xl border border-border bg-surface p-6 text-center">
-          <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-full bg-primary-pale text-primary">
-            <ShieldCheck size={26} />
-          </div>
-          <p className="mt-3 text-lg font-bold text-text">{prompt.title}</p>
-          <p className="mx-auto mt-1.5 max-w-md text-sm text-text-secondary">{prompt.body}</p>
-          <Link href={prompt.href}>
-            <Button size="lg" className="mt-5"><ArrowRight size={18} /> {prompt.cta}</Button>
-          </Link>
-          {kycStatus === 'not_submitted' && (
-            <div className="mt-5 flex flex-wrap justify-center gap-2">
-              {UNLOCKS.map(({ icon: Icon, label }) => (
-                <span key={label} className="inline-flex items-center gap-1.5 rounded-full border border-border bg-primary-bg/50 px-3 py-1 text-xs font-medium text-text-muted">
-                  <Lock size={11} /> {label}
-                </span>
-              ))}
+      {/* ── Verification centre ─────────────────────────────────────────── */}
+      <VerificationCentre kycStatus={kycStatus} isVerified={isVerified} prompt={prompt} />
+
+      {/* ── Discover communities & campaigns ────────────────────────────── */}
+      {loading ? (
+        <div className="mt-6 grid gap-2">{Array.from({ length: 3 }).map((_, i) => <Skeleton key={i} className="h-16 rounded-xl" />)}</div>
+      ) : hasDiscover && (
+        <section className="mt-6">
+          <div className="mb-3 flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <Compass size={17} className="text-primary" />
+              <p className="font-semibold text-text">Discover communities &amp; campaigns</p>
             </div>
-          )}
-        </div>
+            <Link href="/discover" className="inline-flex items-center gap-0.5 text-xs font-medium text-primary hover:underline">
+              See all <ChevronRight size={13} />
+            </Link>
+          </div>
+          {!isVerified && <p className="-mt-1 mb-3 text-sm text-text-muted">See what&apos;s active in your area. Verify your identity to join.</p>}
+
+          <div className="divide-y divide-divider overflow-hidden rounded-xl border border-border bg-surface">
+            {discover.map(c => (
+              <div key={`c${c.id}`} className="flex items-center gap-3 px-4 py-3">
+                <Avatar name={c.name} src={c.community_photo} size={40} className="rounded-lg" />
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-sm font-semibold text-text">{c.name}</p>
+                  <p className="truncate text-xs text-text-muted">{c.member_count} members · {c.category || 'general'}</p>
+                </div>
+                {isVerified
+                  ? <Button size="sm" variant="outline" onClick={() => router.push('/discover')}>View</Button>
+                  : <Button size="sm" variant="outline" onClick={() => router.push('/kyc')}><Lock size={13} /> Join</Button>}
+              </div>
+            ))}
+            {campaigns.map(c => (
+              <div key={`p${c.id}`} className="flex items-center gap-3 px-4 py-3">
+                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-accent-pale text-accent"><Megaphone size={18} /></div>
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-sm font-semibold text-text">{c.title}</p>
+                  <p className="truncate text-xs text-text-muted">
+                    Campaign · {formatMoney(c.current_amount)}{Number(c.target_amount) > 0 ? ` of ${formatMoney(c.target_amount ?? '0')}` : ''}
+                  </p>
+                </div>
+                {isVerified
+                  ? <Button size="sm" variant="outline" onClick={() => router.push(`/contribution/${c.id}`)}>View</Button>
+                  : <Button size="sm" variant="outline" onClick={() => router.push('/kyc')}><Lock size={13} /> Support</Button>}
+              </div>
+            ))}
+          </div>
+        </section>
       )}
 
-      {/* ── Financial Snapshot ──────────────────────────────────────────── */}
+      {/* ── Notifications & reminders ───────────────────────────────────── */}
+      <section className="mt-6">
+        <div className="mb-3 flex items-center justify-between">
+          <p className="font-semibold text-text">Notifications &amp; reminders</p>
+          {isVerified && <Link href="/notifications" className="text-xs font-medium text-primary hover:underline">View all</Link>}
+        </div>
+        {loading ? (
+          <div className="grid gap-2">{Array.from({ length: 2 }).map((_, i) => <Skeleton key={i} className="h-14 rounded-xl" />)}</div>
+        ) : (notifs.length === 0 && reminders.length === 0) ? (
+          <div className="flex items-center gap-3 rounded-xl border border-dashed border-border bg-primary-bg/40 px-4 py-4 text-sm text-text-muted">
+            <Bell size={17} /> You&apos;re all caught up — no notifications or reminders yet.
+          </div>
+        ) : (
+          <div className="divide-y divide-divider overflow-hidden rounded-xl border border-border bg-surface">
+            {notifs.map(n => (
+              <div key={`n${n.id}`} className="flex items-start gap-3 px-4 py-3">
+                <div className={`mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full ${n.is_read ? 'bg-divider text-text-muted' : 'bg-primary-pale text-primary'}`}><Bell size={15} /></div>
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-sm font-medium text-text">{n.title}</p>
+                  <p className="truncate text-xs text-text-muted">{n.message}</p>
+                </div>
+                <span className="shrink-0 text-xs text-text-muted">{formatRelative(n.created_at)}</span>
+              </div>
+            ))}
+            {reminders.map(r => (
+              <div key={`r${r.id}`} className="flex items-center gap-3 px-4 py-3">
+                <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-accent-pale text-accent"><AlarmClock size={15} /></div>
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-sm font-medium text-text">{r.title}</p>
+                  <p className="truncate text-xs text-text-muted">
+                    {r.recurrence !== 'none' ? `${r.recurrence.charAt(0).toUpperCase()}${r.recurrence.slice(1)} · ` : ''}
+                    {new Date(r.next_fire_at).toLocaleDateString('en-KE', { weekday: 'short', month: 'short', day: 'numeric' })}
+                  </p>
+                </div>
+                {r.is_overdue && <Badge tone="warning">Due</Badge>}
+              </div>
+            ))}
+          </div>
+        )}
+      </section>
+
+      {/* ── Financial snapshot ──────────────────────────────────────────── */}
       <section className="mt-6">
         <div className="mb-3 flex items-center justify-between">
           <p className="font-semibold text-text">Financial snapshot</p>
@@ -144,35 +222,18 @@ export default function ProfilePage() {
         )}
       </section>
 
-      {/* ── Discover communities (unverified only) ──────────────────────── */}
-      {!isVerified && discover.length > 0 && (
-        <section className="mt-6">
-          <div className="mb-1 flex items-center justify-between">
-            <p className="font-semibold text-text">Discover communities</p>
-            <Link href="/kyc" className="inline-flex items-center gap-1 rounded-full border border-border px-2.5 py-1 text-xs font-medium text-text-muted hover:bg-divider">
-              <Lock size={11} /> Verify to join
-            </Link>
-          </div>
-          <p className="mb-3 text-sm text-text-muted">See what savings groups are active. Verify your identity to join.</p>
-          <div className="divide-y divide-divider overflow-hidden rounded-xl border border-border bg-surface">
-            {discover.slice(0, 5).map(c => (
-              <div key={c.id} className="flex items-center gap-3 px-4 py-3">
-                <Avatar name={c.name} src={c.community_photo} size={40} className="rounded-lg" />
-                <div className="min-w-0 flex-1">
-                  <p className="truncate text-sm font-semibold text-text">{c.name}</p>
-                  <p className="truncate text-xs text-text-muted">{c.member_count} members · {c.category || 'general'}</p>
-                </div>
-                <Button size="sm" variant="outline" onClick={() => router.push('/kyc')}>
-                  <Lock size={13} /> Join
-                </Button>
-              </div>
-            ))}
-          </div>
-        </section>
-      )}
+      {/* ── Account ─────────────────────────────────────────────────────── */}
+      <section className="mt-6">
+        <p className="mb-3 font-semibold text-text">Account</p>
+        <div className="divide-y divide-divider overflow-hidden rounded-xl border border-border bg-surface">
+          <MenuRow icon={Settings} label="Settings & preferences" onClick={() => router.push('/settings')} />
+          {isVerified && <MenuRow icon={FileText} label="Reports & statements" onClick={() => router.push('/reports')} />}
+          <MenuRow icon={LifeBuoy} label="Help & support" href="mailto:support@wepl.app" />
+        </div>
+      </section>
 
       {/* ── Edit profile ────────────────────────────────────────────────── */}
-      <section className="mt-8">
+      <section className="mt-6 mb-2">
         <p className="mb-3 font-semibold text-text">Edit profile</p>
         <div className="flex flex-col gap-4 rounded-xl border border-border bg-surface p-4">
           <Input label="Name" value={name} onChange={e => setName(e.target.value)} />
@@ -182,6 +243,102 @@ export default function ProfilePage() {
       </section>
     </div>
   )
+}
+
+/**
+ * Verification centre — the home for identity/KYC verification and, later,
+ * any document verification WEPL may require. Modelled as a checklist so new
+ * verification items slot in without a redesign.
+ */
+function VerificationCentre({
+  kycStatus, isVerified, prompt,
+}: { kycStatus: string; isVerified: boolean; prompt: typeof KYC_PROMPT[keyof typeof KYC_PROMPT] }) {
+  // Verification requirements. Identity (KYC) is live today; future document
+  // checks can be appended here with status 'upcoming'.
+  const identityStatus = isVerified ? 'done' : kycStatus === 'pending' ? 'pending' : 'action'
+  const items: { label: string; hint: string; status: 'done' | 'pending' | 'action' | 'upcoming' }[] = [
+    { label: 'Identity (KYC)', hint: 'National ID & selfie', status: identityStatus },
+    { label: 'Supporting documents', hint: 'Requested only if needed later', status: 'upcoming' },
+  ]
+
+  return (
+    <section className="mt-6">
+      <div className="mb-3 flex items-center gap-2">
+        <ShieldCheck size={17} className="text-primary" />
+        <p className="font-semibold text-text">Verification centre</p>
+      </div>
+
+      <div className="overflow-hidden rounded-2xl border border-border bg-surface">
+        {/* Header / CTA */}
+        <div className="flex flex-col gap-3 border-b border-divider p-5 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex items-start gap-3">
+            <div className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-full ${isVerified ? 'bg-success/10 text-success' : 'bg-primary-pale text-primary'}`}>
+              <ShieldCheck size={22} />
+            </div>
+            <div>
+              <p className="font-semibold text-text">{isVerified ? 'Identity verified' : prompt.title}</p>
+              <p className="mt-0.5 text-sm text-text-secondary">
+                {isVerified ? 'You have full access to payments, contributions and communities.' : prompt.body}
+              </p>
+            </div>
+          </div>
+          {!isVerified && (
+            <Link href={prompt.href} className="shrink-0">
+              <Button><ArrowRight size={16} /> {prompt.cta}</Button>
+            </Link>
+          )}
+        </div>
+
+        {/* Checklist */}
+        <div className="divide-y divide-divider">
+          {items.map(it => (
+            <div key={it.label} className="flex items-center gap-3 px-5 py-3">
+              <VerifyStatusIcon status={it.status} />
+              <div className="min-w-0 flex-1">
+                <p className="text-sm font-medium text-text">{it.label}</p>
+                <p className="text-xs text-text-muted">{it.hint}</p>
+              </div>
+              <span className="shrink-0 text-xs font-medium text-text-muted">
+                {it.status === 'done' ? 'Verified' : it.status === 'pending' ? 'Under review' : it.status === 'action' ? 'Required' : 'If needed'}
+              </span>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* What verification unlocks (only before the user has verified) */}
+      {kycStatus === 'not_submitted' && (
+        <div className="mt-3 flex flex-wrap gap-2">
+          {UNLOCKS.map(({ icon: Icon, label }) => (
+            <span key={label} className="inline-flex items-center gap-1.5 rounded-full border border-border bg-primary-bg/50 px-3 py-1 text-xs font-medium text-text-muted">
+              <Lock size={11} /> {label}
+            </span>
+          ))}
+        </div>
+      )}
+    </section>
+  )
+}
+
+function VerifyStatusIcon({ status }: { status: 'done' | 'pending' | 'action' | 'upcoming' }) {
+  if (status === 'done') return <span className="flex h-6 w-6 items-center justify-center rounded-full bg-success text-white"><Check size={13} /></span>
+  if (status === 'pending') return <span className="flex h-6 w-6 items-center justify-center rounded-full bg-warning/15 text-warning"><Clock size={13} /></span>
+  if (status === 'action') return <span className="flex h-6 w-6 items-center justify-center rounded-full bg-primary-pale text-primary"><ShieldAlert size={13} /></span>
+  return <span className="flex h-6 w-6 items-center justify-center rounded-full border border-border text-text-muted"><Lock size={11} /></span>
+}
+
+function MenuRow({ icon: Icon, label, onClick, href }: { icon: typeof Settings; label: string; onClick?: () => void; href?: string }) {
+  const inner = (
+    <>
+      <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-primary-bg text-text-secondary"><Icon size={17} /></div>
+      <span className="flex-1 text-sm font-medium text-text">{label}</span>
+      <ChevronRight size={16} className="text-text-muted" />
+    </>
+  )
+  const cls = 'flex items-center gap-3 px-4 py-3 text-left transition-colors hover:bg-divider/50'
+  return href
+    ? <a href={href} className={cls}>{inner}</a>
+    : <button onClick={onClick} className={`w-full ${cls}`}>{inner}</button>
 }
 
 function SnapshotTile({ icon: Icon, label, value }: { icon: typeof Wallet; label: string; value: string }) {
