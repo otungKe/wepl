@@ -4,11 +4,15 @@ import { usePathname, useRouter } from 'next/navigation'
 import { useEffect, useState } from 'react'
 import { Users, Compass, Bell, User as UserIcon, Settings, LogOut, Building2, ShieldCheck, BarChart3, Clock, Receipt, Coins } from 'lucide-react'
 import { useAuthStore } from '@/store/auth'
+import { useTier } from '@/hooks/useTier'
 import { notificationsApi } from '@/lib/api'
 import { Avatar } from '@/components/ui/Avatar'
 import { ThemeToggle } from '@/components/ui/ThemeToggle'
 import { cn } from '@/lib/utils'
 
+// `tier0: true` marks the items an unverified (Tier 0) user may see. Everything
+// else is verified-only — mirrors the mobile tab bar, where an unverified user
+// sees only Profile (+ the paths that lead to verification). See ADR-0022.
 const NAV = [
   { href: '/communities',  label: 'Communities',  icon: Users },
   { href: '/contributions', label: 'Contributions', icon: Coins },
@@ -17,9 +21,9 @@ const NAV = [
   { href: '/transactions', label: 'Transactions', icon: Receipt },
   { href: '/reports',      label: 'Reports',      icon: BarChart3 },
   { href: '/notifications',label: 'Notifications',icon: Bell, key: 'notifications' },
-  { href: '/kyc',          label: 'Verification', icon: ShieldCheck },
-  { href: '/profile',      label: 'Profile',      icon: UserIcon },
-  { href: '/settings',     label: 'Settings',     icon: Settings },
+  { href: '/kyc',          label: 'Verification', icon: ShieldCheck, tier0: true },
+  { href: '/profile',      label: 'Profile',      icon: UserIcon, tier0: true },
+  { href: '/settings',     label: 'Settings',     icon: Settings, tier0: true },
 ]
 
 export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
@@ -27,7 +31,11 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
   const router = useRouter()
   const user = useAuthStore(s => s.user)
   const logout = useAuthStore(s => s.logout)
+  const { isVerified } = useTier()
   const [unread, setUnread] = useState(0)
+
+  // Tier 0 (unverified) users get a minimal nav: verify + profile + settings.
+  const nav = isVerified ? NAV : NAV.filter(i => i.tier0)
 
   useEffect(() => {
     let alive = true
@@ -51,7 +59,7 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
       </div>
 
       <nav className="flex-1 space-y-1 px-3">
-        {NAV.map(({ href, label, icon: Icon, key }) => {
+        {nav.map(({ href, label, icon: Icon, key }) => {
           const active = pathname === href || pathname.startsWith(href + '/')
           return (
             <Link

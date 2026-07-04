@@ -5,7 +5,7 @@ import { AuthShell } from '@/components/app/AuthShell'
 import { auth, apiError } from '@/lib/api'
 import { saveTokens } from '@/lib/auth'
 import { useAuthStore } from '@/store/auth'
-import { cn } from '@/lib/utils'
+import { cn, landingPath } from '@/lib/utils'
 import { Delete } from 'lucide-react'
 
 const LEN = 6
@@ -43,7 +43,7 @@ function PinForm() {
       const profile = await auth.profile()
       useAuthStore.getState().login(data.access, data.refresh, profile.data)
       // New account → capture a display name (mirrors mobile). Reset → straight in.
-      router.replace(isReset || profile.data.name ? '/communities' : '/display-name')
+      router.replace(isReset || profile.data.name ? landingPath(profile.data.kyc_status) : '/display-name')
     } catch (err) {
       setError(apiError(err, isReset ? 'Failed to reset PIN.' : 'Failed to set PIN.'))
       setPin(''); setConfirm(''); setStep('enter')

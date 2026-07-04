@@ -7,6 +7,7 @@ import { Input } from '@/components/ui/Input'
 import { Button } from '@/components/ui/Button'
 import { auth, apiError } from '@/lib/api'
 import { saveTokens } from '@/lib/auth'
+import { landingPath } from '@/lib/utils'
 import { useAuthStore } from '@/store/auth'
 
 function normalizePhone(raw: string): string {
@@ -54,7 +55,7 @@ function LoginForm() {
       saveTokens(data.access, data.refresh)
       const profile = await auth.profile()
       login(data.access, data.refresh, profile.data)
-      router.push('/communities')
+      router.push(landingPath(profile.data.kyc_status))
     } catch (err) { setError(apiError(err, 'Incorrect phone number or PIN.')) } finally { setLoading(false) }
   }
 

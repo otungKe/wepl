@@ -29,15 +29,15 @@ export default function DisplayNamePage() {
     try {
       const { data } = await auth.updateProfile({ name: trimmed })
       setUser(data)
-      router.replace('/communities')
+      router.replace('/profile')
     } catch (e) {
       // Non-fatal — they can set it later in Profile.
       toast.error(apiError(e, "Couldn't save your name. You can update it later in Profile."))
-      router.replace('/communities')
+      router.replace('/profile')
     } finally { setLoading(false) }
   }
 
-  function skip() { router.replace('/communities') }
+  function skip() { router.replace('/profile') }
 
   return (
     <AuthShell title="What should we call you?" subtitle="This is the name your community members will see. You can change it anytime.">

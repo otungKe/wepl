@@ -7,7 +7,7 @@ import { auth, apiError } from '@/lib/api'
 import { useAuthStore } from '@/store/auth'
 import { getStage, saveTokens } from '@/lib/auth'
 import { toast } from 'sonner'
-import { cn } from '@/lib/utils'
+import { cn, landingPath } from '@/lib/utils'
 
 const LEN = 6
 
@@ -46,7 +46,7 @@ export default function OtpPage() {
       if (stage === 'active') {
         const profile = await auth.profile()
         useAuthStore.getState().login(data.access, data.refresh, profile.data)
-        router.push('/communities')
+        router.push(landingPath(profile.data.kyc_status))
       } else if (stage === 'otp_recovery') {
         // Existing account verifying via OTP — go set a *new* PIN (reset), not create one.
         router.push('/pin?mode=reset')
