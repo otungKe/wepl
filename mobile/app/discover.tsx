@@ -22,6 +22,7 @@ import {
 } from "../api/communities";
 import { joinContribution } from "../api/contributions";
 import { getCampaigns, type Campaign } from "../api/discover";
+import { useKYCGate } from "../hooks/useKYCGate";
 import { COLORS, FONTS, RADIUS } from "../constants/theme";
 import AppHeader from "../components/app/AppHeader";
 
@@ -42,7 +43,7 @@ const LIMIT = 20;
 
 // ─── Community card ───────────────────────────────────────────────────────────
 
-function CommunityCard({ item }: { item: Community }) {
+function CommunityCard({ item, requireKYC }: { item: Community; requireKYC: () => boolean }) {
   const [joining, setJoining] = useState(false);
   const [localStatus, setLocalStatus] = useState<"none" | "PENDING" | "joined">(
     item.is_member                              ? "joined"  :
@@ -54,6 +55,7 @@ function CommunityCard({ item }: { item: Community }) {
     CATEGORIES.find((c) => c.key === item.category)?.label ?? item.category;
 
   const handleJoin = async () => {
+    if (!requireKYC()) return;  // Tier 0 → verify nudge instead of a 403
     setJoining(true);
     try {
       await requestToJoinById(item.id);
@@ -143,9 +145,11 @@ function CommunityCard({ item }: { item: Community }) {
 function CampaignCard({
   item,
   onJoined,
+  requireKYC,
 }: {
   item: Campaign;
   onJoined: (id: number) => void;
+  requireKYC: () => boolean;
 }) {
   const [joining, setJoining] = useState(false);
   const [isJoined, setIsJoined] = useState(item.is_joined);
@@ -154,6 +158,7 @@ function CampaignCard({
   const progressWidth = `${Math.min(pct, 100)}%` as any;
 
   const handleJoin = async () => {
+    if (!requireKYC()) return;  // Tier 0 → verify nudge instead of a 403
     setJoining(true);
     try {
       await joinContribution(item.id);
@@ -289,6 +294,7 @@ function EmptyState({ message }: { message: string }) {
 // ─── Main screen ──────────────────────────────────────────────────────────────
 
 export default function DiscoverScreen() {
+  const { requireKYC } = useKYCGate();
   const [segment, setSegment] = useState<"communities" | "campaigns">("communities");
 
   // ── Communities state ─────────────────────────────────────
@@ -467,7 +473,7 @@ export default function DiscoverScreen() {
       keyExtractor={(i) => `g-${i.id}`}
       contentContainerStyle={styles.listContent}
       renderItem={({ item }) => (
-        <CommunityCard item={item} />
+        <CommunityCard item={item} requireKYC={requireKYC} />
       )}
       ListHeaderComponent={
         <View>
@@ -577,6 +583,7 @@ export default function DiscoverScreen() {
               prev.map((c) => (c.id === id ? { ...c, is_joined: true } : c))
             );
           }}
+          requireKYC={requireKYC}
         />
       )}
       ListHeaderComponent={
