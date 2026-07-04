@@ -122,6 +122,10 @@ pre-cutoff users instead of a hard global switch.
 to production except `ACCESS_TIER_ENFORCEMENT="true"`. Validate the Tier-0 experience
 there first, then set the same flag on `wepl-api`.
 
+**Enforcement is now enabled in production** (`ACCESS_TIER_ENFORCEMENT="true"` on
+`wepl-api`) — unverified users are gated on the flag-aware surfaces. Roll back
+instantly by setting it back to `"false"`.
+
 ## Extension points
 - New tier: add the derived property + `AccessPolicy.require_tierN`.
 - New gated endpoint (Phase B): `permission_classes = [IsActiveSession, RequiresTier1]`,
