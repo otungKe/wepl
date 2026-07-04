@@ -2,7 +2,7 @@ import re
 from datetime import date
 
 from rest_framework import serializers
-from .models import User, KYCProfile, UserSession, VerificationRequest
+from .models import User, KYCProfile, UserSession, VerificationRequest, PaymentMethod
 
 
 # ─────────────────────────────────────────────────────────────
@@ -293,3 +293,18 @@ class VerificationRespondSerializer(serializers.Serializer):
                 "Add a note or attach a document to submit your response."
             )
         return attrs
+
+
+class PaymentMethodSerializer(serializers.ModelSerializer):
+    """Read serializer for the Payment methods screen."""
+    kind_label = serializers.CharField(source='get_kind_display', read_only=True)
+    display    = serializers.CharField(read_only=True)
+
+    class Meta:
+        model = PaymentMethod
+        fields = (
+            'id', 'kind', 'kind_label', 'label', 'is_default', 'status', 'display',
+            'mpesa_phone', 'card_brand', 'card_last4', 'card_exp',
+            'bank_name', 'bank_account_last4', 'created_at',
+        )
+        read_only_fields = fields

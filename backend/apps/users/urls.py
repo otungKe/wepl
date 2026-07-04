@@ -22,6 +22,8 @@ from .views import (
     AccountDeletionView,
     VerificationRequestListView,
     VerificationRequestRespondView,
+    PaymentMethodListCreateView,
+    PaymentMethodDetailView,
 )
 
 urlpatterns = [
@@ -62,6 +64,11 @@ urlpatterns = [
     # VERIFICATION CENTER — ongoing compliance requests
     path('verification-requests/',                 VerificationRequestListView.as_view()),
     path('verification-requests/<int:pk>/respond/', VerificationRequestRespondView.as_view()),
+
+    # PAYMENT METHODS — scalable payout rails (M-Pesa live; card/bank modelled)
+    path('payment-methods/',                 PaymentMethodListCreateView.as_view()),
+    path('payment-methods/<int:pk>/',        PaymentMethodDetailView.as_view()),
+    path('payment-methods/<int:pk>/default/', PaymentMethodDetailView.as_view()),
 
     # PRIVACY PREFERENCES
     path('privacy/', PrivacyPreferencesView.as_view()),
