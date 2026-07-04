@@ -1,6 +1,7 @@
 'use client'
 import { useCallback, useEffect, useState } from 'react'
 import Link from 'next/link'
+import { useRouter } from 'next/navigation'
 import {
   Users, Plus, Search, Lock, ChevronRight,
   TrendingUp, CircleDot, Wallet, Bell, Pin,
@@ -82,8 +83,8 @@ export default function CommunitiesPage() {
   const [loading, setLoading]     = useState(true)
   const [q, setQ]                 = useState('')
   const [cat, setCat]             = useState('all')
-  const [createOpen, setCreateOpen] = useState(false)
   const [joinOpen, setJoinOpen]   = useState(false)
+  const router = useRouter()
   const { pinnedIds, toggle: togglePin } = usePinnedCommunities()
   const user = useAuthStore(s => s.user)
 
@@ -134,7 +135,7 @@ export default function CommunitiesPage() {
         </div>
         <div className="flex gap-2">
           <Button variant="outline" size="sm" onClick={() => setJoinOpen(true)}>Join</Button>
-          <Button size="sm" onClick={() => setCreateOpen(true)}><Plus size={15} /> Create community</Button>
+          <Button size="sm" onClick={() => router.push('/communities/new')}><Plus size={15} /> Create community</Button>
         </div>
       </div>
 
@@ -145,7 +146,7 @@ export default function CommunitiesPage() {
           communitiesCount={items.length}
           kycStatus={summary?.kyc_status}
           txCount={summary?.tx_count ?? 0}
-          onCreateCommunity={() => setCreateOpen(true)}
+          onCreateCommunity={() => router.push('/communities/new')}
         />
       )}
 
@@ -228,7 +229,7 @@ export default function CommunitiesPage() {
               icon={Users}
               title="No communities yet"
               description="Create a community or join one with an invite to get started."
-              action={<Button onClick={() => setCreateOpen(true)}><Plus size={16} /> Create community</Button>}
+              action={<Button onClick={() => router.push('/communities/new')}><Plus size={16} /> Create community</Button>}
             />
           ) : filtered.length === 0 ? (
             <EmptyState
@@ -341,7 +342,6 @@ export default function CommunitiesPage() {
         </div>
       </div>
 
-      <CreateModal open={createOpen} onClose={() => setCreateOpen(false)} onCreated={reload} />
       <JoinModal open={joinOpen} onClose={() => setJoinOpen(false)} onJoined={reload} />
     </div>
   )
@@ -549,37 +549,6 @@ function HealthRow({ label, value, tone = 'muted' }: { label: string; value: str
 }
 
 // ─── modals ───────────────────────────────────────────────────────────────────
-
-function CreateModal({ open, onClose, onCreated }: { open: boolean; onClose: () => void; onCreated: () => void }) {
-  const [name, setName] = useState('')
-  const [description, setDescription] = useState('')
-  const [isPrivate, setIsPrivate] = useState(false)
-  const [loading, setLoading] = useState(false)
-
-  async function submit() {
-    if (!name.trim()) return toast.error('Enter a community name')
-    setLoading(true)
-    try {
-      await communities.create({ name, description, is_private: isPrivate })
-      toast.success('Community created')
-      onClose(); setName(''); setDescription(''); onCreated()
-    } catch (err) { toast.error(apiError(err)) } finally { setLoading(false) }
-  }
-
-  return (
-    <Modal open={open} onClose={onClose} title="New community">
-      <div className="flex flex-col gap-4">
-        <Input label="Name" value={name} onChange={e => setName(e.target.value)} placeholder="e.g. Westlands Chama" autoFocus />
-        <Input label="Description" value={description} onChange={e => setDescription(e.target.value)} placeholder="What is this group about?" />
-        <label className="flex items-center gap-2 text-sm text-text-secondary">
-          <input type="checkbox" checked={isPrivate} onChange={e => setIsPrivate(e.target.checked)} className="h-4 w-4 accent-primary" />
-          Private (join by invite only)
-        </label>
-        <Button onClick={submit} loading={loading} fullWidth>Create community</Button>
-      </div>
-    </Modal>
-  )
-}
 
 function JoinModal({ open, onClose, onJoined }: { open: boolean; onClose: () => void; onJoined: () => void }) {
   const [code, setCode] = useState('')
