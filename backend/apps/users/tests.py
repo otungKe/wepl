@@ -322,3 +322,63 @@ class VerificationRequestTests(TestCase):
         r = self.client.post(f"/api/users/verification-requests/{req.id}/respond/",
                              {"response_note": "x"}, format="json")
         self.assertEqual(r.status_code, 404)
+
+
+class PaymentMethodTests(TestCase):
+    """Scalable payment methods: M-Pesa is live; card/bank return coming-soon."""
+
+    def setUp(self):
+        self.user = get_user_model().objects.create_user(phone_number="254700000301")
+        tokens = issue_tokens(self.user, STAGE_ACTIVE)
+        self.client = APIClient()
+        self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {tokens['access']}")
+
+    def test_link_mpesa_first_is_default(self):
+        r = self.client.post("/api/users/payment-methods/",
+                             {"kind": "mpesa", "mpesa_phone": "0712345678"}, format="json")
+        self.assertEqual(r.status_code, 201, msg=r.content)
+        self.assertTrue(r.data["is_default"])
+        self.assertEqual(r.data["mpesa_phone"], "254712345678")  # normalised
+
+    def test_invalid_mpesa_rejected(self):
+        r = self.client.post("/api/users/payment-methods/",
+                             {"kind": "mpesa", "mpesa_phone": "12345"}, format="json")
+        self.assertEqual(r.status_code, 400)
+
+    def test_duplicate_mpesa_rejected(self):
+        self.client.post("/api/users/payment-methods/", {"kind": "mpesa", "mpesa_phone": "0712345678"}, format="json")
+        r = self.client.post("/api/users/payment-methods/", {"kind": "mpesa", "mpesa_phone": "0712345678"}, format="json")
+        self.assertEqual(r.status_code, 400)
+
+    def test_card_and_bank_are_coming_soon(self):
+        for kind in ("card", "bank"):
+            r = self.client.post("/api/users/payment-methods/", {"kind": kind}, format="json")
+            self.assertEqual(r.status_code, 501, msg=kind)
+            self.assertEqual(r.data.get("code"), "RAIL_UNAVAILABLE")
+
+    def test_set_default_moves_flag(self):
+        a = self.client.post("/api/users/payment-methods/", {"kind": "mpesa", "mpesa_phone": "0712345678"}, format="json").data
+        b = self.client.post("/api/users/payment-methods/", {"kind": "mpesa", "mpesa_phone": "0722333444"}, format="json").data
+        r = self.client.post(f"/api/users/payment-methods/{b['id']}/default/")
+        self.assertEqual(r.status_code, 200)
+        self.assertTrue(r.data["is_default"])
+        # a is no longer default
+        methods = {m["id"]: m for m in self.client.get("/api/users/payment-methods/").data}
+        self.assertFalse(methods[a["id"]]["is_default"])
+
+    def test_delete_promotes_another_to_default(self):
+        a = self.client.post("/api/users/payment-methods/", {"kind": "mpesa", "mpesa_phone": "0712345678"}, format="json").data
+        b = self.client.post("/api/users/payment-methods/", {"kind": "mpesa", "mpesa_phone": "0722333444"}, format="json").data
+        # a is default (first); delete it → b becomes default
+        r = self.client.delete(f"/api/users/payment-methods/{a['id']}/")
+        self.assertEqual(r.status_code, 204)
+        methods = self.client.get("/api/users/payment-methods/").data
+        self.assertEqual(len(methods), 1)
+        self.assertTrue(methods[0]["is_default"])
+
+    def test_only_owner_sees_methods(self):
+        self.client.post("/api/users/payment-methods/", {"kind": "mpesa", "mpesa_phone": "0712345678"}, format="json")
+        other = get_user_model().objects.create_user(phone_number="254700000302")
+        tok = issue_tokens(other, STAGE_ACTIVE)
+        c2 = APIClient(); c2.credentials(HTTP_AUTHORIZATION=f"Bearer {tok['access']}")
+        self.assertEqual(len(c2.get("/api/users/payment-methods/").data), 0)

@@ -8,10 +8,13 @@ from .financial import FinancialSummaryView
 from .privacy import PrivacyPreferencesView
 from .account import AccountDeletionView
 from .verification import VerificationRequestListView, VerificationRequestRespondView
+from .payment_methods import PaymentMethodListCreateView, PaymentMethodDetailView
 
 __all__ = [
     "VerificationRequestListView",
     "VerificationRequestRespondView",
+    "PaymentMethodListCreateView",
+    "PaymentMethodDetailView",
     "PINLoginThrottle",
     "OTPRequestThrottle",
     "RequestOTPView",

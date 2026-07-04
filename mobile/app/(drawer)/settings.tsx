@@ -506,6 +506,17 @@ export default function SettingsScreen() {
           />
         </Card>
 
+        {/* ── Payments ─────────────────────────────────────── */}
+        <SectionHeader title="Payments" />
+        <Card>
+          <Row
+            icon="card-outline"
+            label="Payment methods"
+            value="M-Pesa"
+            onPress={() => router.push("/payment-methods")}
+          />
+        </Card>
+
         {/* ── Notifications ────────────────────────────────── */}
         <SectionHeader title="Notifications" />
         <Card>

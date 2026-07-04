@@ -4,7 +4,7 @@ from django.utils import timezone
 from django.utils.html import format_html
 from unfold.admin import ModelAdmin as UnfoldModelAdmin
 
-from .models import User, KYCProfile, VerificationRequest
+from .models import User, KYCProfile, VerificationRequest, PaymentMethod
 
 
 # ─────────────────────────────────────────────────────────────
@@ -231,3 +231,11 @@ class VerificationRequestAdmin(UnfoldModelAdmin):
         # Notify the user when a new request is raised against them.
         if creating and obj.status == VerificationRequest.Status.OPEN:
             _notify_verification_request(obj)
+
+
+@admin.register(PaymentMethod)
+class PaymentMethodAdmin(UnfoldModelAdmin):
+    list_display  = ('id', 'user', 'kind', 'display', 'is_default', 'created_at')
+    list_filter   = ('kind', 'is_default', 'created_at')
+    search_fields = ('user__phone_number', 'mpesa_phone', 'label')
+    readonly_fields = ('created_at',)

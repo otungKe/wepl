@@ -338,3 +338,67 @@ class VerificationRequest(models.Model):
 
     def __str__(self):
         return f"VerificationRequest({self.user_id}, {self.kind}, {self.status})"
+
+
+# ─────────────────────────────────────────────────────────────
+# PAYMENT METHODS (scalable payout rails)
+# ─────────────────────────────────────────────────────────────
+
+class PaymentMethod(models.Model):
+    """A payout/collection method a user has linked. Designed to scale across
+    rails: M-Pesa is live today; card and bank are modelled now so the UI and
+    storage don't need reshaping when those rails are wired.
+
+    Only one method per user is the default. Card/bank rows carry no PAN/full
+    account number — only the display fragments a UI needs (brand + last 4).
+    """
+
+    class Kind(models.TextChoices):
+        MPESA = 'mpesa', 'M-Pesa'
+        CARD  = 'card',  'Debit or credit card'
+        BANK  = 'bank',  'Bank account'
+
+    class Status(models.TextChoices):
+        ACTIVE      = 'active',      'Active'
+        UNAVAILABLE = 'unavailable', 'Coming soon'
+
+    user       = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='payment_methods',
+    )
+    kind       = models.CharField(max_length=8, choices=Kind.choices)
+    label      = models.CharField(max_length=60, blank=True, default='')
+    is_default = models.BooleanField(default=False)
+    status     = models.CharField(max_length=12, choices=Status.choices, default=Status.ACTIVE)
+
+    # M-Pesa (live)
+    mpesa_phone = models.CharField(max_length=15, blank=True, default='')
+
+    # Card (future) — display fragments only, never the PAN.
+    card_brand = models.CharField(max_length=20, blank=True, default='')
+    card_last4 = models.CharField(max_length=4, blank=True, default='')
+    card_exp   = models.CharField(max_length=5, blank=True, default='')  # MM/YY
+
+    # Bank (future) — display fragments only.
+    bank_name          = models.CharField(max_length=60, blank=True, default='')
+    bank_account_last4 = models.CharField(max_length=4, blank=True, default='')
+
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-is_default', '-created_at']
+        indexes = [models.Index(fields=['user', 'is_default'], name='paymethod_user_default_idx')]
+
+    def __str__(self):
+        return f"PaymentMethod({self.user_id}, {self.kind}, default={self.is_default})"
+
+    @property
+    def display(self) -> str:
+        """Human label for the method, e.g. '•••• 4242' or '0712 ••• 890'."""
+        if self.kind == self.Kind.MPESA:
+            p = self.mpesa_phone
+            return f"{p[:4]} ••• {p[-3:]}" if len(p) >= 7 else p
+        if self.kind == self.Kind.CARD:
+            return f"{self.card_brand} •••• {self.card_last4}".strip()
+        if self.kind == self.Kind.BANK:
+            return f"{self.bank_name} •••• {self.bank_account_last4}".strip()
+        return self.label
