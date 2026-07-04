@@ -141,9 +141,9 @@ function ChatsTab({ communityId }: { communityId: string }) {
 }
 
 function ContributionsTab({ communityId }: { communityId: string }) {
+  const router = useRouter()
   const [items, setItems] = useState<Contribution[]>([])
   const [loading, setLoading] = useState(true)
-  const [open, setOpen] = useState(false)
 
   const load = useCallback(() => {
     setLoading(true)
@@ -155,7 +155,7 @@ function ContributionsTab({ communityId }: { communityId: string }) {
 
   return (
     <div>
-      <div className="mb-3 flex justify-end"><Button size="sm" onClick={() => setOpen(true)}><Plus size={15} /> New contribution</Button></div>
+      <div className="mb-3 flex justify-end"><Button size="sm" onClick={() => router.push(`/contribution/new?community=${communityId}`)}><Plus size={15} /> New contribution</Button></div>
       {items.length === 0 ? (
         <EmptyState icon={Coins} title="No contributions yet" description="Create a contribution pool for this community." />
       ) : (
@@ -172,38 +172,7 @@ function ContributionsTab({ communityId }: { communityId: string }) {
           ))}
         </div>
       )}
-      <CreateContributionModal open={open} onClose={() => setOpen(false)} communityId={communityId} onCreated={load} />
     </div>
-  )
-}
-
-function CreateContributionModal({ open, onClose, communityId, onCreated }: { open: boolean; onClose: () => void; communityId: string; onCreated: () => void }) {
-  const [title, setTitle] = useState('')
-  const [amount, setAmount] = useState('')
-  const [saving, setSaving] = useState(false)
-
-  async function submit() {
-    if (!title.trim()) return toast.error('Enter a title')
-    setSaving(true)
-    try {
-      await contributions.create({
-        title, community: Number(communityId), visibility: 'closed',
-        tenure_type: 'open', frequency: 'monthly',
-        amount_type: amount ? 'fixed' : 'open', fixed_amount: amount ? Number(amount) : null,
-        voting_threshold: 'admins', add_all_members: true,
-      })
-      toast.success('Contribution created'); setTitle(''); setAmount(''); onClose(); onCreated()
-    } catch (e) { toast.error(apiError(e)) } finally { setSaving(false) }
-  }
-
-  return (
-    <Modal open={open} onClose={onClose} title="New contribution">
-      <div className="flex flex-col gap-4">
-        <Input label="Title" value={title} onChange={e => setTitle(e.target.value)} placeholder="e.g. Monthly savings" autoFocus />
-        <Input label="Fixed amount (optional)" type="number" inputMode="decimal" value={amount} onChange={e => setAmount(e.target.value)} placeholder="Leave blank for open amount" hint="Monthly · all community members added" />
-        <Button onClick={submit} loading={saving} fullWidth>Create contribution</Button>
-      </div>
-    </Modal>
   )
 }
 
