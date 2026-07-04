@@ -11,13 +11,34 @@
 import { useCallback, useState } from "react";
 import {
   View, Text, StyleSheet, TouchableOpacity, ScrollView, ActivityIndicator,
+  Modal, TextInput, Alert, Pressable, KeyboardAvoidingView, Platform,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { router, useFocusEffect } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
+import * as ImagePicker from "expo-image-picker";
 import { getKYCStatus, getProfile } from "../api/auth";
+import {
+  getVerificationRequests, respondToVerificationRequest,
+  type VerificationRequest, type VerificationKind,
+} from "../api/verification";
+import { suppressNextLock } from "../utils/lockSuppress";
 import { COLORS, FONTS, RADIUS } from "../constants/theme";
 import AppHeader from "../components/app/AppHeader";
+
+const KIND_ICON: Record<VerificationKind, string> = {
+  transaction_docs: "receipt-outline",
+  address_proof:    "home-outline",
+  kyc_supplement:   "id-card-outline",
+  clarification:    "help-circle-outline",
+  other:            "document-text-outline",
+};
+
+const REQ_STATUS_META: Record<string, { color: string; bg: string; icon: string }> = {
+  open:      { color: COLORS.primary,   bg: COLORS.primaryPale, icon: "alert-circle" },
+  submitted: { color: "#B45309",        bg: "#FEF3C7",          icon: "time" },
+  resolved:  { color: COLORS.success,   bg: COLORS.primaryPale, icon: "checkmark-circle" },
+};
 
 type KYCStatus = "not_submitted" | "pending" | "approved" | "rejected";
 type KYCData = {
@@ -41,14 +62,65 @@ const UNLOCKS = ["Payments", "Contributions", "Advances", "Communities"];
 export default function VerificationCenterScreen() {
   const [kyc, setKyc] = useState<KYCData | null>(null);
   const [phone, setPhone] = useState<string>("");
+  const [requests, setRequests] = useState<VerificationRequest[]>([]);
   const [loading, setLoading] = useState(true);
+
+  // Respond modal state
+  const [active, setActive] = useState<VerificationRequest | null>(null);
+  const [note, setNote] = useState("");
+  const [doc, setDoc] = useState<{ uri: string; name: string; type: string } | null>(null);
+  const [submitting, setSubmitting] = useState(false);
+
+  const loadRequests = useCallback(() => {
+    getVerificationRequests().then(setRequests).catch(() => {});
+  }, []);
 
   useFocusEffect(useCallback(() => {
     Promise.all([
       getKYCStatus().then(d => setKyc(d as KYCData)).catch(() => {}),
       getProfile().then(p => setPhone(p?.phone_number ?? "")).catch(() => {}),
+      getVerificationRequests().then(setRequests).catch(() => {}),
     ]).finally(() => setLoading(false));
   }, []));
+
+  const openRespond = (req: VerificationRequest) => {
+    setActive(req); setNote(""); setDoc(null);
+  };
+
+  const attachDocument = async () => {
+    const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (status !== "granted") {
+      Alert.alert("Permission needed", "Allow photo access to attach a document.");
+      return;
+    }
+    suppressNextLock();
+    const result = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ["images"], quality: 0.7 });
+    if (result.canceled) return;
+    const asset = result.assets[0];
+    setDoc({
+      uri: asset.uri,
+      name: asset.uri.split("/").pop() ?? "document.jpg",
+      type: asset.mimeType ?? "image/jpeg",
+    });
+  };
+
+  const submitResponse = async () => {
+    if (!active) return;
+    if (!note.trim() && !doc) {
+      Alert.alert("Add a response", "Enter a note or attach a document before submitting.");
+      return;
+    }
+    setSubmitting(true);
+    try {
+      await respondToVerificationRequest(active.id, { response_note: note.trim(), document: doc ?? undefined });
+      setActive(null);
+      loadRequests();
+    } catch {
+      Alert.alert("Error", "Could not submit your response. Please try again.");
+    } finally {
+      setSubmitting(false);
+    }
+  };
 
   const status: KYCStatus = kyc?.status ?? "not_submitted";
   const isVerified = status === "approved";
@@ -176,8 +248,10 @@ export default function VerificationCenterScreen() {
             this is where follow-up document requests, clarifications, or feedback
             on submitted items appear. */}
         <Text style={s.sectionLabel}>REQUESTS & DOCUMENTS</Text>
+
+        {/* KYC rejection feedback (feedback on an already-submitted item) */}
         {status === "rejected" && kyc?.rejection_reason ? (
-          <TouchableOpacity style={s.requestCard} activeOpacity={0.7} onPress={() => router.push("/kyc")}>
+          <TouchableOpacity style={[s.requestCard, { marginBottom: 10 }]} activeOpacity={0.7} onPress={() => router.push("/kyc")}>
             <View style={[s.rowIcon, { backgroundColor: "#FEF2F2" }]}>
               <Ionicons name="alert-circle" size={19} color={COLORS.error} />
             </View>
@@ -187,7 +261,42 @@ export default function VerificationCenterScreen() {
               <Text style={s.requestAction}>Tap to update and re-submit →</Text>
             </View>
           </TouchableOpacity>
-        ) : (
+        ) : null}
+
+        {/* Live compliance requests raised by the team */}
+        {requests.map(req => {
+          const meta = REQ_STATUS_META[req.status] ?? REQ_STATUS_META.open;
+          const isOpen = req.status === "open";
+          return (
+            <View key={req.id} style={[s.requestCard, { borderLeftColor: meta.color, marginBottom: 10 }]}>
+              <View style={[s.rowIcon, { backgroundColor: meta.bg }]}>
+                <Ionicons name={(KIND_ICON[req.kind] ?? "document-text-outline") as any} size={19} color={meta.color} />
+              </View>
+              <View style={{ flex: 1 }}>
+                <View style={s.requestHead}>
+                  <Text style={s.rowTitle} numberOfLines={1}>{req.title}</Text>
+                  <View style={[s.statusChip, { backgroundColor: meta.bg }]}>
+                    <Ionicons name={meta.icon as any} size={11} color={meta.color} />
+                    <Text style={[s.statusChipText, { color: meta.color }]}>{req.status_label}</Text>
+                  </View>
+                </View>
+                <Text style={s.requestBody}>{req.detail}</Text>
+                {req.review_note ? <Text style={s.reviewNote}>Note: {req.review_note}</Text> : null}
+                {isOpen ? (
+                  <TouchableOpacity style={s.respondBtn} onPress={() => openRespond(req)}>
+                    <Ionicons name="cloud-upload-outline" size={15} color="#fff" />
+                    <Text style={s.respondBtnText}>Respond</Text>
+                  </TouchableOpacity>
+                ) : req.status === "submitted" ? (
+                  <Text style={s.requestAction}>Submitted — we&apos;ll review and update you.</Text>
+                ) : null}
+              </View>
+            </View>
+          );
+        })}
+
+        {/* Empty state when nothing is outstanding */}
+        {requests.length === 0 && !(status === "rejected" && kyc?.rejection_reason) && (
           <View style={s.emptyCard}>
             <Ionicons name="checkmark-done-outline" size={20} color={COLORS.textMuted} />
             <Text style={s.emptyText}>
@@ -217,6 +326,36 @@ export default function VerificationCenterScreen() {
           Your information is encrypted and used only to verify your identity.
         </Text>
       </ScrollView>
+
+      {/* Respond modal */}
+      <Modal visible={!!active} transparent animationType="slide" onRequestClose={() => setActive(null)}>
+        <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === "ios" ? "padding" : undefined}>
+          <Pressable style={StyleSheet.absoluteFillObject} onPress={() => setActive(null)} />
+          <View style={s.sheet} onStartShouldSetResponder={() => true}>
+            <View style={s.sheetHandle} />
+            <Text style={s.sheetTitle}>{active?.title}</Text>
+            <Text style={s.sheetDetail}>{active?.detail}</Text>
+
+            <TextInput
+              value={note}
+              onChangeText={setNote}
+              placeholder="Add a note (optional if you attach a document)"
+              placeholderTextColor={COLORS.textMuted}
+              style={s.sheetInput}
+              multiline
+            />
+
+            <TouchableOpacity style={s.attachBtn} onPress={attachDocument}>
+              <Ionicons name={doc ? "checkmark-circle" : "attach-outline"} size={18} color={doc ? COLORS.success : COLORS.primary} />
+              <Text style={s.attachText} numberOfLines={1}>{doc ? doc.name : "Attach a document"}</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity style={[s.primaryBtn, submitting && { opacity: 0.6 }]} onPress={submitResponse} disabled={submitting}>
+              {submitting ? <ActivityIndicator color="#fff" /> : <Text style={s.primaryBtnText}>Submit response</Text>}
+            </TouchableOpacity>
+          </View>
+        </KeyboardAvoidingView>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -284,8 +423,39 @@ const s = StyleSheet.create({
     borderWidth: 1, borderColor: COLORS.border,
     borderLeftWidth: 3, borderLeftColor: COLORS.error,
   },
+  requestHead:   { flexDirection: "row", alignItems: "center", gap: 8 },
   requestBody:   { fontSize: FONTS.sm, color: COLORS.textSecondary, marginTop: 3, lineHeight: 19 },
   requestAction: { fontSize: FONTS.xs, color: COLORS.primary, fontWeight: "700", marginTop: 6 },
+  reviewNote:    { fontSize: FONTS.xs, color: COLORS.textMuted, marginTop: 4, fontStyle: "italic" },
+  respondBtn: {
+    flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6,
+    alignSelf: "flex-start", backgroundColor: COLORS.primary,
+    paddingHorizontal: 14, paddingVertical: 8, borderRadius: RADIUS.md, marginTop: 10,
+  },
+  respondBtnText: { color: "#fff", fontWeight: "700", fontSize: FONTS.sm },
+
+  sheet: {
+    backgroundColor: COLORS.white,
+    borderTopLeftRadius: 20, borderTopRightRadius: 20,
+    padding: 20, paddingBottom: 32, marginTop: "auto", gap: 12,
+  },
+  sheetHandle: {
+    width: 40, height: 4, borderRadius: 2, backgroundColor: COLORS.border,
+    alignSelf: "center", marginBottom: 4,
+  },
+  sheetTitle:  { fontSize: FONTS.lg, fontWeight: "700", color: COLORS.text },
+  sheetDetail: { fontSize: FONTS.sm, color: COLORS.textSecondary, lineHeight: 20 },
+  sheetInput: {
+    borderWidth: 1, borderColor: COLORS.border, borderRadius: RADIUS.md,
+    padding: 12, minHeight: 80, textAlignVertical: "top",
+    fontSize: FONTS.md, color: COLORS.text,
+  },
+  attachBtn: {
+    flexDirection: "row", alignItems: "center", gap: 8,
+    borderWidth: 1, borderColor: COLORS.border, borderRadius: RADIUS.md,
+    padding: 12,
+  },
+  attachText: { flex: 1, fontSize: FONTS.sm, color: COLORS.textSecondary, fontWeight: "600" },
   emptyCard: {
     flexDirection: "row", alignItems: "flex-start", gap: 10,
     backgroundColor: COLORS.white, borderRadius: RADIUS.lg, padding: 14,

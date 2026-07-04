@@ -4,7 +4,7 @@ from django.utils import timezone
 from django.utils.html import format_html
 from unfold.admin import ModelAdmin as UnfoldModelAdmin
 
-from .models import User, KYCProfile
+from .models import User, KYCProfile, VerificationRequest
 
 
 # ─────────────────────────────────────────────────────────────
@@ -177,3 +177,57 @@ class KYCProfileAdmin(UnfoldModelAdmin):
         super().save_model(request, obj, form, change)
         if decision:
             _notify_kyc_decision(obj)
+
+
+# ─────────────────────────────────────────────────────────────
+# VERIFICATION REQUESTS ADMIN
+# ─────────────────────────────────────────────────────────────
+
+def _notify_verification_request(vreq, *, resolved=False):
+    """Notify the user that a verification request was raised or resolved."""
+    from apps.core.events import emit
+    if resolved:
+        emit(
+            'verification_request_resolved',
+            user_id=vreq.user_id,
+            title='Verification updated',
+            message=f'"{vreq.title}" has been resolved.'
+                    + (f' {vreq.review_note}' if vreq.review_note else ''),
+        )
+    else:
+        emit(
+            'verification_request',
+            user_id=vreq.user_id,
+            title='Action needed: verification',
+            message=f'{vreq.title} — open your Verification Center to respond.',
+        )
+
+
+@admin.action(description='Mark selected requests resolved (notify user)', permissions=['change'])
+def resolve_requests(modeladmin, request, queryset):
+    n = 0
+    for vreq in queryset.exclude(status=VerificationRequest.Status.RESOLVED):
+        vreq.status = VerificationRequest.Status.RESOLVED
+        vreq.resolved_at = timezone.now()
+        vreq.save(update_fields=['status', 'resolved_at'])
+        _notify_verification_request(vreq, resolved=True)
+        n += 1
+    modeladmin.message_user(request, f"{n} request(s) resolved and user(s) notified.")
+
+
+@admin.register(VerificationRequest)
+class VerificationRequestAdmin(UnfoldModelAdmin):
+    list_display  = ('id', 'user', 'kind', 'title', 'status', 'created_at')
+    list_filter   = ('status', 'kind', 'created_at')
+    search_fields = ('user__phone_number', 'title', 'detail')
+    readonly_fields = ('response_note', 'document', 'responded_at', 'created_at', 'created_by')
+    actions = [resolve_requests]
+
+    def save_model(self, request, obj, form, change):
+        creating = not change
+        if creating and not obj.created_by_id:
+            obj.created_by = request.user
+        super().save_model(request, obj, form, change)
+        # Notify the user when a new request is raised against them.
+        if creating and obj.status == VerificationRequest.Status.OPEN:
+            _notify_verification_request(obj)

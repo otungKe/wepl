@@ -269,3 +269,56 @@ class CrossFormatLoginTests(TestCase):
         r = self.client.post("/api/users/pin/login/",
                              {"phone_number": "+254 712 345 678", "pin": "123456"}, format="json")
         self.assertEqual(r.status_code, 200, r.data)
+
+
+class VerificationRequestTests(TestCase):
+    """Verification Center's ongoing requests: a user sees only their own,
+    and can answer an open request (note and/or document) once."""
+
+    def setUp(self):
+        self.user  = get_user_model().objects.create_user(phone_number="254700000201")
+        self.other = get_user_model().objects.create_user(phone_number="254700000202")
+        tokens = issue_tokens(self.user, STAGE_ACTIVE)
+        self.client = APIClient()
+        self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {tokens['access']}")
+
+    def _make(self, user, **kw):
+        from apps.users.models import VerificationRequest
+        return VerificationRequest.objects.create(
+            user=user, title=kw.pop("title", "Proof of address"),
+            detail=kw.pop("detail", "Please upload a utility bill."), **kw)
+
+    def test_list_returns_only_my_requests(self):
+        self._make(self.user, kind="address_proof")
+        self._make(self.other, title="Someone else")
+        r = self.client.get("/api/users/verification-requests/")
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(len(r.data), 1)
+        self.assertEqual(r.data[0]["title"], "Proof of address")
+        self.assertEqual(r.data[0]["status"], "open")
+
+    def test_respond_moves_to_submitted(self):
+        req = self._make(self.user)
+        r = self.client.post(f"/api/users/verification-requests/{req.id}/respond/",
+                             {"response_note": "Here it is"}, format="json")
+        self.assertEqual(r.status_code, 200, msg=r.content)
+        req.refresh_from_db()
+        self.assertEqual(req.status, "submitted")
+        self.assertIsNotNone(req.responded_at)
+
+    def test_respond_requires_a_note_or_document(self):
+        req = self._make(self.user)
+        r = self.client.post(f"/api/users/verification-requests/{req.id}/respond/", {}, format="json")
+        self.assertEqual(r.status_code, 400)
+
+    def test_cannot_respond_twice(self):
+        req = self._make(self.user, status="submitted")
+        r = self.client.post(f"/api/users/verification-requests/{req.id}/respond/",
+                             {"response_note": "again"}, format="json")
+        self.assertEqual(r.status_code, 400)
+
+    def test_cannot_respond_to_another_users_request(self):
+        req = self._make(self.other)
+        r = self.client.post(f"/api/users/verification-requests/{req.id}/respond/",
+                             {"response_note": "x"}, format="json")
+        self.assertEqual(r.status_code, 404)

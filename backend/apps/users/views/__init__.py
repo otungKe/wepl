@@ -7,8 +7,11 @@ from .kyc import KYCView, KYCCheckEmailView, KYCEmailVerifyView, KYCCheckIDView,
 from .financial import FinancialSummaryView
 from .privacy import PrivacyPreferencesView
 from .account import AccountDeletionView
+from .verification import VerificationRequestListView, VerificationRequestRespondView
 
 __all__ = [
+    "VerificationRequestListView",
+    "VerificationRequestRespondView",
     "PINLoginThrottle",
     "OTPRequestThrottle",
     "RequestOTPView",
