@@ -117,6 +117,11 @@ surfaces and Tier-1 is unaffected → announce/KYC-push → enable in production
 back instantly by flipping the flag off. A future refinement can grandfather
 pre-cutoff users instead of a hard global switch.
 
+`render.yaml` provisions a dedicated staging stack for exactly this — `wepl-api-staging`
++ `wepl-web-staging` with their own `wepl-db-staging`/`wepl-redis-staging`, identical
+to production except `ACCESS_TIER_ENFORCEMENT="true"`. Validate the Tier-0 experience
+there first, then set the same flag on `wepl-api`.
+
 ## Extension points
 - New tier: add the derived property + `AccessPolicy.require_tierN`.
 - New gated endpoint (Phase B): `permission_classes = [IsActiveSession, RequiresTier1]`,
