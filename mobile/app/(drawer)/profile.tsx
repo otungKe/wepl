@@ -12,6 +12,7 @@ import { suppressNextLock } from "../../utils/lockSuppress";
 import { getProfile, updateProfile } from "../../api/auth";
 import { getFinancialSummary } from "../../api/activity";
 import { discoverCommunities, type Community } from "../../api/communities";
+import { getCampaigns, type Campaign } from "../../api/discover";
 import { getUpcomingReminders, type Reminder } from "../../api/reminders";
 import { COLORS, FONTS, RADIUS, avatarColorFor, initialsFor } from "../../constants/theme";
 import API from "../../api/client";
@@ -37,6 +38,7 @@ export default function ProfileScreen() {
   const [profile,      setProfile]      = useState<any>(null);
   const [summary,      setSummary]      = useState<any>(null);
   const [communities,  setCommunities]  = useState<Community[]>([]);
+  const [campaigns,    setCampaigns]    = useState<Campaign[]>([]);
   const [reminders,    setReminders]    = useState<Reminder[]>([]);
   const [loading,      setLoading]      = useState(true);
   const [refreshing,   setRefreshing]   = useState(false);
@@ -58,6 +60,11 @@ export default function ProfileScreen() {
       // (shown to unverified users so they can see what's available)
       discoverCommunities({ limit: 10 })
         .then(res => setCommunities(res.results))
+        .catch(() => {});
+
+      // Public campaigns for the discover section (matches web Tier-0 profile).
+      getCampaigns({ limit: 3 })
+        .then(res => setCampaigns(res.results))
         .catch(() => {});
 
       getUpcomingReminders(3)
@@ -250,6 +257,31 @@ export default function ProfileScreen() {
               <Text style={s.ctaBtnText}>{kyc.cta || "Verify Now"}</Text>
             </TouchableOpacity>
 
+            {/* Verification checklist — identity today; documents only if needed later */}
+            <View style={s.verifyList}>
+              {[
+                {
+                  label: "Identity (KYC)", hint: "National ID & selfie",
+                  status: kycStatus === "pending" ? "Under review" : "Required",
+                  icon: kycStatus === "pending" ? "time-outline" : "alert-circle-outline",
+                  color: kycStatus === "pending" ? "#B45309" : COLORS.primary,
+                },
+                {
+                  label: "Supporting documents", hint: "Requested only if needed later",
+                  status: "If needed", icon: "lock-closed-outline", color: COLORS.textMuted,
+                },
+              ].map((it, idx) => (
+                <View key={it.label} style={[s.verifyItem, idx === 1 && { borderBottomWidth: 0 }]}>
+                  <Ionicons name={it.icon as any} size={16} color={it.color} />
+                  <View style={{ flex: 1 }}>
+                    <Text style={s.verifyLabel}>{it.label}</Text>
+                    <Text style={s.verifyHint}>{it.hint}</Text>
+                  </View>
+                  <Text style={s.verifyStatus}>{it.status}</Text>
+                </View>
+              ))}
+            </View>
+
             {/* What gets unlocked */}
             {kycStatus === "not_submitted" && (
               <View style={s.unlockRow}>
@@ -396,18 +428,18 @@ export default function ProfileScreen() {
           </View>
         )}
 
-        {/* ── Discover Communities (unverified only) ──────────────────── */}
-        {!isVerified && communities.length > 0 && (
+        {/* ── Discover communities & campaigns (unverified only) ───────── */}
+        {!isVerified && (communities.length > 0 || campaigns.length > 0) && (
           <View style={s.section}>
             <View style={s.sectionHead}>
-              <Text style={s.sectionTitle}>Discover Communities</Text>
+              <Text style={s.sectionTitle}>Discover Communities & Campaigns</Text>
               <View style={s.lockedPill}>
                 <Ionicons name="lock-closed" size={10} color={COLORS.textMuted} />
                 <Text style={s.lockedPillText}>Verify to join</Text>
               </View>
             </View>
             <Text style={s.discoverHint}>
-              See what savings groups are active. Verify your identity to join.
+              See what&apos;s active in your area. Verify your identity to join or support.
             </Text>
             {communities.map((c, idx) => (
               <View
@@ -445,6 +477,39 @@ export default function ProfileScreen() {
                 </TouchableOpacity>
               </View>
             ))}
+
+            {/* Public campaigns */}
+            {campaigns.length > 0 && (
+              <>
+                {communities.length > 0 && (
+                  <Text style={s.discoverSubhead}>Public campaigns</Text>
+                )}
+                {campaigns.map((c, idx) => (
+                  <View
+                    key={`camp-${c.id}`}
+                    style={[s.discoverRow, idx === campaigns.length - 1 && { borderBottomWidth: 0 }]}
+                  >
+                    <View style={[s.discoverAvatar, { backgroundColor: COLORS.accentPale }]}>
+                      <Ionicons name="megaphone-outline" size={18} color={COLORS.accent} />
+                    </View>
+                    <View style={s.discoverInfo}>
+                      <Text style={s.discoverName} numberOfLines={1}>{c.title}</Text>
+                      <Text style={s.discoverMeta}>
+                        {fmtKES(c.current_amount)}
+                        {c.target_amount ? ` of ${fmtKES(c.target_amount)}` : " raised"}
+                      </Text>
+                    </View>
+                    <TouchableOpacity
+                      style={s.joinLockedBtn}
+                      onPress={() => router.push("/kyc")}
+                    >
+                      <Ionicons name="lock-closed-outline" size={12} color={COLORS.primary} />
+                      <Text style={s.joinLockedText}>Support</Text>
+                    </TouchableOpacity>
+                  </View>
+                ))}
+              </>
+            )}
           </View>
         )}
 
@@ -641,6 +706,19 @@ const s = StyleSheet.create({
     marginBottom: 16,
   },
   ctaBtnText: { color: COLORS.white, fontWeight: "700", fontSize: FONTS.md },
+  verifyList: {
+    alignSelf: "stretch",
+    borderTopWidth: 1, borderTopColor: COLORS.divider,
+    marginBottom: 16,
+  },
+  verifyItem: {
+    flexDirection: "row", alignItems: "center", gap: 10,
+    paddingVertical: 10,
+    borderBottomWidth: 1, borderBottomColor: COLORS.divider,
+  },
+  verifyLabel: { fontSize: FONTS.sm, fontWeight: "600", color: COLORS.text },
+  verifyHint:  { fontSize: FONTS.xs, color: COLORS.textMuted, marginTop: 1 },
+  verifyStatus: { fontSize: FONTS.xs, color: COLORS.textMuted, fontWeight: "600" },
   unlockRow: {
     flexDirection: "row", flexWrap: "wrap", gap: 6, justifyContent: "center",
   },
@@ -769,6 +847,11 @@ const s = StyleSheet.create({
   // Discover section
   discoverHint: {
     fontSize: FONTS.xs, color: COLORS.textSecondary, marginBottom: 12, lineHeight: 17,
+  },
+  discoverSubhead: {
+    fontSize: 11, fontWeight: "700", color: COLORS.textMuted,
+    letterSpacing: 0.4, textTransform: "uppercase",
+    marginTop: 14, marginBottom: 2,
   },
   discoverRow: {
     flexDirection: "row", alignItems: "center", gap: 12,
