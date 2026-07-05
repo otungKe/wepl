@@ -104,3 +104,56 @@ class SeedOpsRolesTests(TestCase):
         call_command("seed_ops_roles")
         for role in ALL_ROLES:
             self.assertTrue(Group.objects.filter(name=group_name(role)).exists(), role)
+
+
+class OpsSearchTests(TestCase):
+    def _client(self, user):
+        c = APIClient(); c.force_authenticate(user=user); return c
+
+    def setUp(self):
+        from datetime import date
+        from apps.communities.services import CommunityService
+        from apps.users.models import KYCProfile
+        self.target = User.objects.create(phone_number="254712345678", name="Ada Lovelace")
+        KYCProfile.objects.create(user=self.target, given_names="Ada", surname="Lovelace",
+            id_number="87654321", date_of_birth=date(1990, 1, 1), status="pending")
+        self.creator = User.objects.create(phone_number="254700000099")
+        CommunityService.create_community(self.creator, {"name": "Riverside Chama"})
+
+    def test_operator_finds_community(self):
+        op = make_operator("254700000200", "operations")
+        body = self._client(op).get("/api/ops/search/?q=Riverside").json()
+        self.assertIn("community", {r["type"] for r in body["results"]})
+
+    def test_results_are_capability_scoped(self):
+        # 'counts' records which searchers ran: support can't run the journal
+        # searcher (no ledger.view); finance can.
+        support = make_operator("254700000201", "support")
+        fin = make_operator("254700000202", "finance")
+        s_body = self._client(support).get("/api/ops/search/?q=CONTRIB").json()
+        f_body = self._client(fin).get("/api/ops/search/?q=CONTRIB").json()
+        self.assertNotIn("journal", s_body["counts"])
+        self.assertIn("journal", f_body["counts"])
+        # ...and support cannot surface verification (KYC) results either.
+        self.assertNotIn("verification", s_body["counts"])
+
+    def test_user_lookup_by_phone(self):
+        op = make_operator("254700000203", "support")
+        body = self._client(op).get("/api/ops/search/?q=712345678").json()
+        labels = {r["label"] for r in body["results"] if r["type"] == "user"}
+        self.assertIn("Ada Lovelace", labels)
+
+    def test_short_query_returns_nothing(self):
+        op = make_operator("254700000204", "operations")
+        body = self._client(op).get("/api/ops/search/?q=a").json()
+        self.assertEqual(body["results"], [])
+
+    def test_search_is_audited(self):
+        from apps.audit.models import AuditEvent
+        op = make_operator("254700000205", "support")
+        self._client(op).get("/api/ops/search/?q=Ada")
+        self.assertTrue(AuditEvent.objects.filter(action="ops.search.performed").exists())
+
+    def test_roleless_staff_is_blocked(self):
+        staff = make_operator("254700000206")  # no ops role
+        self.assertEqual(self._client(staff).get("/api/ops/search/?q=Ada").status_code, 403)
