@@ -648,3 +648,40 @@ class IdentityCheckOcrIntegrationTests(TestCase):
         self.assertTrue(ocr["detected"])
         self.assertTrue(ocr["id_number_match"])
         self.assertFalse(ocr["mismatch"])
+
+
+class KYCMandatoryDocsTests(TestCase):
+    """Both ID sides and a selfie are required on submission."""
+
+    def _base_payload(self):
+        return {
+            "given_names": "Jane", "surname": "Doe", "id_number": "12345678",
+            "date_of_birth": "1990-01-01", "email": "j@example.com",
+            "physical_address": "123 Riverside", "county": "Nairobi",
+            "occupation": "Engineer", "source_of_income": "employment",
+            "expected_monthly_income": "under_250k",
+        }
+
+    def test_documents_are_required(self):
+        from apps.users.serializers import KYCSubmitSerializer
+        s = KYCSubmitSerializer(data=self._base_payload())
+        self.assertFalse(s.is_valid())
+        for field in ("id_front", "id_back", "selfie"):
+            self.assertIn(field, s.errors)
+
+    def test_valid_with_all_documents(self):
+        from io import BytesIO
+        from PIL import Image
+        from django.core.files.uploadedfile import SimpleUploadedFile
+        from apps.users.serializers import KYCSubmitSerializer
+
+        def img(n):
+            buf = BytesIO()
+            Image.new("RGB", (8, 8), "white").save(buf, "JPEG")
+            return SimpleUploadedFile(n, buf.getvalue(), content_type="image/jpeg")
+
+        s = KYCSubmitSerializer(data={
+            **self._base_payload(),
+            "id_front": img("f.jpg"), "id_back": img("b.jpg"), "selfie": img("s.jpg"),
+        })
+        self.assertTrue(s.is_valid(), msg=s.errors)

@@ -147,6 +147,25 @@ class KYCSubmitSerializer(serializers.ModelSerializer):
                 'allow_blank': False,
                 'error_messages': {'required': 'Physical address is required.'},
             },
+            # Both sides of the ID and a live selfie are mandatory so a human
+            # reviewer always has the full document set to verify against (and a
+            # vendor has the selfie to run liveness on). The model keeps these
+            # nullable for backward compatibility with historical rows; new
+            # submissions and re-submissions must include them.
+            'id_front': {
+                'required': True,
+                'error_messages': {'required': 'A photo of the front of your ID is required.'},
+            },
+            'id_back': {
+                'required': True,
+                'allow_null': False,
+                'error_messages': {'required': 'A photo of the back of your ID is required.'},
+            },
+            'selfie': {
+                'required': True,
+                'allow_null': False,
+                'error_messages': {'required': 'A selfie is required to verify your identity.'},
+            },
         }
 
     def validate_id_number(self, value):
