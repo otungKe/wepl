@@ -2,11 +2,12 @@
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
-import { Moon, Sun, LogOut, ShieldAlert, Loader2 } from 'lucide-react'
+import { Moon, Sun, LogOut, ShieldAlert, Loader2, Search } from 'lucide-react'
 import { getToken, clearToken, type OpsMe } from '@/lib/ops'
 import { useOpsStore, useCan } from '@/store/ops'
+import { usePaletteStore } from '@/store/palette'
 import { NAV, roleLabel } from '@/lib/opsNav'
-import { SearchBox } from '@/components/SearchBox'
+import { CommandPalette } from '@/components/CommandPalette'
 
 export default function ConsoleLayout({ children }: { children: React.ReactNode }) {
   const router = useRouter()
@@ -94,6 +95,7 @@ export default function ConsoleLayout({ children }: { children: React.ReactNode 
         <TopBar dark={dark} toggleTheme={toggleTheme} me={me} onSignOut={signOut} />
         <main className="flex-1 overflow-y-auto p-6">{children}</main>
       </div>
+      <CommandPalette />
     </div>
   )
 }
@@ -105,9 +107,15 @@ function Center({ children }: { children: React.ReactNode }) {
 function TopBar({ dark, toggleTheme, me, onSignOut }: {
   dark: boolean; toggleTheme: () => void; me: OpsMe | null; onSignOut: () => void }) {
   const primaryRole = me?.roles?.[0]
+  const openPalette = usePaletteStore((s) => s.setOpen)
   return (
     <header className="flex items-center gap-4 border-b border-slate-200 bg-white px-4 py-2.5 dark:border-slate-800 dark:bg-slate-900">
-      <div className="flex-1"><SearchBox /></div>
+      <button onClick={() => openPalette(true)}
+        className="flex max-w-md flex-1 items-center gap-2 rounded-lg border border-slate-200 bg-slate-50 px-3 py-1.5 text-sm text-slate-400 hover:bg-slate-100 dark:border-slate-700 dark:bg-slate-800/60 dark:hover:bg-slate-800">
+        <Search className="h-4 w-4" />
+        <span className="flex-1 text-left">Search or jump to…</span>
+        <kbd className="hidden rounded border border-slate-300 px-1.5 text-[10px] font-medium sm:inline dark:border-slate-600">⌘K</kbd>
+      </button>
       <button onClick={toggleTheme} title="Toggle theme" className="rounded-md p-2 text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800">
         {dark ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
       </button>
