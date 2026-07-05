@@ -3,7 +3,7 @@ import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
 import { Moon, Sun, LogOut, ShieldAlert, Loader2 } from 'lucide-react'
-import { getAccessToken, isTokenValid, clearTokens } from '@/lib/auth'
+import { getAccessToken, clearTokens } from '@/lib/auth'
 import { useOpsStore, useCan } from '@/store/ops'
 import { NAV, roleLabel } from '@/lib/opsNav'
 import { SearchBox } from '@/components/ops/SearchBox'
@@ -26,8 +26,14 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
   }
 
   useEffect(() => {
+    // Only bounce to /login when there is genuinely no session. An *expired*
+    // access token is fine — loading /api/ops/me/ triggers the axios refresh
+    // interceptor, which renews it (or, if the refresh token is also dead,
+    // redirects to /login itself). Bouncing on expiry alone would kick an
+    // operator out ~hourly mid-shift.
     const token = getAccessToken()
-    if (!token || !isTokenValid(token)) { router.replace('/login'); return }
+    const refresh = typeof window !== 'undefined' ? localStorage.getItem('refresh_token') : null
+    if (!token && !refresh) { router.replace('/login'); return }
     if (status === 'idle') load()
   }, [router, status, load])
 
