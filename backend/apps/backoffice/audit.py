@@ -38,10 +38,19 @@ def record_action(
 
     if actor is None and request is not None:
         actor = getattr(request, "user", None)
-    actor = actor if (actor is not None and getattr(actor, "pk", None)) else None
+
+    # Staff operators are a separate identity from the customer AUTH_USER_MODEL,
+    # so they can't populate the AuditEvent.actor FK. Attribute them via the
+    # denormalised label (their email) + a staff_id in metadata instead.
     actor_label = ""
-    if actor is not None:
-        actor_label = getattr(actor, "phone_number", "") or getattr(actor, "name", "") or ""
+    if actor is not None and actor.__class__.__name__ == "StaffAccount":
+        actor_label = actor.email
+        metadata = {**(metadata or {}), "staff_id": actor.id}
+        actor = None
+    else:
+        actor = actor if (actor is not None and getattr(actor, "pk", None)) else None
+        if actor is not None:
+            actor_label = getattr(actor, "phone_number", "") or getattr(actor, "name", "") or ""
 
     request_id = ""
     if request is not None:

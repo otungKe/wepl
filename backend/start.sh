@@ -10,6 +10,7 @@ python manage.py migrate --noinput
 python manage.py seed_admin_roles
 python manage.py seed_ops_roles
 python manage.py ensure_superuser
+python manage.py create_ops_admin
 
 # NOTE: Celery worker + beat run in the background of the web process. This is a
 # deliberate single-host arrangement for now (Render's free tier has no worker

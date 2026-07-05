@@ -92,6 +92,15 @@ review, `FakeProvider` = tests, resolved via `registry.get_provider()`, mirrors 
 port). `KYCEmailVerifyView` calls it via `_run_identity_check()`; a real vendor / IPRS lookup
 drops in as another adapter without touching the view (ADR-0023).
 
+**Back Office staff are a separate identity from customers.** `apps/backoffice` powers the
+operations console at `/api/ops/*`: operators are `StaffAccount` rows (corporate **email +
+password**, admin-provisioned, `must_change_password`, no self-serve reset) — *not* customer
+`User`s (phone+OTP). They authenticate with a dedicated staff JWT (`apps/backoffice/auth.py`,
+`type: "ops"`, separate from customer SimpleJWT). RBAC is a code-defined capability map
+(`capabilities.py`) over `ops:*` Django Groups, enforced server-side via `RequireCapability`;
+every ops action writes an `AuditEvent` via `record_action()`. The console frontend is a
+separate app/deployment — never co-hosted with the customer web app.
+
 ## Layout & conventions
 
 - `backend/config/settings/`: `base.py` → `development.py` / `production.py`.

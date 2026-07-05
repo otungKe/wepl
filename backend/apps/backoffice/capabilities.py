@@ -142,7 +142,7 @@ def capabilities_for(user) -> set[str]:
 
 
 def has_capability(user, capability: str) -> bool:
-    if user is None or not user.is_authenticated or not user.is_staff:
+    if user is None or not user.is_authenticated or not getattr(user, "is_active", True):
         return False
     if user.is_superuser:
         return True
@@ -150,7 +150,8 @@ def has_capability(user, capability: str) -> bool:
 
 
 def is_operator(user) -> bool:
-    """Staff member who belongs to at least one ops role (or is a superuser)."""
-    if user is None or not user.is_authenticated or not user.is_staff:
+    """An active staff account that belongs to at least one ops role (or is a
+    Platform Super Admin)."""
+    if user is None or not user.is_authenticated or not getattr(user, "is_active", True):
         return False
     return user.is_superuser or bool(roles_for(user))
