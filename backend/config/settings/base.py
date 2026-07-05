@@ -78,6 +78,7 @@ INSTALLED_APPS = [
     'apps.ledger.apps.LedgerConfig',
     'apps.controls.apps.ControlsConfig',
     'apps.reminders.apps.RemindersConfig',
+    'apps.backoffice.apps.BackofficeConfig',
     'django_celery_beat',
 ]
 

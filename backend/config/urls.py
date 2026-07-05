@@ -57,6 +57,10 @@ urlpatterns = [
     # (e.g. the cursor-paginated activity feed). See config/api_v2_urls.py + ADR-0021.
     path('api/v2/', include('config.api_v2_urls')),
 
+    # Back Office operations console (staff-only, RBAC-enforced). Versionless —
+    # an internal surface, not a public client contract. See apps/backoffice.
+    path('api/ops/', include('apps.backoffice.urls')),
+
     # OpenAPI schema + interactive docs (drf-spectacular).
     path('api/schema/',             SpectacularAPIView.as_view(), name='schema'),
     path('api/schema/swagger-ui/',  SpectacularSwaggerView.as_view(url_name='schema'), name='swagger-ui'),

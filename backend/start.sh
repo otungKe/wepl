@@ -8,6 +8,7 @@ python manage.py migrate --noinput
 # groups; ensure_superuser creates/updates the admin from ADMIN_PHONE /
 # ADMIN_PASSWORD env vars (skips quietly if they're unset).
 python manage.py seed_admin_roles
+python manage.py seed_ops_roles
 python manage.py ensure_superuser
 
 # NOTE: Celery worker + beat run in the background of the web process. This is a
