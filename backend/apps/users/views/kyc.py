@@ -49,6 +49,16 @@ class KYCView(APIView):
             email_verified=False,       # reset on re-submission
         )
 
+        # Record the submission on the verification case ledger: opens the case
+        # on first submission, snapshots the uploaded documents as immutable
+        # versions, and appends the timeline event (apps.verification).
+        from apps.verification import service as case_service
+        try:
+            kind = 'full_resubmit' if kyc.cases.exists() else 'initial'
+            case_service.record_submission(kyc, kind=kind)
+        except Exception:
+            logger.exception("Case ledger recording failed for KYC submit (user %s)", kyc.user_id)
+
         # NOTE: User.name (display name) is intentionally NOT synced from KYC.
         # The display name is what the user wants to appear to their community —
         # they set it themselves during onboarding and can change it any time.
@@ -148,30 +158,36 @@ def _run_identity_check(kyc):
     kyc.verification_state      = result.state
     kyc.verification_detail     = {**(result.raw or {}), 'ocr': _read_id_scan_ocr(kyc)}
     kyc.verification_checked_at = timezone.now()
-
-    if result.state == VERIFIED:
-        kyc.status = 'approved'
-    elif result.state == REJECTED:
-        kyc.status = 'rejected'
-        kyc.rejection_reason = result.reason or 'Identity verification was not successful.'
-    else:
-        # MANUAL_REVIEW / PENDING — a human (or an async webhook) decides later.
-        kyc.status = 'pending'
-
     kyc.save(update_fields=[
-        'status', 'rejection_reason', 'verification_provider', 'verification_ref',
+        'verification_provider', 'verification_ref',
         'verification_state', 'verification_detail', 'verification_checked_at',
     ])
+
+    # Record the check as a fact on the case timeline, then apply any terminal
+    # outcome through the case state machine (apps.verification) — the single
+    # door for decisions. MANUAL_REVIEW / PENDING leave the case awaiting a
+    # human (or webhook), status 'pending'.
+    from apps.verification import service as case_service
+    try:
+        case_service.record_check(kyc, provider=result.provider, state=result.state,
+                                  detail=kyc.verification_detail)
+        if result.state == VERIFIED:
+            case_service.decide(kyc, 'approve', actor_label=result.provider)
+        elif result.state == REJECTED:
+            case_service.decide(kyc, 'reject', actor_label=result.provider,
+                                reason=result.reason or 'Identity verification was not successful.')
+        elif kyc.status != 'pending':
+            kyc.status = 'pending'
+            kyc.save(update_fields=['status'])
+    except case_service.IllegalTransition as exc:
+        # A check outcome that isn't applicable from the case's current state is
+        # recorded (above) but not applied — a human resolves it in review.
+        logger.warning("Identity-check outcome not applied for user %s: %s", kyc.user_id, exc)
+
     logger.info(
         "Identity check for user %s: provider=%s state=%s → status=%s",
         kyc.user_id, result.provider, result.state, kyc.status,
     )
-
-    # Notify the applicant on a terminal decision (approved/rejected). Pending
-    # submissions are notified later, when the reviewer/webhook resolves them.
-    if kyc.status in ('approved', 'rejected'):
-        from ..admin import _notify_kyc_decision
-        _notify_kyc_decision(kyc)
 
 
 class KYCResubmitView(APIView):
@@ -213,6 +229,16 @@ class KYCResubmitView(APIView):
             return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
         kyc = serializer.save(status='pending', resubmission_requested=[])
+
+        # Record the top-up on the case ledger: snapshots any new document
+        # versions (the prior versions are never overwritten) and moves the
+        # case back to SUBMITTED for review.
+        from apps.verification import service as case_service
+        try:
+            case_service.record_submission(kyc, kind='targeted_resubmit', items=requested)
+        except Exception:
+            logger.exception("Case ledger recording failed for KYC resubmit (user %s)", kyc.user_id)
+
         # Re-check the (possibly new) documents and hand back to the reviewer.
         # Email verification is untouched — this is not a fresh submission.
         _run_identity_check(kyc)
@@ -295,6 +321,12 @@ class KYCEmailVerifyView(APIView):
             kyc.email_verification_token  = ''   # single-use — invalidate now
             kyc.save(update_fields=['email_verified', 'email_verification_token'])
             logger.info("KYC email verified for user %s (%s)", kyc.user_id, kyc.email)
+
+            from apps.verification import service as case_service
+            try:
+                case_service.record_email_verified(kyc)
+            except Exception:
+                logger.exception("Case ledger recording failed for email verify (user %s)", kyc.user_id)
 
             # ── Identity verification (apps.users.identity port) ──────────
             # The active provider decides the outcome. Today: ManualProvider in

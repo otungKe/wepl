@@ -79,6 +79,7 @@ INSTALLED_APPS = [
     'apps.controls.apps.ControlsConfig',
     'apps.reminders.apps.RemindersConfig',
     'apps.backoffice.apps.BackofficeConfig',
+    'apps.verification.apps.VerificationConfig',
     'django_celery_beat',
 ]
 

@@ -2,7 +2,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import { Loader2, ArrowLeft, Check, X, Upload, FileWarning } from 'lucide-react'
-import { verification, type CaseDetail, type DocRef, type Decision } from '@/lib/verification'
+import { verification, type CaseDetail, type DocRef, type Decision, type TimelineEvent } from '@/lib/verification'
 import { useCan } from '@/store/ops'
 
 export default function VerificationCase() {
@@ -68,15 +68,10 @@ export default function VerificationCase() {
             <OcrPanel ocr={data.checks.ocr} typed={{ id: String(a.id_number ?? ''), dob: String(a.date_of_birth ?? '') }} />
           </Card>
 
-          {data.history.length > 0 && (
-            <Card title="History">
-              <ul className="space-y-2">
-                {data.history.map((h, i) => (
-                  <li key={i} className="flex items-start gap-3 text-xs">
-                    <span className="mt-0.5 font-mono text-slate-400">{new Date(h.at).toLocaleString()}</span>
-                    <span><b className="text-slate-700 dark:text-slate-200">{h.action.replace('ops.', '')}</b> · {h.by}</span>
-                  </li>
-                ))}
+          {data.timeline.length > 0 && (
+            <Card title="Case timeline">
+              <ul className="space-y-2.5">
+                {data.timeline.map((e) => <TimelineRow key={e.seq} e={e} />)}
               </ul>
             </Card>
           )}
@@ -171,9 +166,18 @@ function StatusChip({ status }: { status: string }) {
   return <span className={`rounded-full px-2.5 py-0.5 text-xs font-semibold ${m[status] ?? 'bg-slate-100 text-slate-600'}`}>{status}</span>
 }
 function Doc({ label, doc }: { label: string; doc: DocRef }) {
+  const versions = doc.versions ?? []
+  const prior = versions.filter((v) => v.url).slice(1) // newest first; [0] is current
   return (
     <div>
-      <p className="mb-1 text-xs font-medium text-slate-500">{label}</p>
+      <p className="mb-1 text-xs font-medium text-slate-500">
+        {label}
+        {versions.length > 1 && (
+          <span className="ml-1.5 rounded bg-slate-100 px-1 py-0.5 font-mono text-[10px] text-slate-500 dark:bg-slate-800">
+            v{versions[0].version}
+          </span>
+        )}
+      </p>
       {doc.available && doc.url ? (
         <a href={doc.url} target="_blank" rel="noreferrer" className="block overflow-hidden rounded-lg border border-slate-200 dark:border-slate-700">
           {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -184,7 +188,55 @@ function Doc({ label, doc }: { label: string; doc: DocRef }) {
           <FileWarning className="h-5 w-5" /> not in storage
         </div>
       )}
+      {prior.length > 0 && (
+        <p className="mt-1 text-[11px] text-slate-400">
+          Earlier:{' '}
+          {prior.map((v, i) => (
+            <a key={v.version} href={v.url!} target="_blank" rel="noreferrer"
+              className="text-blue-600 hover:underline dark:text-blue-400">
+              {i > 0 && ', '}v{v.version}
+            </a>
+          ))}
+        </p>
+      )}
     </div>
+  )
+}
+
+const EVENT_LABELS: Record<string, string> = {
+  'case.opened': 'Case opened',
+  'case.backfilled': 'Case opened (migrated)',
+  'submission.received': 'KYC submitted',
+  'email.verified': 'Email verified',
+  'checks.completed': 'Automated checks completed',
+  'review.approved': 'Approved',
+  'review.rejected': 'Rejected',
+  'review.info_requested': 'Re-submission requested',
+  'case.resubmit': 'Re-submitted',
+}
+
+function TimelineRow({ e }: { e: TimelineEvent }) {
+  const kindColor = e.actor_kind === 'staff' ? 'bg-blue-500'
+    : e.actor_kind === 'customer' ? 'bg-emerald-500' : 'bg-slate-400'
+  const detail = [
+    typeof e.payload?.reason === 'string' && e.payload.reason ? `“${e.payload.reason}”` : null,
+    Array.isArray(e.payload?.items) && e.payload.items.length ? `items: ${(e.payload.items as string[]).join(', ')}` : null,
+    typeof e.payload?.kind === 'string' ? e.payload.kind.replace(/_/g, ' ') : null,
+  ].filter(Boolean).join(' · ')
+  return (
+    <li className="flex items-start gap-2.5 text-xs">
+      <span className={`mt-1 h-2 w-2 shrink-0 rounded-full ${kindColor}`} />
+      <div className="min-w-0">
+        <span className="font-medium text-slate-700 dark:text-slate-200">
+          {EVENT_LABELS[e.type] ?? e.type}
+        </span>
+        <span className="text-slate-400"> · {e.actor}</span>
+        {detail && <span className="block truncate text-slate-400">{detail}</span>}
+        <span className="block font-mono text-[10px] text-slate-400">
+          #{e.seq} · {new Date(e.at).toLocaleString()}
+        </span>
+      </div>
+    </li>
   )
 }
 function OcrPanel({ ocr, typed }: { ocr: Record<string, unknown>; typed: { id: string; dob: string } }) {
