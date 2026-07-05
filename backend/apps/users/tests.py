@@ -797,7 +797,7 @@ class KYCResubmissionActionTests(TestCase):
             date_of_birth=date(1990, 1, 1), status=status,
         )
 
-    def test_action_requests_resubmission_from_approved_user(self):
+    def test_action_requests_documents_from_approved_user(self):
         from apps.core.models import OutboxEvent
         kyc = self._make_kyc("254700000921", "approved")
         resp = self.client.post("/admin/users/kycprofile/", {
@@ -806,22 +806,11 @@ class KYCResubmissionActionTests(TestCase):
         }, follow=True)
         self.assertEqual(resp.status_code, 200)
         kyc.refresh_from_db()
-        # Reverted so the KYC form unlocks re-submission and mobile shows "Re-submit".
-        self.assertEqual(kyc.status, "rejected")
-        self.assertIn("re-submit", kyc.rejection_reason.lower())
+        # Targeted top-up: the three documents are requested, access is NOT revoked.
+        self.assertEqual(kyc.resubmission_requested, ["id_front", "id_back", "selfie"])
+        self.assertEqual(kyc.status, "approved")
         self.assertTrue(OutboxEvent.objects.filter(
             event_type="kyc_resubmission_requested", payload__user_id=kyc.user_id).exists())
-
-    def test_resubmission_unlocks_the_kyc_form(self):
-        # After the action, the previously-approved profile is no longer locked.
-        from apps.users.views.kyc import KYCView  # import sanity
-        kyc = self._make_kyc("254700000922", "approved")
-        self.client.post("/admin/users/kycprofile/", {
-            "action": "request_kyc_resubmission",
-            "_selected_action": [str(kyc.pk)],
-        })
-        kyc.refresh_from_db()
-        self.assertNotEqual(kyc.status, "approved")  # re-submission no longer blocked
 
 
 class KYCManualDecisionStampTests(TestCase):
@@ -862,3 +851,80 @@ class KYCManualDecisionStampTests(TestCase):
         self.assertEqual(kyc.status, "rejected")
         self.assertEqual(kyc.verification_state, "rejected")
         self.assertEqual(kyc.verification_provider, "manual (admin)")
+
+
+class KYCResubmitTests(TestCase):
+    """Targeted re-submission: the user tops up ONLY the requested items."""
+
+    def _client(self, user):
+        c = APIClient()
+        c.credentials(HTTP_AUTHORIZATION=f"Bearer {issue_tokens(user, STAGE_ACTIVE)['access']}")
+        return c
+
+    def _kyc(self, phone, **kw):
+        from datetime import date
+        from apps.users.models import KYCProfile
+        u = get_user_model().objects.create_user(phone_number=phone)
+        kyc = KYCProfile.objects.create(
+            user=u, given_names="Jane", surname="Doe", id_number=f"ID{u.pk}",
+            kra_pin="A012345678Z", date_of_birth=date(1990, 1, 1), email="j@example.com",
+            physical_address="Old address", county="Nairobi", occupation="Eng",
+            source_of_income="employment", expected_monthly_income="under_250k",
+            status="approved", **kw)
+        return u, kyc
+
+    def test_requires_outstanding_request(self):
+        u, _ = self._kyc("254700000941")
+        r = self._client(u).post("/api/users/kyc/resubmit/", {"physical_address": "New"}, format="multipart")
+        self.assertEqual(r.status_code, 400)
+
+    def test_updates_only_requested_items(self):
+        u, kyc = self._kyc("254700000942", resubmission_requested=["physical_address"])
+        r = self._client(u).post("/api/users/kyc/resubmit/",
+                                 {"physical_address": "New Address 42", "id_number": "99999999"},
+                                 format="multipart")
+        self.assertEqual(r.status_code, 200, msg=r.content)
+        kyc.refresh_from_db()
+        self.assertEqual(kyc.physical_address, "New Address 42")     # requested → updated
+        self.assertEqual(kyc.id_number, f"ID{u.pk}")                 # not requested → untouched
+        self.assertEqual(kyc.resubmission_requested, [])            # cleared
+
+    def test_missing_requested_item_is_rejected(self):
+        u, _ = self._kyc("254700000943", resubmission_requested=["physical_address", "selfie"])
+        r = self._client(u).post("/api/users/kyc/resubmit/", {"physical_address": "X"}, format="multipart")
+        self.assertEqual(r.status_code, 400)
+        self.assertIn("missing", r.json())
+
+    def test_status_get_exposes_requested_items(self):
+        u, _ = self._kyc("254700000944", resubmission_requested=["id_front", "selfie"])
+        r = self._client(u).get("/api/users/kyc/")
+        self.assertEqual(r.json()["resubmission_requested"], ["id_front", "selfie"])
+
+
+class KYCResubmitAdminTests(TestCase):
+    """The admin action / form drive a targeted re-submission (no status change)."""
+
+    def setUp(self):
+        self.staff = get_user_model().objects.create_user(phone_number="254700000950")
+        self.staff.is_staff = self.staff.is_superuser = True
+        self.staff.save()
+        self.client.force_login(self.staff)
+
+    def _approved_kyc(self, phone):
+        from datetime import date
+        from apps.users.models import KYCProfile
+        u = get_user_model().objects.create_user(phone_number=phone)
+        return KYCProfile.objects.create(
+            user=u, given_names="Jane", surname="Doe", id_number=f"ID{u.pk}",
+            date_of_birth=date(1990, 1, 1), status="approved")
+
+    def test_documents_action_sets_items_and_keeps_status(self):
+        from apps.core.models import OutboxEvent
+        kyc = self._approved_kyc("254700000951")
+        self.client.post("/admin/users/kycprofile/", {
+            "action": "request_kyc_resubmission", "_selected_action": [str(kyc.pk)]})
+        kyc.refresh_from_db()
+        self.assertEqual(kyc.resubmission_requested, ["id_front", "id_back", "selfie"])
+        self.assertEqual(kyc.status, "approved")   # access NOT revoked
+        self.assertTrue(OutboxEvent.objects.filter(
+            event_type="kyc_resubmission_requested", payload__user_id=kyc.user_id).exists())

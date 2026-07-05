@@ -46,6 +46,16 @@ type KYCData = {
   email_verified: boolean;
   email: string;
   rejection_reason: string;
+  resubmission_requested: string[];
+};
+
+// Human labels for the re-submittable item keys (kept in sync with the backend).
+const ITEM_LABELS: Record<string, string> = {
+  id_front: "Front of ID", id_back: "Back of ID", selfie: "Selfie",
+  id_number: "ID number", kra_pin: "KRA PIN", date_of_birth: "Date of birth",
+  physical_address: "Physical address", county: "County", occupation: "Occupation",
+  source_of_income: "Source of income", expected_monthly_income: "Income band",
+  email: "Email address",
 };
 
 type ItemState = "done" | "pending" | "action" | "optional";
@@ -249,6 +259,25 @@ export default function VerificationCenterScreen() {
             on submitted items appear. */}
         <Text style={s.sectionLabel}>REQUESTS & DOCUMENTS</Text>
 
+        {/* Targeted re-submission — a reviewer asked for specific items only.
+            The user tops up just these; they don't re-fill the whole KYC form. */}
+        {kyc?.resubmission_requested?.length ? (
+          <TouchableOpacity style={[s.requestCard, { borderLeftColor: COLORS.primary, marginBottom: 10 }]}
+            activeOpacity={0.7} onPress={() => router.push("/kyc-resubmit")}>
+            <View style={[s.rowIcon, { backgroundColor: COLORS.primaryPale }]}>
+              <Ionicons name="cloud-upload-outline" size={19} color={COLORS.primary} />
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={s.rowTitle}>Re-submit requested items</Text>
+              <Text style={s.requestBody}>
+                We only need: {kyc.resubmission_requested.map((k) => ITEM_LABELS[k] ?? k).join(", ")}.
+                The rest of your details stay as they are.
+              </Text>
+              <Text style={s.requestAction}>Tap to provide just these →</Text>
+            </View>
+          </TouchableOpacity>
+        ) : null}
+
         {/* KYC rejection feedback (feedback on an already-submitted item) */}
         {status === "rejected" && kyc?.rejection_reason ? (
           <TouchableOpacity style={[s.requestCard, { marginBottom: 10 }]} activeOpacity={0.7} onPress={() => router.push("/kyc")}>
@@ -296,7 +325,7 @@ export default function VerificationCenterScreen() {
         })}
 
         {/* Empty state when nothing is outstanding */}
-        {requests.length === 0 && !(status === "rejected" && kyc?.rejection_reason) && (
+        {requests.length === 0 && !(status === "rejected" && kyc?.rejection_reason) && !kyc?.resubmission_requested?.length && (
           <View style={s.emptyCard}>
             <Ionicons name="checkmark-done-outline" size={20} color={COLORS.textMuted} />
             <Text style={s.emptyText}>

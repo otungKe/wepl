@@ -47,6 +47,31 @@ export const submitKYC = async (formData: FormData) => {
   return response.data;
 };
 
+// Targeted re-submission — the user tops up ONLY the items the reviewer asked
+// for (kyc.resubmission_requested); the rest of their KYC is untouched.
+export const resubmitKYC = async (formData: FormData) => {
+  const response = await API.post("users/kyc/resubmit/", formData, {
+    headers: { "Content-Type": "multipart/form-data" },
+  });
+  return response.data;
+};
+
+// Human labels for the re-submittable item keys the backend may request.
+export const KYC_ITEM_LABELS: Record<string, string> = {
+  id_front:                "Front of ID",
+  id_back:                 "Back of ID",
+  selfie:                  "Selfie",
+  id_number:               "ID number",
+  kra_pin:                 "KRA PIN",
+  date_of_birth:           "Date of birth",
+  physical_address:        "Physical address",
+  county:                  "County",
+  occupation:              "Occupation",
+  source_of_income:        "Source of income",
+  expected_monthly_income: "Income band",
+  email:                   "Email address",
+};
+
 export type Visibility = "everyone" | "members" | "nobody";
 
 export type PrivacyPrefs = {
