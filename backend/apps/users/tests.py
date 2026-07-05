@@ -750,3 +750,30 @@ class KYCAdminRenderTests(TestCase):
         self.client.force_login(staff)
         resp = self.client.get(f"/admin/users/kycprofile/{kyc.id}/change/")
         self.assertEqual(resp.status_code, 200, msg=resp.content[:300])
+
+
+class KYCImagePreviewTests(SimpleTestCase):
+    """_img degrades legibly when a KYC document isn't viewable."""
+
+    def test_missing_file_shows_warning_not_broken_image(self):
+        from types import SimpleNamespace
+        from apps.users.admin import _img
+        f = SimpleNamespace(name="kyc/ids/gone.jpg",
+                            storage=SimpleNamespace(exists=lambda name: False))
+        html = str(_img(f))
+        self.assertIn("File not found in storage", html)
+        self.assertIn("gone.jpg", html)
+        self.assertNotIn("<img", html)
+
+    def test_present_file_renders_image(self):
+        from types import SimpleNamespace
+        from apps.users.admin import _img
+        f = SimpleNamespace(name="kyc/ids/ok.jpg", url="https://cdn.example/ok.jpg",
+                            storage=SimpleNamespace(exists=lambda name: True))
+        html = str(_img(f))
+        self.assertIn("<img", html)
+        self.assertIn("https://cdn.example/ok.jpg", html)
+
+    def test_none_file(self):
+        from apps.users.admin import _img
+        self.assertEqual(_img(None), "—")
