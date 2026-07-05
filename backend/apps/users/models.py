@@ -176,6 +176,16 @@ class KYCProfile(models.Model):
         related_name='kyc_reviews',
     )
 
+    # Identity-verification provider outcome (apps.users.identity port).
+    # Records which checker ran and what it returned — audit trail for both
+    # manual review and any future automated vendor. `verification_state` holds
+    # the normalised IdentityCheckResult.state; the KYC `status` is derived from it.
+    verification_provider   = models.CharField(max_length=40, blank=True, default='')
+    verification_ref        = models.CharField(max_length=128, blank=True, default='')
+    verification_state      = models.CharField(max_length=20, blank=True, default='')
+    verification_detail     = models.JSONField(default=dict, blank=True)
+    verification_checked_at = models.DateTimeField(null=True, blank=True)
+
     # Email verification
     email_verified              = models.BooleanField(default=False)
     email_verification_token    = models.CharField(max_length=64, blank=True, default='')
