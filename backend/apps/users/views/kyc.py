@@ -174,6 +174,55 @@ def _run_identity_check(kyc):
         _notify_kyc_decision(kyc)
 
 
+class KYCResubmitView(APIView):
+    """POST /api/users/kyc/resubmit/ — targeted top-up of ONLY the items a
+    reviewer asked for (``kyc.resubmission_requested``), so the user does not
+    re-enter the whole KYC form. Accepts multipart/form-data for re-requested
+    photos. Anything the client sends that wasn't requested is ignored."""
+    permission_classes = [IsActiveSession]
+
+    def post(self, request):
+        try:
+            kyc = request.user.kyc
+        except KYCProfile.DoesNotExist:
+            return Response({'error': 'No KYC submission found.'},
+                            status=status.HTTP_404_NOT_FOUND)
+
+        requested = list(kyc.resubmission_requested or [])
+        if not requested:
+            return Response({'error': 'No re-submission has been requested.'},
+                            status=status.HTTP_400_BAD_REQUEST)
+
+        # Only accept the requested fields — a top-up can never change items that
+        # weren't asked for.
+        data = {k: v for k, v in request.data.items() if k in requested}
+        missing = [
+            k for k in requested
+            if k not in data or (isinstance(data.get(k), str) and not data[k].strip())
+        ]
+        if missing:
+            labels = dict(KYCProfile.RESUBMITTABLE_ITEMS)
+            return Response(
+                {'error': 'Please provide all requested items.',
+                 'missing': [labels.get(m, m) for m in missing]},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        serializer = KYCSubmitSerializer(kyc, data=data, partial=True)
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+        kyc = serializer.save(status='pending', resubmission_requested=[])
+        # Re-check the (possibly new) documents and hand back to the reviewer.
+        # Email verification is untouched — this is not a fresh submission.
+        _run_identity_check(kyc)
+
+        return Response(
+            KYCStatusSerializer(kyc, context={'request': request}).data,
+            status=status.HTTP_200_OK,
+        )
+
+
 class KYCCheckEmailView(APIView):
     """
     GET /api/users/kyc/check-email/?email=<value>

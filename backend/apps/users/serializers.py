@@ -249,6 +249,7 @@ class KYCStatusSerializer(serializers.ModelSerializer):
             'referral_code',
             'status',
             'rejection_reason',
+            'resubmission_requested',
             'submitted_at',
             'updated_at',
             # helpers for the mobile form

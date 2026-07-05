@@ -15,6 +15,7 @@ from .views import (
     KYCView,
     KYCEmailVerifyView,
     KYCResendEmailView,
+    KYCResubmitView,
     KYCCheckIDView,
     KYCCheckEmailView,
     FinancialSummaryView,
@@ -57,6 +58,7 @@ urlpatterns = [
 
     # KYC
     path('kyc/',                       KYCView.as_view()),
+    path('kyc/resubmit/',              KYCResubmitView.as_view()),
     path('kyc/verify-email/',          KYCEmailVerifyView.as_view()),
     path('kyc/resend-verification/',   KYCResendEmailView.as_view()),
     path('kyc/check-id/',              KYCCheckIDView.as_view()),

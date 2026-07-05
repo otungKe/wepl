@@ -137,6 +137,25 @@ class KYCProfile(models.Model):
         ('rejected', 'Rejected'),
     ]
 
+    # Items a reviewer can ask the user to re-provide on a targeted re-submission.
+    # Each key is a KYCProfile field the user tops up via /kyc/resubmit/ without
+    # re-entering the rest of the form.
+    RESUBMITTABLE_ITEMS = [
+        ('id_front',                'Front of ID'),
+        ('id_back',                 'Back of ID'),
+        ('selfie',                  'Selfie'),
+        ('id_number',               'ID number'),
+        ('kra_pin',                 'KRA PIN'),
+        ('date_of_birth',           'Date of birth'),
+        ('physical_address',        'Physical address'),
+        ('county',                  'County'),
+        ('occupation',              'Occupation'),
+        ('source_of_income',        'Source of income'),
+        ('expected_monthly_income', 'Income band'),
+        ('email',                   'Email address'),
+    ]
+    RESUBMITTABLE_KEYS = [k for k, _ in RESUBMITTABLE_ITEMS]
+
     user = models.OneToOneField(
         settings.AUTH_USER_MODEL,
         on_delete=models.PROTECT,
@@ -194,6 +213,12 @@ class KYCProfile(models.Model):
     email_verified              = models.BooleanField(default=False)
     email_verification_token    = models.CharField(max_length=64, blank=True, default='')
     email_verification_sent_at  = models.DateTimeField(null=True, blank=True)
+
+    # Targeted re-submission: the specific items a reviewer has asked the user to
+    # re-provide (subset of RESUBMITTABLE_ITEM keys, e.g. ['id_front','selfie']).
+    # Empty = nothing outstanding. The user tops up ONLY these via /kyc/resubmit/
+    # — they do not re-enter the whole KYC form.
+    resubmission_requested = models.JSONField(default=list, blank=True)
 
     submitted_at = models.DateTimeField(auto_now_add=True)
     updated_at   = models.DateTimeField(auto_now=True)

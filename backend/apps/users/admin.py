@@ -1,3 +1,4 @@
+from django import forms
 from django.contrib import admin
 from django.contrib.auth.admin import UserAdmin as BaseUserAdmin
 from django.utils import timezone
@@ -135,43 +136,40 @@ def reject_kyc(modeladmin, request, queryset):
     )
 
 
-@admin.action(description='Request re-submission (ask user to re-upload their KYC)', permissions=['change'])
-def request_kyc_resubmission(modeladmin, request, queryset):
-    """Ask selected users to re-submit their KYC — works on ANY status, including
-    already-approved profiles (e.g. when documents need refreshing). Moves the
-    profile to 'rejected' so the KYC form unlocks re-submission (approved profiles
-    are otherwise locked) and the mobile app shows its "Re-submit" call-to-action,
-    then notifies the user with a re-upload message (not a rejection verdict).
-
-    Note: because full access (Tier 1) requires an *approved* KYC, this reverts
-    an approved user to unverified until they re-submit and are re-approved.
-    """
+def _notify_resubmission_request(kyc):
+    """Tell the user which KYC items they've been asked to re-provide, and send
+    them to the targeted re-submission screen (they don't re-fill the whole form)."""
     from apps.core.events import emit
+    labels = dict(KYCProfile.RESUBMITTABLE_ITEMS)
+    items = ', '.join(labels.get(k, k) for k in (kyc.resubmission_requested or []))
+    emit(
+        'kyc_resubmission_requested',
+        user_id=kyc.user_id,
+        title='Action needed: re-submit KYC items',
+        message=f'Please re-submit the following in WEPL: {items}. '
+                f'You only need to provide these — the rest of your details stay as they are.',
+    )
 
+
+@admin.action(description='Request document re-submission (front, back & selfie)', permissions=['change'])
+def request_kyc_resubmission(modeladmin, request, queryset):
+    """Ask selected users to re-provide their ID photos — the common case (e.g.
+    unclear or lost documents). Sets the targeted-re-submission list to the three
+    documents and notifies; it does NOT change the KYC status, so the user keeps
+    any existing access and only tops up the requested items via the app. To ask
+    for a different set of items, open the record and edit
+    "Requested for re-submission" instead.
+    """
     n = 0
     for kyc in queryset:
-        kyc.status      = 'rejected'
-        kyc.reviewed_by = request.user
-        kyc.reviewed_at = timezone.now()
-        kyc.rejection_reason = (
-            'We need you to re-submit your identity documents. Please open WEPL '
-            'and upload fresh photos of your ID and a selfie.'
-        )
-        extra = _stamp_manual_decision(kyc)
-        kyc.save(update_fields=['status', 'reviewed_by', 'reviewed_at', 'rejection_reason', *extra])
-        # Dedicated, non-punitive message (distinct from a rejection verdict).
-        emit(
-            'kyc_resubmission_requested',
-            user_id=kyc.user_id,
-            title='Action needed: re-submit your ID',
-            message='Please re-submit your identity documents in WEPL so we can '
-                    're-verify your account.',
-        )
+        kyc.resubmission_requested = ['id_front', 'id_back', 'selfie']
+        kyc.save(update_fields=['resubmission_requested'])
+        _notify_resubmission_request(kyc)
         n += 1
     modeladmin.message_user(
         request,
-        f"Re-submission requested from {n} user(s). They have been notified and "
-        f"can now re-upload their KYC. (Approved users revert to unverified until re-approved.)",
+        f"Requested document re-submission from {n} user(s). They have been "
+        f"notified and can top up just those items in the app.",
     )
 
 
@@ -207,8 +205,27 @@ def _img(file):
     )
 
 
+class KYCAdminForm(forms.ModelForm):
+    """Renders `resubmission_requested` (a JSON list) as a friendly checkbox set
+    so a reviewer can pick exactly which items to ask the user to re-provide."""
+    resubmission_requested = forms.MultipleChoiceField(
+        choices=KYCProfile.RESUBMITTABLE_ITEMS,
+        widget=forms.CheckboxSelectMultiple,
+        required=False,
+        label='Requested for re-submission',
+        help_text='Tick the items the user must re-provide. They top up only '
+                  'these in the app — the rest of their KYC stays as-is. Saving '
+                  'with any ticked notifies the user.',
+    )
+
+    class Meta:
+        model = KYCProfile
+        fields = '__all__'
+
+
 @admin.register(KYCProfile)
 class KYCProfileAdmin(UnfoldModelAdmin):
+    form = KYCAdminForm
     list_display  = ('user', 'full_name', 'id_number', 'county', 'status', 'email_verified', 'submitted_at', 'reviewed_at')
     list_filter   = ('status', 'email_verified', 'county', 'source_of_income', 'expected_monthly_income')
     search_fields = ('user__phone_number', 'given_names', 'surname', 'id_number', 'kra_pin')
@@ -227,6 +244,11 @@ class KYCProfileAdmin(UnfoldModelAdmin):
         ('Location',    {'fields': ('county', 'physical_address')}),
         ('Financials',  {'fields': ('occupation', 'source_of_income', 'expected_monthly_income')}),
         ('Review',      {'fields': ('status', 'rejection_reason', 'reviewed_by', 'reviewed_at')}),
+        ('Ask user to re-submit', {
+            'fields': ('resubmission_requested',),
+            'description': 'Tick items to request a targeted re-submission — the '
+                           'user re-provides only these, not the whole form.',
+        }),
         ('Timestamps',  {'fields': ('submitted_at', 'updated_at')}),
     )
 
@@ -300,6 +322,9 @@ class KYCProfileAdmin(UnfoldModelAdmin):
         super().save_model(request, obj, form, change)
         if decision:
             _notify_kyc_decision(obj)
+        # A reviewer ticked items to re-request via the form → notify the user.
+        if 'resubmission_requested' in form.changed_data and obj.resubmission_requested:
+            _notify_resubmission_request(obj)
 
 
 # ─────────────────────────────────────────────────────────────
