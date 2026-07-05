@@ -61,10 +61,20 @@ resolve later. No webhook endpoint is wired yet — no vendor is selected.
 - The `DEBUG`-only branch and the cross-app `contributions.services._notify`
   import are gone; the KYC-approved/rejected notification now goes through the
   single durable path used by the admin actions.
-- **Out of scope (follow-ups):** ID-scan *detection* + OCR field extraction
-  (reading a Kenyan ID to pre-fill/cross-check typed values); the async webhook
-  endpoint; and choosing an actual vendor / IPRS integration. These are deferred
-  pending a capture-and-OCR decision.
+- **In-house OCR cross-check (delivered, advisory).** `apps/users/ocr/` adds a
+  Kenyan-ID text parser/detector (pure Python, fully testable) behind an
+  `OcrEngine` port (`TesseractEngine` + `NullOcrEngine`/`FakeOcrEngine`).
+  `_run_identity_check` OCRs the front scan, detects whether it's a Kenyan ID,
+  extracts `id_number`/DOB, cross-checks them against the typed values, and
+  stores the result under `verification_detail['ocr']` for the reviewer. It is
+  **advisory only** — it never decides approval — and **degrades gracefully**:
+  when the `tesseract` binary is absent (e.g. Render's native Python runtime) it
+  records "not detected" and manual review proceeds unchanged. Enabling real OCR
+  is a deploy step: run the backend on the **Docker runtime** (the Dockerfile now
+  installs `tesseract-ocr`) rather than the native Python runtime.
+- **Still out of scope (follow-ups):** on-device capture + **pre-fill** on mobile
+  (needs an ML-Kit native module + EAS dev builds); the async vendor webhook
+  endpoint; and choosing an actual vendor / IPRS integration.
 
 ## Alternatives considered
 

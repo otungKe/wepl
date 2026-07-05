@@ -31,6 +31,9 @@ Incremental==24.11.0
 msgpack==1.1.2
 packaging==26.2
 pillow==12.2.0
+# In-house KYC ID OCR (ADR-0023). Pure-Python wrapper; the `tesseract` binary is
+# optional at runtime — the OCR path degrades to manual review when it's absent.
+pytesseract==0.3.13
 psycopg2-binary==2.9.12
 py-ubjson==0.16.1
 pyasn1==0.6.3

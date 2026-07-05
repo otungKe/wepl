@@ -546,3 +546,105 @@ class IdentityCheckApplyTests(TestCase):
         self.assertEqual(kyc.rejection_reason, "Face did not match ID.")
         self.assertTrue(OutboxEvent.objects.filter(
             event_type="kyc_rejected", payload__user_id=user.id).exists())
+
+
+_SAMPLE_ID_TEXT = """
+JAMHURI YA KENYA
+REPUBLIC OF KENYA
+SERIAL NUMBER 123456
+ID NUMBER 12345678
+FULL NAMES JANE DOE
+DATE OF BIRTH 01.01.1990
+SEX FEMALE
+DISTRICT OF BIRTH NAIROBI
+"""
+
+
+class KenyanIdParserTests(SimpleTestCase):
+    """Pure text parser/detector — no OCR binary needed."""
+
+    def test_detects_and_extracts_fields(self):
+        from apps.users.ocr.kenyan_id import parse_kenyan_id
+        scan = parse_kenyan_id(_SAMPLE_ID_TEXT)
+        self.assertTrue(scan.is_kenyan_id)
+        self.assertGreaterEqual(scan.marker_hits, 2)
+        self.assertEqual(scan.id_number, "12345678")
+        self.assertEqual(scan.date_of_birth, "1990-01-01")
+
+    def test_non_id_text_not_detected(self):
+        from apps.users.ocr.kenyan_id import parse_kenyan_id
+        scan = parse_kenyan_id("Grocery receipt total 450 thank you")
+        self.assertFalse(scan.is_kenyan_id)
+
+    def test_cross_check_flags_matches_and_mismatch(self):
+        from apps.users.ocr.kenyan_id import cross_check, parse_kenyan_id
+        scan = parse_kenyan_id(_SAMPLE_ID_TEXT)
+        ok = cross_check(scan, id_number="12345678", date_of_birth="1990-01-01")
+        self.assertTrue(ok["id_number_match"])
+        self.assertTrue(ok["dob_match"])
+        self.assertFalse(ok["mismatch"])
+        bad = cross_check(scan, id_number="99999999", date_of_birth="1990-01-01")
+        self.assertFalse(bad["id_number_match"])
+        self.assertTrue(bad["mismatch"])
+
+
+class OcrEngineTests(TestCase):
+    def test_run_id_ocr_with_fake_engine(self):
+        from apps.users.ocr import run_id_ocr
+        from apps.users.ocr.engine import FakeOcrEngine, use_engine
+        try:
+            use_engine(FakeOcrEngine(_SAMPLE_ID_TEXT))
+            r = run_id_ocr(b"fake-bytes", id_number="12345678", date_of_birth="1990-01-01")
+        finally:
+            use_engine(None)
+        self.assertTrue(r["detected"])
+        self.assertTrue(r["id_number_match"])
+        self.assertEqual(r["engine"], "fake")
+
+    def test_empty_image_degrades(self):
+        from apps.users.ocr import run_id_ocr
+        r = run_id_ocr(b"")
+        self.assertFalse(r["detected"])
+
+    def test_null_engine_when_no_backend(self):
+        from apps.users.ocr import run_id_ocr
+        from apps.users.ocr.engine import NullOcrEngine, use_engine
+        try:
+            use_engine(NullOcrEngine())
+            r = run_id_ocr(b"fake-bytes", id_number="12345678")
+        finally:
+            use_engine(None)
+        self.assertFalse(r["detected"])   # no text → not an ID, manual review
+
+
+class IdentityCheckOcrIntegrationTests(TestCase):
+    """The identity check attaches the OCR cross-check to verification_detail."""
+
+    def test_ocr_detail_recorded(self):
+        from datetime import date
+        from django.core.files.uploadedfile import SimpleUploadedFile
+        from apps.users.models import KYCProfile
+        from apps.users.identity.manual import ManualProvider
+        from apps.users.identity.registry import use_provider
+        from apps.users.ocr.engine import FakeOcrEngine, use_engine
+        from apps.users.views.kyc import _run_identity_check
+
+        user = get_user_model().objects.create_user(phone_number="254700000801")
+        kyc = KYCProfile.objects.create(
+            user=user, given_names="Jane", surname="Doe", id_number="12345678",
+            date_of_birth=date(1990, 1, 1), email="j@example.com", status="pending",
+            id_front=SimpleUploadedFile("id.jpg", b"\xff\xd8fake", content_type="image/jpeg"),
+        )
+        try:
+            use_provider(ManualProvider())
+            use_engine(FakeOcrEngine(_SAMPLE_ID_TEXT))
+            _run_identity_check(kyc)
+        finally:
+            use_provider(None)
+            use_engine(None)
+        kyc.refresh_from_db()
+        ocr = kyc.verification_detail.get("ocr")
+        self.assertIsNotNone(ocr)
+        self.assertTrue(ocr["detected"])
+        self.assertTrue(ocr["id_number_match"])
+        self.assertFalse(ocr["mismatch"])
