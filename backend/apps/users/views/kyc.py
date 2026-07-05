@@ -92,6 +92,65 @@ def _send_kyc_verification_email(kyc, request):
     )
 
 
+def _run_identity_check(kyc):
+    """Run the active identity-verification provider against a KYC row and apply
+    the outcome. Records the provider result for audit and derives the KYC status
+    (VERIFIED→approved, REJECTED→rejected, MANUAL_REVIEW/PENDING→pending),
+    notifying the applicant via the durable event bus on a terminal decision."""
+    from django.utils import timezone
+    from ..identity import IdentitySubject, VERIFIED, REJECTED
+    from ..identity.registry import get_provider
+
+    subject = IdentitySubject(
+        id_number=kyc.id_number,
+        given_names=kyc.given_names,
+        surname=kyc.surname,
+        date_of_birth=kyc.date_of_birth.isoformat() if kyc.date_of_birth else '',
+        id_front_path=kyc.id_front.name if kyc.id_front else None,
+        id_back_path=kyc.id_back.name if kyc.id_back else None,
+        selfie_path=kyc.selfie.name if kyc.selfie else None,
+    )
+
+    try:
+        result = get_provider().verify_identity(subject)
+    except Exception as exc:
+        # A vendor error must never lose the submission — fall back to human review.
+        logger.exception("Identity check failed for user %s: %s", kyc.user_id, exc)
+        kyc.status = 'pending'
+        kyc.save(update_fields=['status'])
+        return
+
+    kyc.verification_provider   = result.provider
+    kyc.verification_ref        = result.provider_ref
+    kyc.verification_state      = result.state
+    kyc.verification_detail     = result.raw or {}
+    kyc.verification_checked_at = timezone.now()
+
+    if result.state == VERIFIED:
+        kyc.status = 'approved'
+    elif result.state == REJECTED:
+        kyc.status = 'rejected'
+        kyc.rejection_reason = result.reason or 'Identity verification was not successful.'
+    else:
+        # MANUAL_REVIEW / PENDING — a human (or an async webhook) decides later.
+        kyc.status = 'pending'
+
+    kyc.save(update_fields=[
+        'status', 'rejection_reason', 'verification_provider', 'verification_ref',
+        'verification_state', 'verification_detail', 'verification_checked_at',
+    ])
+    logger.info(
+        "Identity check for user %s: provider=%s state=%s → status=%s",
+        kyc.user_id, result.provider, result.state, kyc.status,
+    )
+
+    # Notify the applicant on a terminal decision (approved/rejected). Pending
+    # submissions are notified later, when the reviewer/webhook resolves them.
+    if kyc.status in ('approved', 'rejected'):
+        from ..admin import _notify_kyc_decision
+        _notify_kyc_decision(kyc)
+
+
 class KYCCheckEmailView(APIView):
     """
     GET /api/users/kyc/check-email/?email=<value>
@@ -165,43 +224,12 @@ class KYCEmailVerifyView(APIView):
             kyc.save(update_fields=['email_verified', 'email_verification_token'])
             logger.info("KYC email verified for user %s (%s)", kyc.user_id, kyc.email)
 
-            # ── Identity verification pipeline ────────────────────────────
-            # PRODUCTION (TODO):
-            #   1. Call IPRS (Integrated Population Registration System) with
-            #      kyc.id_number → validates ID number is real and matches
-            #      kyc.given_names / kyc.surname / kyc.date_of_birth.
-            #   2. Call a selfie-vs-ID liveness API (e.g. Smile Identity,
-            #      Onfido, or Jumio) with kyc.id_front and kyc.selfie.
-            #   3. If ALL checks pass → approve immediately.
-            #      If any check fails → set status='pending' for manual review.
-            #
-            # DEVELOPMENT: assume all submissions pass — auto-approve on
-            # email verification so developers get full app access instantly.
-            from django.conf import settings as conf
-            if getattr(conf, 'DEBUG', False):
-                kyc.status = 'approved'
-                kyc.save(update_fields=['status'])
-                logger.info(
-                    "DEV auto-approve: KYC for user %s approved after email verification.",
-                    kyc.user_id,
-                )
-                # Notify the user they are now verified
-                from apps.contributions.services import _notify
-                _notify(
-                    user=kyc.user,
-                    notification_type='join_approved',   # reuses the ✓ approved icon
-                    title="Identity verified!",
-                    message=(
-                        "Your identity has been verified. "
-                        "You now have full access to payments, contributions, and community features."
-                    ),
-                )
-            else:
-                # Production: result handled async by the ID verification webhook
-                logger.info(
-                    "PROD: KYC for user %s queued for identity verification pipeline.",
-                    kyc.user_id,
-                )
+            # ── Identity verification (apps.users.identity port) ──────────
+            # The active provider decides the outcome. Today: ManualProvider in
+            # production (human review) and FakeProvider under DEBUG (auto-verify)
+            # — historical behaviour preserved. A real vendor or an IPRS lookup
+            # drops in as another adapter with no change here.
+            _run_identity_check(kyc)
 
         # The email verification page ONLY confirms the email address.
         # Identity verification is a separate step — the outcome is

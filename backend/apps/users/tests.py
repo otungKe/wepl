@@ -436,3 +436,113 @@ class DataExportTests(TestCase):
                     "communities", "contributions", "transactions",
                     "payment_methods", "exported_at"):
             self.assertIn(key, body)
+
+
+class IdentityProviderPortTests(TestCase):
+    """The IdentityVerificationProvider port and its adapters (apps.users.identity)."""
+
+    def _subject(self):
+        from apps.users.identity import IdentitySubject
+        return IdentitySubject(
+            id_number="12345678", given_names="Jane", surname="Doe",
+            date_of_birth="1990-01-01",
+        )
+
+    def test_manual_provider_routes_to_review(self):
+        from apps.users.identity import MANUAL_REVIEW
+        from apps.users.identity.manual import ManualProvider
+        r = ManualProvider().verify_identity(self._subject())
+        self.assertEqual(r.state, MANUAL_REVIEW)
+        self.assertEqual(r.provider, "manual")
+        self.assertTrue(r.is_terminal)
+
+    def test_fake_provider_verifies_by_default(self):
+        from apps.users.identity import VERIFIED
+        from apps.users.identity.fake import FakeProvider
+        r = FakeProvider().verify_identity(self._subject())
+        self.assertEqual(r.state, VERIFIED)
+        self.assertEqual(r.provider, "fake")
+
+    def test_fake_provider_can_reject(self):
+        from apps.users.identity import REJECTED
+        from apps.users.identity.fake import FakeProvider
+        r = FakeProvider(outcome=REJECTED).verify_identity(self._subject())
+        self.assertEqual(r.state, REJECTED)
+
+    def test_registry_override_wins(self):
+        from apps.users.identity.manual import ManualProvider
+        from apps.users.identity.registry import get_provider, use_provider
+        try:
+            use_provider(ManualProvider())
+            self.assertEqual(get_provider().name, "manual")
+        finally:
+            use_provider(None)
+
+
+class IdentityCheckApplyTests(TestCase):
+    """`_run_identity_check` applies the provider outcome to the KYC row and
+    notifies the applicant on a terminal decision."""
+
+    def _make_kyc(self, phone):
+        from datetime import date
+        from apps.users.models import KYCProfile
+        user = get_user_model().objects.create_user(phone_number=phone)
+        kyc = KYCProfile.objects.create(
+            user=user, given_names="Jane", surname="Doe", id_number=f"ID{user.pk}",
+            date_of_birth=date(1990, 1, 1), email="j@example.com", status="pending",
+        )
+        return user, kyc
+
+    def test_verified_approves_and_notifies(self):
+        from apps.core.models import OutboxEvent
+        from apps.users.identity.fake import FakeProvider
+        from apps.users.identity.registry import use_provider
+        from apps.users.views.kyc import _run_identity_check
+        user, kyc = self._make_kyc("254700000701")
+        try:
+            use_provider(FakeProvider())   # VERIFIED
+            _run_identity_check(kyc)
+        finally:
+            use_provider(None)
+        kyc.refresh_from_db()
+        self.assertEqual(kyc.status, "approved")
+        self.assertEqual(kyc.verification_provider, "fake")
+        self.assertEqual(kyc.verification_state, "verified")
+        self.assertIsNotNone(kyc.verification_checked_at)
+        self.assertTrue(OutboxEvent.objects.filter(
+            event_type="kyc_approved", payload__user_id=user.id).exists())
+
+    def test_manual_leaves_pending_without_terminal_notification(self):
+        from apps.core.models import OutboxEvent
+        from apps.users.identity.manual import ManualProvider
+        from apps.users.identity.registry import use_provider
+        from apps.users.views.kyc import _run_identity_check
+        user, kyc = self._make_kyc("254700000702")
+        try:
+            use_provider(ManualProvider())
+            _run_identity_check(kyc)
+        finally:
+            use_provider(None)
+        kyc.refresh_from_db()
+        self.assertEqual(kyc.status, "pending")
+        self.assertEqual(kyc.verification_state, "manual_review")
+        self.assertFalse(OutboxEvent.objects.filter(
+            event_type="kyc_approved", payload__user_id=user.id).exists())
+
+    def test_rejected_sets_reason_and_notifies(self):
+        from apps.core.models import OutboxEvent
+        from apps.users.identity import REJECTED
+        from apps.users.identity.fake import FakeProvider
+        from apps.users.identity.registry import use_provider
+        from apps.users.views.kyc import _run_identity_check
+        user, kyc = self._make_kyc("254700000703")
+        try:
+            use_provider(FakeProvider(outcome=REJECTED, reason="Face did not match ID."))
+            _run_identity_check(kyc)
+        finally:
+            use_provider(None)
+        kyc.refresh_from_db()
+        self.assertEqual(kyc.status, "rejected")
+        self.assertEqual(kyc.rejection_reason, "Face did not match ID.")
+        self.assertTrue(OutboxEvent.objects.filter(
+            event_type="kyc_rejected", payload__user_id=user.id).exists())

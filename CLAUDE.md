@@ -86,6 +86,12 @@ any phone in dev/staging. **`config/settings/production.py` raises `ImproperlyCo
 if `STAGING_OTP_BYPASS` is set while `DEBUG=False`** — this guard is intentional and must not be
 weakened. In production, `SMS_BACKEND=console` routes real OTP codes to the logs.
 
+KYC identity checks (the Tier-0 → Tier-1 gate, ADR-0022) run through the
+`IdentityVerificationProvider` port in `apps/users/identity/` (`ManualProvider` = human
+review, `FakeProvider` = tests, resolved via `registry.get_provider()`, mirrors the payments
+port). `KYCEmailVerifyView` calls it via `_run_identity_check()`; a real vendor / IPRS lookup
+drops in as another adapter without touching the view (ADR-0023).
+
 ## Layout & conventions
 
 - `backend/config/settings/`: `base.py` → `development.py` / `production.py`.
