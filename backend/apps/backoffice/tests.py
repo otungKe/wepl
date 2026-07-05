@@ -177,3 +177,76 @@ class BootstrapTests(TestCase):
         self.assertTrue(acct.is_superuser)
         self.assertFalse(acct.must_change_password)
         self.assertTrue(acct.check_password("Bootstrap-Pass-1"))
+
+
+class VerificationApiTests(TestCase):
+    def setUp(self):
+        from datetime import date
+        from apps.users.models import KYCProfile, User
+        self.applicant = User.objects.create(phone_number="254733000001", name="Ada L")
+        self.kyc = KYCProfile.objects.create(
+            user=self.applicant, given_names="Ada", surname="Lovelace", id_number="11223344",
+            kra_pin="A012345678Z", date_of_birth=date(1990, 1, 1), status="pending",
+            email="ada@example.com",
+            verification_detail={"ocr": {"detected": True, "id_number_match": False, "mismatch": True}})
+
+    def test_queue_requires_verification_view(self):
+        # support has no verification.view
+        self.assertEqual(op_client(make_staff("s@imbank.co.ke", "support"))
+                         .get("/api/ops/verification/queue/").status_code, 403)
+
+    def test_queue_lists_pending_with_flags(self):
+        c = op_client(make_staff("v@imbank.co.ke", "verification"))
+        body = c.get("/api/ops/verification/queue/").json()
+        row = next(r for r in body["results"] if r["user_id"] == self.applicant.id)
+        self.assertEqual(row["status"], "pending")
+        self.assertTrue(row["ocr_mismatch"])
+        self.assertIsNotNone(row["age_hours"])
+
+    def test_case_detail(self):
+        c = op_client(make_staff("v2@imbank.co.ke", "verification"))
+        body = c.get(f"/api/ops/verification/{self.applicant.id}/").json()
+        self.assertEqual(body["applicant"]["kra_pin"], "A012345678Z")
+        self.assertIn("id_front", body["documents"])
+        self.assertTrue(body["checks"]["ocr"]["mismatch"])
+
+    def test_approve_decision_requires_decide_capability(self):
+        # A verification *view*-only staffer can't decide (verification role has decide,
+        # so use a role that views but not decides — auditor has verification.view only).
+        auditor = make_staff("aud@imbank.co.ke", "auditor")
+        r = op_client(auditor).post(f"/api/ops/verification/{self.applicant.id}/decision/",
+                                    {"action": "approve"}, format="json")
+        self.assertEqual(r.status_code, 403)
+
+    def test_approve_updates_status_and_audits(self):
+        from apps.audit.models import AuditEvent
+        from apps.users.models import KYCProfile
+        c = op_client(make_staff("v3@imbank.co.ke", "verification"))
+        r = c.post(f"/api/ops/verification/{self.applicant.id}/decision/",
+                   {"action": "approve"}, format="json")
+        self.assertEqual(r.status_code, 200, r.content)
+        self.kyc.refresh_from_db()
+        self.assertEqual(self.kyc.status, "approved")
+        self.assertTrue(self.kyc.verification_provider.startswith("ops:"))
+        self.assertTrue(AuditEvent.objects.filter(action="ops.verification.approve").exists())
+
+    def test_reject_requires_reason(self):
+        c = op_client(make_staff("v4@imbank.co.ke", "verification"))
+        no_reason = c.post(f"/api/ops/verification/{self.applicant.id}/decision/",
+                           {"action": "reject"}, format="json")
+        self.assertEqual(no_reason.status_code, 400)
+        ok = c.post(f"/api/ops/verification/{self.applicant.id}/decision/",
+                    {"action": "reject", "reason": "Blurry ID"}, format="json")
+        self.assertEqual(ok.status_code, 200)
+        self.kyc.refresh_from_db()
+        self.assertEqual(self.kyc.status, "rejected")
+        self.assertEqual(self.kyc.rejection_reason, "Blurry ID")
+
+    def test_request_resubmission_sets_items_no_status_change(self):
+        c = op_client(make_staff("v5@imbank.co.ke", "verification"))
+        r = c.post(f"/api/ops/verification/{self.applicant.id}/decision/",
+                   {"action": "request_resubmission", "items": ["selfie", "bogus"]}, format="json")
+        self.assertEqual(r.status_code, 200)
+        self.kyc.refresh_from_db()
+        self.assertEqual(self.kyc.resubmission_requested, ["selfie"])   # bogus filtered
+        self.assertEqual(self.kyc.status, "pending")                    # unchanged
