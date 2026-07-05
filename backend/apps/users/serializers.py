@@ -124,6 +124,7 @@ class KYCSubmitSerializer(serializers.ModelSerializer):
             'given_names',
             'surname',
             'id_number',
+            'kra_pin',
             'date_of_birth',
             'email',
             'id_front',
@@ -146,6 +147,13 @@ class KYCSubmitSerializer(serializers.ModelSerializer):
                 'required': True,
                 'allow_blank': False,
                 'error_messages': {'required': 'Physical address is required.'},
+            },
+            # KRA PIN — entered manually for now (a vendor may auto-populate it
+            # post-verification later). Required at submit; format-checked below.
+            'kra_pin': {
+                'required': True,
+                'allow_blank': False,
+                'error_messages': {'required': 'KRA PIN is required.'},
             },
             # Both sides of the ID and a live selfie are mandatory so a human
             # reviewer always has the full document set to verify against (and a
@@ -173,6 +181,15 @@ class KYCSubmitSerializer(serializers.ModelSerializer):
         value = value.strip()
         if not value:
             raise serializers.ValidationError("ID number is required.")
+        return value
+
+    def validate_kra_pin(self, value):
+        """KRA PIN format: a letter, 9 digits, then a letter (e.g. A012345678Z)."""
+        value = (value or "").strip().upper()
+        if not re.match(r"^[A-Z]\d{9}[A-Z]$", value):
+            raise serializers.ValidationError(
+                "Enter a valid KRA PIN, e.g. A012345678Z."
+            )
         return value
 
     def validate_date_of_birth(self, value):

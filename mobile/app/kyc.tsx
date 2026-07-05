@@ -167,6 +167,7 @@ export default function KYCScreen() {
   const [givenNames, setGivenNames] = useState("");
   const [surname,    setSurname]    = useState("");
   const [idNumber,        setIdNumber]        = useState("");
+  const [kraPin,          setKraPin]          = useState("");
   const [idCheckState,    setIdCheckState]    = useState<"idle" | "checking" | "taken" | "ok">("idle");
   const [emailCheckState, setEmailCheckState] = useState<"idle" | "checking" | "warn" | "ok">("idle");
   const [emailWarning,    setEmailWarning]    = useState("");
@@ -337,6 +338,9 @@ export default function KYCScreen() {
       if (!idNumber.trim())     return "ID number is required.";
       if (idCheckState === "taken")    return "This ID number is already registered to another account.";
       if (idCheckState === "checking") return "Checking ID number availability…";
+      if (!kraPin.trim())       return "KRA PIN is required.";
+      if (!/^[A-Z]\d{9}[A-Z]$/.test(kraPin.trim().toUpperCase()))
+                                return "Enter a valid KRA PIN (e.g. A012345678Z).";
       if (!isDobFormatValid())  return "Please enter a valid date of birth.";
       if (!isAgeAtLeast18())    return "You must be at least 18 years old to register.";
       if (!email.trim())        return "Email address is required.";
@@ -406,6 +410,7 @@ export default function KYCScreen() {
     form.append("given_names",             givenNames.trim());
     form.append("surname",                 surname.trim());
     form.append("id_number",               idNumber.trim());
+    form.append("kra_pin",                  kraPin.trim().toUpperCase());
     form.append("date_of_birth",           dobString());
     form.append("email",                   email.trim());
     form.append("county",                  county);
@@ -505,6 +510,20 @@ export default function KYCScreen() {
                   This ID number is already registered to another account.
                 </Text>
               )}
+            </Field>
+
+            <Field label="KRA PIN">
+              <TextInput
+                style={s.input}
+                value={kraPin}
+                onChangeText={(t) => setKraPin(t.toUpperCase())}
+                placeholder="e.g. A012345678Z"
+                placeholderTextColor={COLORS.textMuted}
+                autoCapitalize="characters"
+                autoCorrect={false}
+                maxLength={11}
+                returnKeyType="next"
+              />
             </Field>
 
             <Field label="Date of Birth">
@@ -927,6 +946,7 @@ export default function KYCScreen() {
               <Text style={s.reviewTitle}>Your submission summary</Text>
               <Text style={s.reviewRow}>Full Name:    <Text style={s.reviewVal}>{givenNames} {surname}</Text></Text>
               <Text style={s.reviewRow}>ID No:        <Text style={s.reviewVal}>{idNumber}</Text></Text>
+              <Text style={s.reviewRow}>KRA PIN:      <Text style={s.reviewVal}>{kraPin}</Text></Text>
               <Text style={s.reviewRow}>Date of Birth:<Text style={s.reviewVal}> {dob ? dobDisplayString() : "—"}</Text></Text>
               <Text style={s.reviewRow}>Email:        <Text style={s.reviewVal}>{email}</Text></Text>
               <Text style={s.reviewRow}>County:       <Text style={s.reviewVal}>{county}</Text></Text>
