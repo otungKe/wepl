@@ -408,19 +408,6 @@ export default function SettingsScreen() {
   }
 
   const version  = Constants.expoConfig?.version ?? "1.0.0";
-  const kycLabel = {
-    approved:      "Verified ✓",
-    pending:       "Under Review",
-    rejected:      "Action Required",
-    not_submitted: "Not Submitted",
-  }[profile.kyc_status] ?? "Not Submitted";
-
-  const kycColor = {
-    approved:      COLORS.success,
-    pending:       COLORS.warning,
-    rejected:      COLORS.error,
-    not_submitted: COLORS.textMuted,
-  }[profile.kyc_status] ?? COLORS.textMuted;
 
   if (loadingProfile) {
     return (
@@ -467,19 +454,6 @@ export default function SettingsScreen() {
             icon="phone-portrait-outline"
             label="Active devices"
             onPress={() => router.push("/sessions")}
-          />
-        </Card>
-
-        {/* ── Verification ─────────────────────────────────── */}
-        <SectionHeader title="Verification" />
-        <Card>
-          <Row
-            icon="shield-checkmark-outline"
-            iconColor={kycColor}
-            iconBg={kycColor + "18"}
-            label="Verification Center"
-            value={kycLabel}
-            onPress={() => router.push("/verification")}
           />
         </Card>
 
