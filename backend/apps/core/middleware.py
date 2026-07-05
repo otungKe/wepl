@@ -53,7 +53,9 @@ class RequestIdMiddleware:
         # Only write to DB if the stored value is stale by more than
         # LAST_SEEN_UPDATE_INTERVAL — avoids a DB write on every request.
         user = getattr(request, 'user', None)
-        if user and user.is_authenticated:
+        # last_seen is a customer-User concept; Back Office StaffAccounts (and
+        # AnonymousUser) don't have it, so guard before touching it.
+        if user and user.is_authenticated and hasattr(user, 'last_seen'):
             now = timezone.now()
             if (
                 user.last_seen is None

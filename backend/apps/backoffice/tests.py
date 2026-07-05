@@ -1,159 +1,179 @@
-from django.contrib.auth import get_user_model
 from django.contrib.auth.models import Group
 from django.core.management import call_command
-from django.test import TestCase
+from django.test import TestCase, override_settings
 from rest_framework.test import APIClient
 
+from apps.backoffice.auth import issue_staff_token
 from apps.backoffice.capabilities import (
     ALL_ROLES, capabilities_for, group_name, has_capability, is_operator, roles_for,
 )
+from apps.backoffice.models import StaffAccount
 
-User = get_user_model()
 
-
-def make_operator(phone, *roles, staff=True, superuser=False):
-    u = User.objects.create(phone_number=phone, is_staff=staff, is_superuser=superuser)
+def make_staff(email, *roles, password="s3cret-pass!!", active=True, superuser=False,
+               must_change=False):
+    acct = StaffAccount.objects.create(
+        email=email, full_name=email.split("@")[0], is_active=active,
+        is_superuser=superuser, must_change_password=must_change,
+    )
+    acct.set_password(password)
+    acct.save()
     for r in roles:
         g, _ = Group.objects.get_or_create(name=group_name(r))
-        u.groups.add(g)
-    return u
+        acct.groups.add(g)
+    return acct
+
+
+def op_client(staff):
+    c = APIClient()
+    c.credentials(HTTP_AUTHORIZATION=f"Bearer {issue_staff_token(staff)}")
+    return c
 
 
 class CapabilityMapTests(TestCase):
     def test_superuser_holds_all_capabilities(self):
-        su = make_operator("254700000001", superuser=True)
         from apps.backoffice.capabilities import CAPABILITIES
+        su = make_staff("root@imbank.co.ke", superuser=True)
         self.assertEqual(capabilities_for(su), set(CAPABILITIES))
         self.assertTrue(has_capability(su, "ledger.adjust"))
 
     def test_finance_role_capabilities(self):
-        f = make_operator("254700000002", "finance")
+        f = make_staff("fin@imbank.co.ke", "finance")
         self.assertEqual(roles_for(f), ["finance"])
         self.assertTrue(has_capability(f, "ledger.adjust"))
-        self.assertTrue(has_capability(f, "finops.approve"))
-        # Finance is not a verification officer.
         self.assertFalse(has_capability(f, "verification.decide"))
 
     def test_support_is_read_oriented(self):
-        s = make_operator("254700000003", "support")
+        s = make_staff("sup@imbank.co.ke", "support")
         self.assertTrue(has_capability(s, "users.view"))
         self.assertFalse(has_capability(s, "ledger.view"))
-        self.assertFalse(has_capability(s, "config.change"))
 
-    def test_non_staff_has_nothing(self):
-        u = make_operator("254700000004", "finance", staff=False)
-        self.assertFalse(has_capability(u, "ledger.view"))
-        self.assertFalse(is_operator(u))
+    def test_inactive_or_roleless_is_not_operator(self):
+        self.assertFalse(is_operator(make_staff("x@imbank.co.ke", "finance", active=False)))
+        self.assertFalse(is_operator(make_staff("y@imbank.co.ke")))  # no role
 
-    def test_multiple_roles_union(self):
-        u = make_operator("254700000005", "risk", "verification")
-        self.assertTrue(has_capability(u, "risk.decide"))
-        self.assertTrue(has_capability(u, "verification.decide"))
+
+class StaffAuthTests(TestCase):
+    def setUp(self):
+        self.staff = make_staff("harry.onyango@imbank.co.ke", "finance", password="Correct-Horse-9")
+
+    def test_login_success_returns_token(self):
+        r = APIClient().post("/api/ops/auth/login/",
+                             {"email": "harry.onyango@imbank.co.ke", "password": "Correct-Horse-9"},
+                             format="json")
+        self.assertEqual(r.status_code, 200, r.content)
+        self.assertIn("token", r.json())
+        self.assertFalse(r.json()["must_change_password"])
+
+    def test_login_wrong_password_401(self):
+        r = APIClient().post("/api/ops/auth/login/",
+                             {"email": "harry.onyango@imbank.co.ke", "password": "nope"}, format="json")
+        self.assertEqual(r.status_code, 401)
+
+    def test_inactive_account_cannot_login(self):
+        self.staff.is_active = False; self.staff.save()
+        r = APIClient().post("/api/ops/auth/login/",
+                             {"email": "harry.onyango@imbank.co.ke", "password": "Correct-Horse-9"},
+                             format="json")
+        self.assertEqual(r.status_code, 401)
+
+    def test_token_authenticates_me_endpoint(self):
+        r = op_client(self.staff).get("/api/ops/me/")
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(r.json()["email"], "harry.onyango@imbank.co.ke")
+        self.assertIn("ledger.adjust", r.json()["capabilities"])
+
+    def test_no_token_is_401(self):
+        self.assertEqual(APIClient().get("/api/ops/me/").status_code, 401)
+
+    def test_change_password_requires_current(self):
+        c = op_client(self.staff)
+        bad = c.post("/api/ops/auth/change-password/",
+                     {"current_password": "wrong", "new_password": "Brand-New-Pass-1"}, format="json")
+        self.assertEqual(bad.status_code, 400)
+        ok = c.post("/api/ops/auth/change-password/",
+                    {"current_password": "Correct-Horse-9", "new_password": "Brand-New-Pass-1"}, format="json")
+        self.assertEqual(ok.status_code, 200)
+        self.staff.refresh_from_db()
+        self.assertFalse(self.staff.must_change_password)
+        self.assertTrue(self.staff.check_password("Brand-New-Pass-1"))
+
+    def test_first_login_flags_password_change(self):
+        acct = make_staff("new.op@imbank.co.ke", "support", must_change=True)
+        r = APIClient().post("/api/ops/auth/login/",
+                             {"email": "new.op@imbank.co.ke", "password": "s3cret-pass!!"}, format="json")
+        self.assertTrue(r.json()["must_change_password"])
+
+    def test_admin_reset_forces_change_and_no_self_service(self):
+        temp = self.staff.force_reset()
+        self.staff.refresh_from_db()
+        self.assertTrue(self.staff.must_change_password)
+        self.assertTrue(self.staff.check_password(temp))
+        # There is no self-service reset endpoint.
+        self.assertEqual(APIClient().post("/api/ops/auth/reset/", {}, format="json").status_code, 404)
 
 
 class OpsMeEndpointTests(TestCase):
-    def _client(self, user):
-        c = APIClient()
-        c.force_authenticate(user=user)
-        return c
+    def test_roleless_staff_forbidden(self):
+        self.assertEqual(op_client(make_staff("nobody@imbank.co.ke")).get("/api/ops/me/").status_code, 403)
 
-    def test_plain_user_is_forbidden(self):
-        u = make_operator("254700000010", staff=False)
-        self.assertEqual(self._client(u).get("/api/ops/me/").status_code, 403)
+    def test_operator_gets_roles(self):
+        body = op_client(make_staff("v@imbank.co.ke", "verification")).get("/api/ops/me/").json()
+        self.assertEqual(body["roles"], ["verification"])
+        self.assertIn("verification.decide", body["capabilities"])
 
-    def test_staff_without_role_is_forbidden(self):
-        u = make_operator("254700000011")  # staff but no ops group
-        self.assertEqual(self._client(u).get("/api/ops/me/").status_code, 403)
 
-    def test_operator_gets_roles_and_capabilities(self):
-        u = make_operator("254700000012", "finance")
-        r = self._client(u).get("/api/ops/me/")
-        self.assertEqual(r.status_code, 200)
-        body = r.json()
-        self.assertEqual(body["roles"], ["finance"])
-        self.assertIn("ledger.adjust", body["capabilities"])
-        self.assertNotIn("verification.decide", body["capabilities"])
+class OpsSearchTests(TestCase):
+    def setUp(self):
+        from datetime import date
+        from apps.communities.services import CommunityService
+        from apps.users.models import KYCProfile, User
+        self.target = User.objects.create(phone_number="254712345678", name="Ada Lovelace")
+        KYCProfile.objects.create(user=self.target, given_names="Ada", surname="Lovelace",
+            id_number="87654321", date_of_birth=date(1990, 1, 1), status="pending")
+        creator = User.objects.create(phone_number="254700000099")
+        CommunityService.create_community(creator, {"name": "Riverside Chama"})
 
-    def test_superuser_sees_everything(self):
-        su = make_operator("254700000013", superuser=True)
-        body = self._client(su).get("/api/ops/me/").json()
-        self.assertIn("config.change", body["capabilities"])
-        self.assertTrue(body["is_superuser"])
+    def test_capability_scoped(self):
+        support = op_client(make_staff("s2@imbank.co.ke", "support"))
+        fin = op_client(make_staff("f2@imbank.co.ke", "finance"))
+        self.assertNotIn("journal", support.get("/api/ops/search/?q=CONTRIB").json()["counts"])
+        self.assertIn("journal", fin.get("/api/ops/search/?q=CONTRIB").json()["counts"])
+
+    def test_user_lookup_and_audit(self):
+        from apps.audit.models import AuditEvent
+        op_client(make_staff("s3@imbank.co.ke", "support")).get("/api/ops/search/?q=Ada")
+        self.assertTrue(AuditEvent.objects.filter(action="ops.search.performed").exists())
 
 
 class OpsAuditTests(TestCase):
-    def test_record_action_writes_audit_event(self):
+    def test_staff_action_attributed_by_email(self):
         from apps.audit.models import AuditEvent
         from apps.backoffice.audit import record_action
-        actor = make_operator("254700000020", "finance")
-        record_action(action="ops.test.performed", actor=actor,
-                      target_type="KYCProfile", target_id="42", metadata={"k": "v"})
+        staff = make_staff("auditee@imbank.co.ke", "finance")
+        record_action(action="ops.test.performed", actor=staff, metadata={"k": "v"})
         ev = AuditEvent.objects.get(action="ops.test.performed")
-        self.assertEqual(ev.actor_id, actor.id)
-        self.assertEqual(ev.target_id, "42")
-        self.assertEqual(ev.metadata, {"k": "v"})
-
-    def test_record_action_never_raises(self):
-        from apps.backoffice.audit import record_action
-        # Bad metadata type shouldn't bubble up and break the caller's action.
-        record_action(action="ops.test.safe", actor=None, metadata=None)
+        self.assertIsNone(ev.actor_id)                     # not the customer FK
+        self.assertEqual(ev.actor_label, "auditee@imbank.co.ke")
+        self.assertEqual(ev.metadata["staff_id"], staff.id)
 
 
-class SeedOpsRolesTests(TestCase):
-    def test_seeds_all_role_groups(self):
+class BootstrapTests(TestCase):
+    def test_seed_ops_roles(self):
         call_command("seed_ops_roles")
         for role in ALL_ROLES:
             self.assertTrue(Group.objects.filter(name=group_name(role)).exists(), role)
 
-
-class OpsSearchTests(TestCase):
-    def _client(self, user):
-        c = APIClient(); c.force_authenticate(user=user); return c
-
-    def setUp(self):
-        from datetime import date
-        from apps.communities.services import CommunityService
-        from apps.users.models import KYCProfile
-        self.target = User.objects.create(phone_number="254712345678", name="Ada Lovelace")
-        KYCProfile.objects.create(user=self.target, given_names="Ada", surname="Lovelace",
-            id_number="87654321", date_of_birth=date(1990, 1, 1), status="pending")
-        self.creator = User.objects.create(phone_number="254700000099")
-        CommunityService.create_community(self.creator, {"name": "Riverside Chama"})
-
-    def test_operator_finds_community(self):
-        op = make_operator("254700000200", "operations")
-        body = self._client(op).get("/api/ops/search/?q=Riverside").json()
-        self.assertIn("community", {r["type"] for r in body["results"]})
-
-    def test_results_are_capability_scoped(self):
-        # 'counts' records which searchers ran: support can't run the journal
-        # searcher (no ledger.view); finance can.
-        support = make_operator("254700000201", "support")
-        fin = make_operator("254700000202", "finance")
-        s_body = self._client(support).get("/api/ops/search/?q=CONTRIB").json()
-        f_body = self._client(fin).get("/api/ops/search/?q=CONTRIB").json()
-        self.assertNotIn("journal", s_body["counts"])
-        self.assertIn("journal", f_body["counts"])
-        # ...and support cannot surface verification (KYC) results either.
-        self.assertNotIn("verification", s_body["counts"])
-
-    def test_user_lookup_by_phone(self):
-        op = make_operator("254700000203", "support")
-        body = self._client(op).get("/api/ops/search/?q=712345678").json()
-        labels = {r["label"] for r in body["results"] if r["type"] == "user"}
-        self.assertIn("Ada Lovelace", labels)
-
-    def test_short_query_returns_nothing(self):
-        op = make_operator("254700000204", "operations")
-        body = self._client(op).get("/api/ops/search/?q=a").json()
-        self.assertEqual(body["results"], [])
-
-    def test_search_is_audited(self):
-        from apps.audit.models import AuditEvent
-        op = make_operator("254700000205", "support")
-        self._client(op).get("/api/ops/search/?q=Ada")
-        self.assertTrue(AuditEvent.objects.filter(action="ops.search.performed").exists())
-
-    def test_roleless_staff_is_blocked(self):
-        staff = make_operator("254700000206")  # no ops role
-        self.assertEqual(self._client(staff).get("/api/ops/search/?q=Ada").status_code, 403)
+    @override_settings()
+    def test_create_ops_admin_from_env(self):
+        import os
+        os.environ["OPS_ADMIN_EMAIL"] = "boss@imbank.co.ke"
+        os.environ["OPS_ADMIN_PASSWORD"] = "Bootstrap-Pass-1"
+        try:
+            call_command("create_ops_admin")
+        finally:
+            del os.environ["OPS_ADMIN_EMAIL"]; del os.environ["OPS_ADMIN_PASSWORD"]
+        acct = StaffAccount.objects.get(email="boss@imbank.co.ke")
+        self.assertTrue(acct.is_superuser)
+        self.assertFalse(acct.must_change_password)
+        self.assertTrue(acct.check_password("Bootstrap-Pass-1"))

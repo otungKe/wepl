@@ -86,6 +86,13 @@ services:
         sync: false
       - key: ADMIN_PASSWORD
         sync: false
+      # Back Office bootstrap super admin (StaffAccount) — corporate email +
+      # password, provisioned on deploy by create_ops_admin. This is the seed
+      # operator who then provisions the rest from the console/admin.
+      - key: OPS_ADMIN_EMAIL
+        sync: false
+      - key: OPS_ADMIN_PASSWORD
+        sync: false
       - key: DB_NAME
         fromDatabase:
           name: wepl-db
@@ -238,6 +245,10 @@ services:
       - key: ADMIN_PHONE
         sync: false
       - key: ADMIN_PASSWORD
+        sync: false
+      - key: OPS_ADMIN_EMAIL
+        sync: false
+      - key: OPS_ADMIN_PASSWORD
         sync: false
       - key: DB_NAME
         fromDatabase:
