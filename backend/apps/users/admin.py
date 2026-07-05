@@ -123,12 +123,34 @@ def reject_kyc(modeladmin, request, queryset):
 
 
 def _img(file):
+    """Render a KYC document preview for the admin, degrading legibly:
+    - no file on the record → '—'
+    - file recorded but missing from storage (e.g. object storage not enabled,
+      so uploads landed on an ephemeral disk and were lost) → a clear warning
+      with the stored path, instead of a silent broken-image icon
+    - URL cannot be built → a warning with the error
+    """
     if not file:
         return '—'
+    try:
+        if not file.storage.exists(file.name):
+            return format_html(
+                '<span style="color:#C0392B">⚠ File not found in storage: <code>{}</code><br>'
+                '<small>Uploads are not being stored durably — enable object storage '
+                '(USE_S3) so KYC documents persist.</small></span>',
+                file.name,
+            )
+    except Exception:
+        pass  # some backends can't cheaply check existence — let the browser try
+    try:
+        url = file.url
+    except Exception as exc:
+        return format_html('<span style="color:#C0392B">⚠ Cannot build URL for <code>{}</code> ({})</span>',
+                           file.name, str(exc))
     return format_html(
         '<a href="{0}" target="_blank"><img src="{0}" '
         'style="max-height:220px;max-width:340px;border:1px solid #ccc;border-radius:6px"/></a>',
-        file.url,
+        url,
     )
 
 

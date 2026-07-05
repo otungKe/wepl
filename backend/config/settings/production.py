@@ -94,6 +94,8 @@ STORAGES = {
 }
 
 if USE_S3:
+    INSTALLED_APPS = [*INSTALLED_APPS, 'storages']   # noqa: F405
+
     AWS_STORAGE_BUCKET_NAME = config('AWS_STORAGE_BUCKET_NAME')
     AWS_S3_REGION_NAME      = config('AWS_S3_REGION_NAME', default='auto')
     AWS_S3_ENDPOINT_URL     = config('AWS_S3_ENDPOINT_URL', default='') or None
