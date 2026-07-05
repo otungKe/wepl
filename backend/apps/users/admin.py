@@ -60,6 +60,17 @@ class UserAdmin(BaseUserAdmin, UnfoldModelAdmin):
 # KYC ADMIN
 # ─────────────────────────────────────────────────────────────
 
+def _stamp_manual_decision(kyc):
+    """Record that a human made this call on the identity-verification audit
+    fields, so the "Provider & OCR cross-check" panel stays consistent with the
+    KYC status instead of showing the earlier automated 'manual_review' result.
+    Returns the field names to include in the caller's save(update_fields=...)."""
+    kyc.verification_provider   = 'manual (admin)'
+    kyc.verification_state      = 'verified' if kyc.status == 'approved' else 'rejected'
+    kyc.verification_checked_at = timezone.now()
+    return ['verification_provider', 'verification_state', 'verification_checked_at']
+
+
 def _notify_kyc_decision(kyc):
     """Tell the applicant their KYC was approved/rejected (in-app notification).
 
@@ -94,7 +105,8 @@ def approve_kyc(modeladmin, request, queryset):
         kyc.reviewed_by     = request.user
         kyc.reviewed_at     = timezone.now()
         kyc.rejection_reason = ''
-        kyc.save(update_fields=['status', 'reviewed_by', 'reviewed_at', 'rejection_reason'])
+        extra = _stamp_manual_decision(kyc)
+        kyc.save(update_fields=['status', 'reviewed_by', 'reviewed_at', 'rejection_reason', *extra])
         _notify_kyc_decision(kyc)
         n += 1
     modeladmin.message_user(request, f"{n} KYC submission(s) approved and applicant(s) notified.")
@@ -112,7 +124,8 @@ def reject_kyc(modeladmin, request, queryset):
                 'Your documents could not be verified. Please re-submit clear '
                 'photos of your ID.'
             )
-        kyc.save(update_fields=['status', 'reviewed_by', 'reviewed_at', 'rejection_reason'])
+        extra = _stamp_manual_decision(kyc)
+        kyc.save(update_fields=['status', 'reviewed_by', 'reviewed_at', 'rejection_reason', *extra])
         _notify_kyc_decision(kyc)
         n += 1
     modeladmin.message_user(
@@ -144,7 +157,8 @@ def request_kyc_resubmission(modeladmin, request, queryset):
             'We need you to re-submit your identity documents. Please open WEPL '
             'and upload fresh photos of your ID and a selfie.'
         )
-        kyc.save(update_fields=['status', 'reviewed_by', 'reviewed_at', 'rejection_reason'])
+        extra = _stamp_manual_decision(kyc)
+        kyc.save(update_fields=['status', 'reviewed_by', 'reviewed_at', 'rejection_reason', *extra])
         # Dedicated, non-punitive message (distinct from a rejection verdict).
         emit(
             'kyc_resubmission_requested',
@@ -195,19 +209,19 @@ def _img(file):
 
 @admin.register(KYCProfile)
 class KYCProfileAdmin(UnfoldModelAdmin):
-    list_display  = ('user', 'full_name', 'id_number', 'county', 'status', 'submitted_at', 'reviewed_at')
-    list_filter   = ('status', 'county', 'source_of_income', 'expected_monthly_income')
-    search_fields = ('user__phone_number', 'given_names', 'surname', 'id_number')
+    list_display  = ('user', 'full_name', 'id_number', 'county', 'status', 'email_verified', 'submitted_at', 'reviewed_at')
+    list_filter   = ('status', 'email_verified', 'county', 'source_of_income', 'expected_monthly_income')
+    search_fields = ('user__phone_number', 'given_names', 'surname', 'id_number', 'kra_pin')
     ordering      = ('-submitted_at',)
     readonly_fields = (
-        'user', 'submitted_at', 'updated_at',
+        'user', 'submitted_at', 'updated_at', 'email_verified',
         'id_front_preview', 'id_back_preview', 'selfie_preview',
         'verification_summary',
     )
     actions = [approve_kyc, reject_kyc, request_kyc_resubmission]
 
     fieldsets = (
-        ('Applicant',   {'fields': ('user', 'given_names', 'surname', 'id_number', 'kra_pin', 'date_of_birth', 'email')}),
+        ('Applicant',   {'fields': ('user', 'given_names', 'surname', 'id_number', 'kra_pin', 'date_of_birth', 'email', 'email_verified', 'referral_code')}),
         ('Documents',   {'fields': ('id_front_preview', 'id_back_preview', 'selfie_preview')}),
         ('Automated checks', {'fields': ('verification_summary',)}),
         ('Location',    {'fields': ('county', 'physical_address')}),
@@ -282,6 +296,7 @@ class KYCProfileAdmin(UnfoldModelAdmin):
             obj.reviewed_at = timezone.now()
             if obj.status == 'approved':
                 obj.rejection_reason = ''
+            _stamp_manual_decision(obj)   # keep the verification audit fields consistent
         super().save_model(request, obj, form, change)
         if decision:
             _notify_kyc_decision(obj)
