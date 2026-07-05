@@ -17,7 +17,9 @@ from apps.backoffice.models import StaffAccount
 from apps.users.models import KYCProfile
 
 from . import service
-from .models import CaseDocument, CaseEvent, VerificationCase
+from .models import (
+    CaseDocument, CaseEvent, CaseNote, OcrResult, RejectionReason, VerificationCase,
+)
 
 User = get_user_model()
 
@@ -169,3 +171,135 @@ class OpsDecisionEndpointTests(TestCase):
         self.assertEqual(res.status_code, 200)
         self.assertEqual(len(res.data['documents']['id_front']['versions']), 1)
         self.assertEqual(res.data['documents']['id_front']['versions'][0]['version'], 1)
+
+
+class CodedRejectionTests(TestCase):
+
+    def test_catalogue_is_seeded(self):
+        codes = set(RejectionReason.objects.values_list('code', flat=True))
+        self.assertIn('DOC_UNREADABLE', codes)
+        self.assertIn('OTHER', codes)
+
+    def test_coded_rejection_shows_customer_the_vetted_message(self):
+        kyc = _kyc(phone='+254700000021', id_number='21212121')
+        service.decide(kyc, 'reject', actor_label='ops:a@wepl.app',
+                       reason='internal: fonts look wrong', reason_code='DOC_INVALID')
+        kyc.refresh_from_db()
+        coded = RejectionReason.objects.get(code='DOC_INVALID')
+        self.assertEqual(kyc.rejection_reason, coded.customer_message)
+        ev = CaseEvent.objects.get(case__kyc=kyc, event_type='review.rejected')
+        self.assertEqual(ev.payload['reason_code'], 'DOC_INVALID')
+        self.assertEqual(ev.payload['reason'], 'internal: fonts look wrong')
+
+    def test_other_code_falls_through_to_free_text(self):
+        kyc = _kyc(phone='+254700000022', id_number='22222222')
+        service.decide(kyc, 'reject', actor_label='x',
+                       reason='Name order swapped on the form.', reason_code='OTHER')
+        kyc.refresh_from_db()
+        self.assertEqual(kyc.rejection_reason, 'Name order swapped on the form.')
+
+    def test_unknown_code_is_rejected(self):
+        kyc = _kyc(phone='+254700000023', id_number='23232323')
+        with self.assertRaises(ValueError):
+            service.decide(kyc, 'reject', actor_label='x', reason_code='NOPE')
+
+
+class WorkingTheCaseTests(TestCase):
+
+    def setUp(self):
+        self.kyc = _kyc(phone='+254700000031', id_number='31313131')
+        self.staff = StaffAccount.objects.create(
+            email='analyst@wepl.app', full_name='Analyst', is_superuser=True)
+        self.staff.set_password('S3cure-pass!')
+        self.staff.save()
+
+    def test_claim_and_release_are_evented(self):
+        case = service.claim(self.kyc, staff=self.staff)
+        self.assertEqual(case.assigned_to, self.staff)
+        service.release(self.kyc, staff=self.staff)
+        case.refresh_from_db()
+        self.assertIsNone(case.assigned_to)
+        types = list(CaseEvent.objects.filter(case=case)
+                     .order_by('seq').values_list('event_type', flat=True))
+        self.assertIn('case.assigned', types)
+        self.assertIn('case.unassigned', types)
+
+    def test_terminal_case_cannot_be_claimed(self):
+        service.decide(self.kyc, 'approve', actor_label='x')
+        with self.assertRaises(service.IllegalTransition):
+            service.claim(self.kyc, staff=self.staff)
+
+    def test_notes_are_append_only(self):
+        note = service.add_note(self.kyc, body='ID looks fine; waiting on selfie.',
+                                staff=self.staff)
+        self.assertEqual(note.author_label, 'analyst@wepl.app')
+        note.body = 'edited'
+        with self.assertRaises(ValueError):
+            note.save()
+
+    def test_check_persists_ocr_result_linked_to_document_version(self):
+        service.record_submission(self.kyc, kind='initial')
+        service.record_check(self.kyc, provider='fake', state='manual_review',
+                             detail={'ocr': {'engine': 'tesseract', 'detected': True,
+                                             'id_number_match': False, 'mismatch': True}})
+        row = OcrResult.objects.get(case__kyc=self.kyc)
+        self.assertEqual(row.engine, 'tesseract')
+        self.assertTrue(row.detected)
+        self.assertFalse(row.id_number_match)
+        self.assertEqual(row.document.doc_type, 'id_front')
+        self.assertEqual(row.document.version, 1)
+
+
+class OpsWorkflowEndpointTests(TestCase):
+
+    def setUp(self):
+        self.kyc = _kyc(phone='+254700000041', id_number='41414141')
+        self.staff = StaffAccount.objects.create(
+            email='ops@wepl.app', full_name='Ops', is_superuser=True)
+        self.staff.set_password('S3cure-pass!')
+        self.staff.save()
+        token = issue_staff_token(self.staff)
+        self.client = APIClient()
+        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {token}')
+        self.base = f'/api/ops/verification/{self.kyc.user_id}'
+
+    def test_note_endpoint(self):
+        res = self.client.post(f'{self.base}/notes/', {'body': 'Checked against register.'},
+                               format='json')
+        self.assertEqual(res.status_code, 201)
+        self.assertEqual(res.data['notes'][0]['body'], 'Checked against register.')
+        self.assertEqual(res.data['notes'][0]['author'], 'ops@wepl.app')
+        self.assertEqual(self.client.post(f'{self.base}/notes/', {'body': '  '},
+                                          format='json').status_code, 400)
+
+    def test_claim_release_endpoint_and_queue_assignee(self):
+        res = self.client.post(f'{self.base}/assign/', {'action': 'claim'}, format='json')
+        self.assertEqual(res.status_code, 200)
+        self.assertEqual(res.data['assignee'], 'ops@wepl.app')
+
+        q = self.client.get('/api/ops/verification/queue/', {'assigned': 'me'})
+        self.assertEqual(q.data['count'], 1)
+        self.assertEqual(q.data['results'][0]['assignee'], 'ops@wepl.app')
+
+        res = self.client.post(f'{self.base}/assign/', {'action': 'release'}, format='json')
+        self.assertIsNone(res.data['assignee'])
+        q = self.client.get('/api/ops/verification/queue/', {'assigned': 'nobody'})
+        self.assertEqual(q.data['count'], 1)
+
+    def test_coded_reject_via_api(self):
+        res = self.client.post(f'{self.base}/decision/',
+                               {'action': 'reject', 'reason_code': 'DOC_UNREADABLE'},
+                               format='json')
+        self.assertEqual(res.status_code, 200)
+        self.assertEqual(res.data['status'], 'rejected')
+        self.kyc.refresh_from_db()
+        self.assertIn('not clear enough', self.kyc.rejection_reason)
+        bad = self.client.post(f'{self.base}/decision/',
+                               {'action': 'reject', 'reason_code': 'BOGUS'}, format='json')
+        self.assertEqual(bad.status_code, 400)
+
+    def test_case_payload_lists_rejection_codes(self):
+        res = self.client.get(f'{self.base}/')
+        codes = [r['code'] for r in res.data['rejection_reasons']]
+        self.assertIn('DOC_UNREADABLE', codes)
+        self.assertEqual(codes[-1], 'OTHER')  # sorted, catch-all last

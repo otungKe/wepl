@@ -45,6 +45,13 @@ class VerificationCase(models.Model):
     # Monotonic per-case event sequence; advanced under row lock by the service.
     event_seq = models.PositiveIntegerField(default=0)
 
+    # Working assignment (claim/release via the service — evented like every
+    # other case change). Null = unassigned, anyone with the capability works it.
+    assigned_to = models.ForeignKey(
+        'backoffice.StaffAccount', null=True, blank=True,
+        on_delete=models.SET_NULL, related_name='assigned_verification_cases',
+    )
+
     opened_at = models.DateTimeField(auto_now_add=True)
     closed_at = models.DateTimeField(null=True, blank=True)
 
@@ -171,3 +178,83 @@ class CaseDocument(models.Model):
         if self.pk is not None:
             raise ValueError("CaseDocument is append-only; versions are immutable.")
         return super().save(*args, **kwargs)
+
+
+class OcrResult(models.Model):
+    """One persisted automated-check outcome (V3). Every run is kept — including
+    failures and superseded reads — so check history is queryable instead of
+    living only in the latest ``KYCProfile.verification_detail`` blob."""
+
+    case     = models.ForeignKey(VerificationCase, on_delete=models.PROTECT,
+                                 related_name='ocr_results')
+    # The exact document version that was read (null for legacy/degraded runs).
+    document = models.ForeignKey(CaseDocument, null=True, blank=True,
+                                 on_delete=models.PROTECT, related_name='ocr_results')
+
+    engine   = models.CharField(max_length=40, blank=True, default='')
+    detected = models.BooleanField(null=True, blank=True)
+
+    id_number_match = models.BooleanField(null=True, blank=True)
+    dob_match       = models.BooleanField(null=True, blank=True)
+
+    raw = models.JSONField(default=dict, blank=True)
+
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
+
+    class Meta:
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f"OcrResult({self.case_id}, {self.engine}, detected={self.detected})"
+
+    def save(self, *args, **kwargs):
+        if self.pk is not None:
+            raise ValueError("OcrResult is append-only; runs are immutable.")
+        return super().save(*args, **kwargs)
+
+
+class CaseNote(models.Model):
+    """Internal reviewer commentary on a case — never customer-visible.
+    Append-only: the note trail is part of the review record."""
+
+    case = models.ForeignKey(VerificationCase, on_delete=models.PROTECT,
+                             related_name='notes')
+
+    author_staff = models.ForeignKey(
+        'backoffice.StaffAccount', null=True, blank=True,
+        on_delete=models.SET_NULL, related_name='verification_notes',
+    )
+    author_label = models.CharField(max_length=120, blank=True, default='')
+
+    body = models.TextField()
+
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
+
+    class Meta:
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f"CaseNote({self.case_id}, {self.author_label})"
+
+    def save(self, *args, **kwargs):
+        if self.pk is not None:
+            raise ValueError("CaseNote is append-only; notes cannot be edited.")
+        return super().save(*args, **kwargs)
+
+
+class RejectionReason(models.Model):
+    """Coded rejection catalogue (V4). The operator picks a code; the customer
+    sees the vetted ``customer_message``; analytics aggregate on ``code``.
+    Free-text stays possible ('OTHER') but is the exception, not the norm."""
+
+    code             = models.CharField(max_length=40, unique=True)
+    label            = models.CharField(max_length=120)          # operator-facing
+    customer_message = models.TextField()                        # applicant-facing
+    active           = models.BooleanField(default=True)
+    sort             = models.PositiveIntegerField(default=100)
+
+    class Meta:
+        ordering = ['sort', 'code']
+
+    def __str__(self):
+        return f"{self.code} — {self.label}"

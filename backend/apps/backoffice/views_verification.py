@@ -49,7 +49,9 @@ def _doc(file):
 
 def _queue_row(kyc):
     ocr = _ocr(kyc)
+    case = next(iter(kyc.cases.all()), None)   # prefetched; newest first
     return {
+        "assignee": case.assigned_to.email if case and case.assigned_to else None,
         "user_id": kyc.user_id,
         "name": kyc.full_name or kyc.user.phone_number,
         "phone_number": kyc.user.phone_number,
@@ -83,7 +85,7 @@ def _doc_versions(case):
 
 def _case(kyc, request):
     from apps.verification import service as case_service
-    from apps.verification.models import CaseEvent
+    from apps.verification.models import CaseEvent, RejectionReason
 
     case = case_service.case_for(kyc)
     timeline = [
@@ -93,9 +95,21 @@ def _case(kyc, request):
         for e in CaseEvent.objects.filter(case=case).order_by("-seq")[:50]
     ]
     versions = _doc_versions(case)
+    notes = [
+        {"id": n.pk, "author": n.author_label, "body": n.body,
+         "at": n.created_at.isoformat()}
+        for n in case.notes.select_related("author_staff")[:50]
+    ]
+    rejection_reasons = [
+        {"code": r.code, "label": r.label, "customer_message": r.customer_message}
+        for r in RejectionReason.objects.filter(active=True)
+    ]
     return {
         "case_id": str(case.id),
         "case_state": case.state,
+        "assignee": case.assigned_to.email if case.assigned_to else None,
+        "notes": notes,
+        "rejection_reasons": rejection_reasons,
         "user_id": kyc.user_id,
         "phone_number": kyc.user.phone_number,
         "status": kyc.status,
@@ -133,11 +147,15 @@ class VerificationQueueView(OpsAPIView):
 
     def get(self, request):
         status_filter = request.query_params.get("status", "pending")
-        qs = KYCProfile.objects.select_related("user")
+        qs = KYCProfile.objects.select_related("user").prefetch_related("cases__assigned_to")
         if status_filter == "open":
             qs = qs.filter(status__in=_OPEN_STATUSES)
         elif status_filter != "all":
             qs = qs.filter(status=status_filter)
+        if request.query_params.get("assigned") == "me":
+            qs = qs.filter(cases__assigned_to=request.user)
+        elif request.query_params.get("assigned") == "nobody":
+            qs = qs.filter(cases__assigned_to__isnull=True)
         qs = qs.order_by("submitted_at")[:200]   # oldest first (SLA)
         rows = [_queue_row(k) for k in qs]
         return Response({"results": rows, "count": len(rows)})
@@ -170,11 +188,16 @@ class VerificationDecisionView(OpsAPIView):
 
             elif action == "reject":
                 reason = (request.data.get("reason") or "").strip()
-                if not reason:
+                reason_code = (request.data.get("reason_code") or "").strip()
+                if not reason and not reason_code:
                     return Response({"detail": "A rejection reason is required."},
                                     status=http.HTTP_400_BAD_REQUEST)
-                case_service.decide(kyc, "reject", actor_label=f"ops:{operator}",
-                                    staff=request.user, reason=reason)
+                try:
+                    case_service.decide(kyc, "reject", actor_label=f"ops:{operator}",
+                                        staff=request.user, reason=reason,
+                                        reason_code=reason_code)
+                except ValueError as exc:
+                    return Response({"detail": str(exc)}, status=http.HTTP_400_BAD_REQUEST)
 
             elif action == "request_resubmission":
                 items = request.data.get("items") or ["id_front", "id_back", "selfie"]
@@ -198,6 +221,55 @@ class VerificationDecisionView(OpsAPIView):
             action=f"ops.verification.{action}", actor=request.user, request=request,
             target_type="KYCProfile", target_id=kyc.id,
             metadata={"result": kyc.status, "reason": request.data.get("reason", ""),
+                      "reason_code": request.data.get("reason_code", ""),
                       "items": kyc.resubmission_requested},
+        )
+        return Response(_case(kyc, request))
+
+
+class VerificationNoteView(OpsAPIView):
+    """POST … {body} — append an internal reviewer note to the case.
+    Notes are never customer-visible and cannot be edited or deleted."""
+    permission_classes = [RequireCapability("verification.view")]
+
+    def post(self, request, user_id):
+        from apps.verification import service as case_service
+
+        kyc = get_object_or_404(KYCProfile.objects.select_related("user"), user_id=user_id)
+        body = (request.data.get("body") or "").strip()
+        if not body:
+            return Response({"detail": "A note body is required."}, status=http.HTTP_400_BAD_REQUEST)
+        case_service.add_note(kyc, body=body, staff=request.user)
+        record_action(
+            action="ops.verification.note", actor=request.user, request=request,
+            target_type="KYCProfile", target_id=kyc.id, metadata={},
+        )
+        return Response(_case(kyc, request), status=http.HTTP_201_CREATED)
+
+
+class VerificationAssignView(OpsAPIView):
+    """POST … {action: claim|release} — take a case into (or return it to) the
+    working pool. Assignment is evented on the case timeline."""
+    permission_classes = [RequireCapability("verification.decide")]
+
+    def post(self, request, user_id):
+        from apps.verification import service as case_service
+
+        kyc = get_object_or_404(KYCProfile.objects.select_related("user"), user_id=user_id)
+        action = (request.data.get("action") or "").strip()
+        try:
+            if action == "claim":
+                case_service.claim(kyc, staff=request.user)
+            elif action == "release":
+                case_service.release(kyc, staff=request.user)
+            else:
+                return Response({"detail": f"Unknown action: {action!r}."},
+                                status=http.HTTP_400_BAD_REQUEST)
+        except case_service.IllegalTransition as exc:
+            return Response({"detail": f"This case is {exc.state} and can no longer be claimed."},
+                            status=http.HTTP_409_CONFLICT)
+        record_action(
+            action=f"ops.verification.{action}", actor=request.user, request=request,
+            target_type="KYCProfile", target_id=kyc.id, metadata={},
         )
         return Response(_case(kyc, request))

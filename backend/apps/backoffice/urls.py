@@ -5,7 +5,8 @@ from .views import (
     StaffLoginView, StaffChangePasswordView,
 )
 from .views_verification import (
-    VerificationQueueView, VerificationCaseView, VerificationDecisionView,
+    VerificationAssignView, VerificationCaseView, VerificationDecisionView,
+    VerificationNoteView, VerificationQueueView,
 )
 
 # Mounted at /api/ops/
@@ -19,4 +20,6 @@ urlpatterns = [
     path("verification/queue/", VerificationQueueView.as_view()),
     path("verification/<int:user_id>/", VerificationCaseView.as_view()),
     path("verification/<int:user_id>/decision/", VerificationDecisionView.as_view()),
+    path("verification/<int:user_id>/notes/", VerificationNoteView.as_view()),
+    path("verification/<int:user_id>/assign/", VerificationAssignView.as_view()),
 ]

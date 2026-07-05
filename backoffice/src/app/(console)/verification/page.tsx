@@ -6,6 +6,7 @@ import { verification, type QueueRow } from '@/lib/verification'
 
 const TABS = [
   { key: 'pending', label: 'Pending' },
+  { key: 'mine', label: 'My cases' },
   { key: 'approved', label: 'Approved' },
   { key: 'rejected', label: 'Rejected' },
   { key: 'all', label: 'All' },
@@ -25,8 +26,8 @@ export default function VerificationQueue() {
 
   useEffect(() => {
     setStatus('loading')
-    verification.queue(tab)
-      .then((r) => { setRows(r.data.results); setStatus('ready') })
+    const req = tab === 'mine' ? verification.queue('pending', 'me') : verification.queue(tab)
+    req.then((r) => { setRows(r.data.results); setStatus('ready') })
       .catch(() => setStatus('error'))
   }, [tab])
 
@@ -64,6 +65,7 @@ export default function VerificationQueue() {
                 <th className="px-4 py-2.5 text-left font-semibold">Applicant</th>
                 <th className="px-4 py-2.5 text-left font-semibold">ID number</th>
                 <th className="px-4 py-2.5 text-left font-semibold">Status</th>
+                <th className="px-4 py-2.5 text-left font-semibold">Assignee</th>
                 <th className="px-4 py-2.5 text-left font-semibold">Signals</th>
                 <th className="px-4 py-2.5 text-right font-semibold">Age</th>
               </tr>
@@ -79,6 +81,9 @@ export default function VerificationQueue() {
                   </td>
                   <td className="px-4 py-2.5 font-mono text-xs text-slate-600 dark:text-slate-300">{r.id_number || '—'}</td>
                   <td className="px-4 py-2.5"><StatusChip status={r.status} /></td>
+                  <td className="px-4 py-2.5 text-xs text-slate-500">
+                    {r.assignee ? r.assignee.split('@')[0] : <span className="text-slate-300 dark:text-slate-600">—</span>}
+                  </td>
                   <td className="px-4 py-2.5">
                     <div className="flex flex-wrap items-center gap-1.5">
                       {r.email_verified

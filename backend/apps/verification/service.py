@@ -19,7 +19,9 @@ import logging
 from django.db import transaction
 from django.utils import timezone
 
-from .models import CaseDocument, CaseEvent, VerificationCase
+from .models import (
+    CaseDocument, CaseEvent, CaseNote, OcrResult, RejectionReason, VerificationCase,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -188,10 +190,24 @@ def record_submission(kyc, *, kind, items=None) -> VerificationCase:
 
 def record_check(kyc, *, provider, state, detail=None) -> None:
     """Record an automated check outcome (identity provider + OCR) as a fact on
-    the timeline. Terminal decisions are applied separately via ``decide()``."""
+    the timeline, persisting the OCR read as a first-class ``OcrResult`` row
+    linked to the exact document version it read. Terminal decisions are
+    applied separately via ``decide()``."""
     with transaction.atomic():
         case = case_for(kyc)
         ocr = (detail or {}).get('ocr') or {}
+        if ocr:
+            front = (CaseDocument.objects
+                     .filter(case=case, doc_type=CaseDocument.DocType.ID_FRONT)
+                     .order_by('-version').first())
+            OcrResult.objects.create(
+                case=case, document=front,
+                engine=ocr.get('engine') or '',
+                detected=ocr.get('detected'),
+                id_number_match=ocr.get('id_number_match'),
+                dob_match=ocr.get('dob_match'),
+                raw=ocr,
+            )
         _append(case, 'checks.completed', actor_kind=CaseEvent.Actor.SYSTEM,
                 actor_label=provider,
                 payload={'provider': provider, 'state': state,
@@ -212,14 +228,25 @@ def record_email_verified(kyc) -> None:
 # ─────────────────────────────────────────────────────────────
 
 def decide(kyc, action, *, actor_label, staff=None, reviewer_user=None,
-           reason='', items=None, notify=True) -> VerificationCase:
+           reason='', reason_code='', items=None, notify=True) -> VerificationCase:
     """Apply a review decision through the state machine and project it onto
     ``KYCProfile``. Raises ``IllegalTransition`` if the action isn't legal.
 
     action: 'approve' | 'reject' | 'request_info'
+
+    For rejections, ``reason_code`` selects a ``RejectionReason`` from the
+    catalogue: the applicant sees its vetted ``customer_message`` while
+    ``reason`` (free text) stays internal on the event. Without a code, the
+    free text is shown to the applicant (legacy behaviour).
     """
     if action not in _REVIEW_EVENT:
         raise ValueError(f"Unknown decision action: {action!r}")
+
+    coded = None
+    if action == 'reject' and reason_code:
+        coded = RejectionReason.objects.filter(code=reason_code, active=True).first()
+        if coded is None:
+            raise ValueError(f"Unknown rejection code: {reason_code!r}")
 
     with transaction.atomic():
         case = case_for(kyc)
@@ -227,17 +254,63 @@ def decide(kyc, action, *, actor_label, staff=None, reviewer_user=None,
         payload = {}
         if reason:
             payload['reason'] = reason
+        if coded:
+            payload['reason_code'] = coded.code
         if items is not None:
             payload['items'] = list(items)
         _transition(case, action, actor_kind=actor_kind, actor_label=actor_label,
                     actor_user=reviewer_user, actor_staff=staff, payload=payload,
                     event_type=_REVIEW_EVENT[action])
+        # 'OTHER' has no canned message — the free text is shown instead.
+        customer_reason = (coded.customer_message or reason) if coded else reason
         _project(kyc, case, action, actor_label=actor_label,
-                 reviewer_user=reviewer_user, reason=reason, items=items)
+                 reviewer_user=reviewer_user, reason=customer_reason, items=items)
 
     if notify:
         _notify(kyc, action)
     return case
+
+
+# ─────────────────────────────────────────────────────────────
+# Working the case (assignment + notes)
+# ─────────────────────────────────────────────────────────────
+
+def claim(kyc, *, staff) -> VerificationCase:
+    """Assign the case to the claiming operator. Only open cases are workable."""
+    with transaction.atomic():
+        case = case_for(kyc)
+        if case.is_terminal:
+            raise IllegalTransition(case.state, 'claim')
+        case.assigned_to = staff
+        case.save(update_fields=['assigned_to'])
+        _append(case, 'case.assigned', actor_kind=CaseEvent.Actor.STAFF,
+                actor_label=staff.email, actor_staff=staff,
+                payload={'assignee': staff.email})
+    return case
+
+
+def release(kyc, *, staff) -> VerificationCase:
+    """Return the case to the unassigned pool."""
+    with transaction.atomic():
+        case = case_for(kyc)
+        if case.assigned_to_id is None:
+            return case
+        previous = case.assigned_to.email if case.assigned_to else ''
+        case.assigned_to = None
+        case.save(update_fields=['assigned_to'])
+        _append(case, 'case.unassigned', actor_kind=CaseEvent.Actor.STAFF,
+                actor_label=staff.email, actor_staff=staff,
+                payload={'previous_assignee': previous})
+    return case
+
+
+def add_note(kyc, *, body, staff=None, actor_label='') -> CaseNote:
+    """Append an internal note. Notes are commentary, not state — no event."""
+    case = case_for(kyc)
+    return CaseNote.objects.create(
+        case=case, body=body, author_staff=staff,
+        author_label=(actor_label or (staff.email if staff else 'system'))[:120],
+    )
 
 
 def _transition(case, action, *, event_type=None, **event_kwargs) -> None:
