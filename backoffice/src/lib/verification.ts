@@ -12,6 +12,7 @@ export interface QueueRow {
   ocr_mismatch: boolean
   ocr_detected: boolean | null
   resubmission_pending: boolean
+  assignee: string | null
 }
 
 export interface DocVersion {
@@ -39,10 +40,26 @@ export interface TimelineEvent {
   payload: Record<string, unknown>
 }
 
+export interface CaseNote {
+  id: number
+  author: string
+  body: string
+  at: string
+}
+
+export interface RejectionCode {
+  code: string
+  label: string
+  customer_message: string
+}
+
 export interface CaseDetail {
   user_id: number
   case_id: string
   case_state: string
+  assignee: string | null
+  notes: CaseNote[]
+  rejection_reasons: RejectionCode[]
   phone_number: string
   status: string
   applicant: Record<string, string | boolean | null>
@@ -61,13 +78,17 @@ export interface CaseDetail {
 
 export type Decision =
   | { action: 'approve' }
-  | { action: 'reject'; reason: string }
+  | { action: 'reject'; reason?: string; reason_code?: string }
   | { action: 'request_resubmission'; items: string[] }
 
 export const verification = {
-  queue: (status = 'pending') =>
-    api.get<{ results: QueueRow[]; count: number }>('/ops/verification/queue/', { params: { status } }),
+  queue: (status = 'pending', assigned?: 'me' | 'nobody') =>
+    api.get<{ results: QueueRow[]; count: number }>('/ops/verification/queue/', { params: { status, ...(assigned ? { assigned } : {}) } }),
   case: (userId: number | string) => api.get<CaseDetail>(`/ops/verification/${userId}/`),
   decide: (userId: number | string, body: Decision) =>
     api.post<CaseDetail>(`/ops/verification/${userId}/decision/`, body),
+  note: (userId: number | string, body: string) =>
+    api.post<CaseDetail>(`/ops/verification/${userId}/notes/`, { body }),
+  assign: (userId: number | string, action: 'claim' | 'release') =>
+    api.post<CaseDetail>(`/ops/verification/${userId}/assign/`, { action }),
 }

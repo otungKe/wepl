@@ -1,20 +1,23 @@
 'use client'
 import { useCallback, useEffect, useState } from 'react'
 import { useParams, useRouter } from 'next/navigation'
-import { Loader2, ArrowLeft, Check, X, Upload, FileWarning } from 'lucide-react'
+import { Loader2, ArrowLeft, Check, X, Upload, FileWarning, UserCheck, UserMinus, StickyNote } from 'lucide-react'
 import { verification, type CaseDetail, type DocRef, type Decision, type TimelineEvent } from '@/lib/verification'
-import { useCan } from '@/store/ops'
+import { useCan, useOpsStore } from '@/store/ops'
 
 export default function VerificationCase() {
   const params = useParams()
   const router = useRouter()
   const can = useCan()
   const userId = String(params.userId)
+  const me = useOpsStore((s) => s.me)
   const [data, setData] = useState<CaseDetail | null>(null)
   const [status, setStatus] = useState<'loading' | 'ready' | 'error'>('loading')
   const [busy, setBusy] = useState(false)
   const [reason, setReason] = useState('')
+  const [reasonCode, setReasonCode] = useState('')
   const [items, setItems] = useState<string[]>([])
+  const [note, setNote] = useState('')
   const [err, setErr] = useState('')
 
   const load = useCallback(() => {
@@ -23,10 +26,28 @@ export default function VerificationCase() {
   }, [userId])
   useEffect(() => { load() }, [load])
 
+  const fail = (e: unknown) =>
+    setErr((e as { response?: { data?: { detail?: string } } })?.response?.data?.detail || 'Action failed.')
+
   const decide = async (body: Decision) => {
     setErr(''); setBusy(true)
-    try { const r = await verification.decide(userId, body); setData(r.data); setReason(''); setItems([]) }
-    catch (e) { setErr((e as { response?: { data?: { detail?: string } } })?.response?.data?.detail || 'Action failed.') }
+    try { const r = await verification.decide(userId, body); setData(r.data); setReason(''); setReasonCode(''); setItems([]) }
+    catch (e) { fail(e) }
+    finally { setBusy(false) }
+  }
+
+  const assign = async (action: 'claim' | 'release') => {
+    setErr(''); setBusy(true)
+    try { const r = await verification.assign(userId, action); setData(r.data) }
+    catch (e) { fail(e) }
+    finally { setBusy(false) }
+  }
+
+  const addNote = async () => {
+    if (!note.trim()) return
+    setErr(''); setBusy(true)
+    try { const r = await verification.note(userId, note.trim()); setData(r.data); setNote('') }
+    catch (e) { fail(e) }
     finally { setBusy(false) }
   }
 
@@ -47,6 +68,26 @@ export default function VerificationCase() {
         <StatusChip status={data.status} />
         <span className="font-mono text-xs text-slate-400">{data.phone_number}</span>
         {data.age_hours != null && <span className="text-xs text-slate-400">· submitted {Math.round(data.age_hours)}h ago</span>}
+        <span className="ml-auto flex items-center gap-2">
+          {data.assignee && (
+            <span className="text-xs text-slate-500">
+              Working: <b className="text-slate-700 dark:text-slate-200">{data.assignee}</b>
+            </span>
+          )}
+          {canDecide && data.status === 'pending' && (
+            data.assignee === me?.email ? (
+              <button disabled={busy} onClick={() => assign('release')}
+                className="flex items-center gap-1.5 rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800">
+                <UserMinus className="h-3.5 w-3.5" /> Release
+              </button>
+            ) : !data.assignee ? (
+              <button disabled={busy} onClick={() => assign('claim')}
+                className="flex items-center gap-1.5 rounded-lg bg-blue-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-blue-500">
+                <UserCheck className="h-3.5 w-3.5" /> Claim case
+              </button>
+            ) : null
+          )}
+        </span>
       </div>
 
       <div className="grid gap-5 lg:grid-cols-3">
@@ -101,10 +142,28 @@ export default function VerificationCase() {
               </button>
 
               <div className="mb-2 rounded-lg border border-slate-200 p-2.5 dark:border-slate-800">
+                <select value={reasonCode} onChange={(e) => setReasonCode(e.target.value)}
+                  className="mb-1.5 w-full rounded-md border border-slate-200 bg-transparent px-2 py-1.5 text-sm outline-none dark:border-slate-700 dark:bg-slate-900">
+                  <option value="">Rejection reason…</option>
+                  {data.rejection_reasons.map((r) => (
+                    <option key={r.code} value={r.code}>{r.label}</option>
+                  ))}
+                </select>
+                {reasonCode && reasonCode !== 'OTHER' && (
+                  <p className="mb-1.5 rounded bg-slate-50 px-2 py-1.5 text-xs text-slate-500 dark:bg-slate-800/60">
+                    Applicant sees: “{data.rejection_reasons.find((r) => r.code === reasonCode)?.customer_message}”
+                  </p>
+                )}
                 <textarea value={reason} onChange={(e) => setReason(e.target.value)} rows={2}
-                  placeholder="Rejection reason (required to reject)"
+                  placeholder={reasonCode === 'OTHER' ? 'Reason shown to the applicant (required)'
+                    : reasonCode ? 'Internal detail (optional, not shown to the applicant)'
+                    : 'Free-text reason shown to the applicant'}
                   className="w-full resize-none bg-transparent text-sm outline-none placeholder:text-slate-400" />
-                <button disabled={busy || !reason.trim()} onClick={() => decide({ action: 'reject', reason: reason.trim() })}
+                <button
+                  disabled={busy || (reasonCode === 'OTHER' || !reasonCode ? !reason.trim() : false)}
+                  onClick={() => decide({ action: 'reject',
+                    ...(reasonCode ? { reason_code: reasonCode } : {}),
+                    ...(reason.trim() ? { reason: reason.trim() } : {}) })}
                   className="mt-1 flex w-full items-center justify-center gap-2 rounded-md bg-red-600 py-2 text-sm font-semibold text-white hover:bg-red-500 disabled:opacity-50">
                   <X className="h-4 w-4" /> Reject
                 </button>
@@ -135,6 +194,31 @@ export default function VerificationCase() {
           ) : (
             <Card title="Decision"><p className="text-sm text-slate-500">You have read-only access to this case.</p></Card>
           )}
+
+          <Card title="Internal notes">
+            <div className="mb-2 flex gap-1.5">
+              <input value={note} onChange={(e) => setNote(e.target.value)}
+                onKeyDown={(e) => { if (e.key === 'Enter') addNote() }}
+                placeholder="Add a note (staff only)…"
+                className="min-w-0 flex-1 rounded-md border border-slate-200 bg-transparent px-2 py-1.5 text-sm outline-none placeholder:text-slate-400 dark:border-slate-700" />
+              <button disabled={busy || !note.trim()} onClick={addNote}
+                className="rounded-md bg-slate-800 px-2.5 text-white hover:bg-slate-700 disabled:opacity-50 dark:bg-slate-700 dark:hover:bg-slate-600">
+                <StickyNote className="h-4 w-4" />
+              </button>
+            </div>
+            {data.notes.length === 0 ? (
+              <p className="text-xs text-slate-400">No notes yet.</p>
+            ) : (
+              <ul className="space-y-2">
+                {data.notes.map((n) => (
+                  <li key={n.id} className="rounded-lg bg-slate-50 p-2 text-xs dark:bg-slate-800/60">
+                    <p className="text-slate-700 dark:text-slate-200">{n.body}</p>
+                    <p className="mt-1 text-[10px] text-slate-400">{n.author} · {new Date(n.at).toLocaleString()}</p>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </Card>
         </div>
       </div>
     </div>
