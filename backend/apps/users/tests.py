@@ -777,3 +777,48 @@ class KYCImagePreviewTests(SimpleTestCase):
     def test_none_file(self):
         from apps.users.admin import _img
         self.assertEqual(_img(None), "—")
+
+
+class KYCResubmissionActionTests(TestCase):
+    """Admin can ask any user — including an approved one — to re-submit KYC."""
+
+    def setUp(self):
+        self.staff = get_user_model().objects.create_user(phone_number="254700000920")
+        self.staff.is_staff = self.staff.is_superuser = True
+        self.staff.save()
+        self.client.force_login(self.staff)
+
+    def _make_kyc(self, phone, status):
+        from datetime import date
+        from apps.users.models import KYCProfile
+        u = get_user_model().objects.create_user(phone_number=phone)
+        return KYCProfile.objects.create(
+            user=u, given_names="Jane", surname="Doe", id_number=f"ID{u.pk}",
+            date_of_birth=date(1990, 1, 1), status=status,
+        )
+
+    def test_action_requests_resubmission_from_approved_user(self):
+        from apps.core.models import OutboxEvent
+        kyc = self._make_kyc("254700000921", "approved")
+        resp = self.client.post("/admin/users/kycprofile/", {
+            "action": "request_kyc_resubmission",
+            "_selected_action": [str(kyc.pk)],
+        }, follow=True)
+        self.assertEqual(resp.status_code, 200)
+        kyc.refresh_from_db()
+        # Reverted so the KYC form unlocks re-submission and mobile shows "Re-submit".
+        self.assertEqual(kyc.status, "rejected")
+        self.assertIn("re-submit", kyc.rejection_reason.lower())
+        self.assertTrue(OutboxEvent.objects.filter(
+            event_type="kyc_resubmission_requested", payload__user_id=kyc.user_id).exists())
+
+    def test_resubmission_unlocks_the_kyc_form(self):
+        # After the action, the previously-approved profile is no longer locked.
+        from apps.users.views.kyc import KYCView  # import sanity
+        kyc = self._make_kyc("254700000922", "approved")
+        self.client.post("/admin/users/kycprofile/", {
+            "action": "request_kyc_resubmission",
+            "_selected_action": [str(kyc.pk)],
+        })
+        kyc.refresh_from_db()
+        self.assertNotEqual(kyc.status, "approved")  # re-submission no longer blocked
