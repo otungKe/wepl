@@ -2,6 +2,7 @@ from django.contrib import admin
 from django.contrib.auth.admin import UserAdmin as BaseUserAdmin
 from django.utils import timezone
 from django.utils.html import format_html
+from django.utils.safestring import mark_safe
 from unfold.admin import ModelAdmin as UnfoldModelAdmin
 
 from .models import User, KYCProfile, VerificationRequest, PaymentMethod
@@ -182,11 +183,11 @@ class KYCProfileAdmin(UnfoldModelAdmin):
                 return format_html('<span style="color:#1D7A45">✓ matches</span> ({})', read or '')
             if match is False:
                 return format_html('<span style="color:#C0392B;font-weight:700">✗ MISMATCH</span> (scan read: {})', read or '—')
-            return format_html('<span style="color:#8a8a8a">— not read from scan</span>')
+            return mark_safe('<span style="color:#8a8a8a">— not read from scan</span>')
 
         if not ocr:
-            ocr_html = format_html('<em style="color:#8a8a8a">No OCR result recorded '
-                                   '(scan unreadable or OCR not enabled — verify manually).</em>')
+            ocr_html = mark_safe('<em style="color:#8a8a8a">No OCR result recorded '
+                                 '(scan unreadable or OCR not enabled — verify manually).</em>')
         else:
             detected = ocr.get('detected')
             ocr_html = format_html(
@@ -196,8 +197,8 @@ class KYCProfileAdmin(UnfoldModelAdmin):
                 '<b>Date of birth:</b> {}<br>'
                 '<b>OCR engine:</b> {}'
                 '</div>',
-                format_html('<span style="color:#1D7A45">yes</span>') if detected
-                else format_html('<span style="color:#C0392B">no — verify the image is a valid ID</span>'),
+                mark_safe('<span style="color:#1D7A45">yes</span>') if detected
+                else mark_safe('<span style="color:#C0392B">no — verify the image is a valid ID</span>'),
                 _flag(ocr.get('id_number_match'), ocr.get('id_number_read')),
                 _flag(ocr.get('dob_match'), ocr.get('dob_read')),
                 ocr.get('engine', '—'),

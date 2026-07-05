@@ -699,3 +699,54 @@ class KYCMandatoryDocsTests(TestCase):
             "id_front": img("f.jpg"), "id_back": img("b.jpg"), "selfie": img("s.jpg"),
         })
         self.assertTrue(s.is_valid(), msg=s.errors)
+
+
+class KYCAdminRenderTests(TestCase):
+    """Guards the admin KYC change-page renderer (verification_summary) against
+    the Django-6 format_html 'args required' regression that 500'd the page."""
+
+    def _summary(self, obj):
+        from django.contrib.admin.sites import site
+        from apps.users.admin import KYCProfileAdmin
+        from apps.users.models import KYCProfile
+        return KYCProfileAdmin(KYCProfile, site).verification_summary(obj)
+
+    def test_renders_for_all_detail_shapes(self):
+        from django.utils import timezone
+        from apps.users.models import KYCProfile
+        # OCR present with a mismatch
+        self.assertIn("MISMATCH", self._summary(KYCProfile(
+            verification_provider="manual", verification_state="manual_review",
+            verification_checked_at=timezone.now(),
+            verification_detail={"ocr": {"detected": True, "id_number_read": "12345678",
+                                         "id_number_match": False, "dob_read": "1990-01-01",
+                                         "dob_match": True, "engine": "tesseract"}},
+        )))
+        # Empty row (older submission) — must not raise
+        self.assertIn("No OCR result", self._summary(KYCProfile()))
+        # Detail present but no ocr key — must not raise
+        self.assertTrue(self._summary(KYCProfile(verification_detail={"x": "y"})))
+        # detected False + unread fields
+        self.assertTrue(self._summary(KYCProfile(
+            verification_detail={"ocr": {"detected": False, "id_number_match": None, "dob_match": None}})))
+
+    def test_change_page_renders_end_to_end(self):
+        from datetime import date
+        from django.utils import timezone
+        from apps.users.models import KYCProfile
+        staff = get_user_model().objects.create_user(phone_number="254700000909")
+        staff.is_staff = staff.is_superuser = True
+        staff.save()
+        applicant = get_user_model().objects.create_user(phone_number="254700000910")
+        kyc = KYCProfile.objects.create(
+            user=applicant, given_names="Jane", surname="Doe", id_number="12345678",
+            kra_pin="A012345678Z", date_of_birth=date(1990, 1, 1), status="pending",
+            verification_provider="manual", verification_state="manual_review",
+            verification_checked_at=timezone.now(),
+            verification_detail={"ocr": {"detected": True, "id_number_read": "12345678",
+                                         "id_number_match": False, "dob_read": None,
+                                         "dob_match": None, "engine": "tesseract"}},
+        )
+        self.client.force_login(staff)
+        resp = self.client.get(f"/admin/users/kycprofile/{kyc.id}/change/")
+        self.assertEqual(resp.status_code, 200, msg=resp.content[:300])
