@@ -140,13 +140,15 @@ class KYCProfileAdmin(UnfoldModelAdmin):
     readonly_fields = (
         'user', 'submitted_at', 'updated_at',
         'id_front_preview', 'id_back_preview', 'selfie_preview',
+        'verification_summary',
     )
     actions = [approve_kyc, reject_kyc]
 
     fieldsets = (
         ('Applicant',   {'fields': ('user', 'given_names', 'surname', 'id_number', 'date_of_birth', 'email')}),
         ('Documents',   {'fields': ('id_front_preview', 'id_back_preview', 'selfie_preview')}),
-        ('Location',    {'fields': ('county', 'sub_county')}),
+        ('Automated checks', {'fields': ('verification_summary',)}),
+        ('Location',    {'fields': ('county', 'physical_address')}),
         ('Financials',  {'fields': ('occupation', 'source_of_income', 'expected_monthly_income')}),
         ('Review',      {'fields': ('status', 'rejection_reason', 'reviewed_by', 'reviewed_at')}),
         ('Timestamps',  {'fields': ('submitted_at', 'updated_at')}),
@@ -163,6 +165,50 @@ class KYCProfileAdmin(UnfoldModelAdmin):
     @admin.display(description='Selfie')
     def selfie_preview(self, obj):
         return _img(obj.selfie)
+
+    @admin.display(description='Provider & OCR cross-check')
+    def verification_summary(self, obj):
+        """Advisory signals for the reviewer: which checker ran, and how the
+        in-house OCR of the ID scan compares to the typed values. Mismatches are
+        flagged in red — they are hints for manual review, not a verdict."""
+        provider = obj.verification_provider or '—'
+        state    = obj.verification_state or '—'
+        checked  = obj.verification_checked_at.strftime('%Y-%m-%d %H:%M') if obj.verification_checked_at else '—'
+        ocr = (obj.verification_detail or {}).get('ocr') or {}
+
+        def _flag(match, read):
+            # match: True (agrees) / False (disagrees) / None (couldn't read)
+            if match is True:
+                return format_html('<span style="color:#1D7A45">✓ matches</span> ({})', read or '')
+            if match is False:
+                return format_html('<span style="color:#C0392B;font-weight:700">✗ MISMATCH</span> (scan read: {})', read or '—')
+            return format_html('<span style="color:#8a8a8a">— not read from scan</span>')
+
+        if not ocr:
+            ocr_html = format_html('<em style="color:#8a8a8a">No OCR result recorded '
+                                   '(scan unreadable or OCR not enabled — verify manually).</em>')
+        else:
+            detected = ocr.get('detected')
+            ocr_html = format_html(
+                '<div style="line-height:1.7">'
+                '<b>Kenyan ID detected:</b> {}<br>'
+                '<b>ID number:</b> {}<br>'
+                '<b>Date of birth:</b> {}<br>'
+                '<b>OCR engine:</b> {}'
+                '</div>',
+                format_html('<span style="color:#1D7A45">yes</span>') if detected
+                else format_html('<span style="color:#C0392B">no — verify the image is a valid ID</span>'),
+                _flag(ocr.get('id_number_match'), ocr.get('id_number_read')),
+                _flag(ocr.get('dob_match'), ocr.get('dob_read')),
+                ocr.get('engine', '—'),
+            )
+
+        return format_html(
+            '<div style="max-width:520px">'
+            '<div style="margin-bottom:8px"><b>Checker:</b> {} &nbsp;·&nbsp; '
+            '<b>Result:</b> {} &nbsp;·&nbsp; <b>Checked:</b> {}</div>{}</div>',
+            provider, state, checked, ocr_html,
+        )
 
     def save_model(self, request, obj, form, change):
         """When an admin sets status to approved/rejected via the form, stamp the

@@ -345,6 +345,7 @@ export default function KYCScreen() {
     }
     if (step === 2) {
       if (!idFront) return "A photo of the front of your ID is required.";
+      if (!idBack)  return "A photo of the back of your ID is required.";
       if (!selfie)  return "A selfie photo is required to verify your identity.";
     }
     if (step === 3) {
@@ -716,7 +717,7 @@ export default function KYCScreen() {
           return (
             <>
               <Text style={s.title}>Back of ID</Text>
-              <Text style={s.subtitle}>Now flip your ID over and take a photo of the back.</Text>
+              <Text style={s.subtitle}>Now flip your ID over and take a photo of the back. This is required.</Text>
 
               <TouchableOpacity
                 style={[s.photoBox, idBack && s.photoBoxDone]}
@@ -740,11 +741,11 @@ export default function KYCScreen() {
                 )}
               </TouchableOpacity>
 
-              <TouchableOpacity style={s.introCta} onPress={() => setPhotoSubStep("selfie")}>
-                <Text style={s.introCtaText}>
-                  {idBack ? "Looks good — take selfie →" : "Skip back photo →"}
-                </Text>
-              </TouchableOpacity>
+              {idBack && (
+                <TouchableOpacity style={s.introCta} onPress={() => setPhotoSubStep("selfie")}>
+                  <Text style={s.introCtaText}>Looks good — take selfie →</Text>
+                </TouchableOpacity>
+              )}
             </>
           );
         }
