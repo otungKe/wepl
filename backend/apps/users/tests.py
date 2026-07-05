@@ -822,3 +822,43 @@ class KYCResubmissionActionTests(TestCase):
         })
         kyc.refresh_from_db()
         self.assertNotEqual(kyc.status, "approved")  # re-submission no longer blocked
+
+
+class KYCManualDecisionStampTests(TestCase):
+    """A human decision keeps the identity-verification audit fields consistent
+    with the KYC status (so the admin's cross-check panel doesn't contradict it)."""
+
+    def setUp(self):
+        self.staff = get_user_model().objects.create_user(phone_number="254700000930")
+        self.staff.is_staff = self.staff.is_superuser = True
+        self.staff.save()
+        self.client.force_login(self.staff)
+
+    def _pending_kyc(self, phone):
+        from datetime import date
+        from apps.users.models import KYCProfile
+        u = get_user_model().objects.create_user(phone_number=phone)
+        return KYCProfile.objects.create(
+            user=u, given_names="Jane", surname="Doe", id_number=f"ID{u.pk}",
+            date_of_birth=date(1990, 1, 1), status="pending",
+            verification_provider="manual", verification_state="manual_review",
+        )
+
+    def test_approve_action_stamps_verified(self):
+        kyc = self._pending_kyc("254700000931")
+        self.client.post("/admin/users/kycprofile/", {
+            "action": "approve_kyc", "_selected_action": [str(kyc.pk)]})
+        kyc.refresh_from_db()
+        self.assertEqual(kyc.status, "approved")
+        self.assertEqual(kyc.verification_state, "verified")
+        self.assertEqual(kyc.verification_provider, "manual (admin)")
+        self.assertIsNotNone(kyc.verification_checked_at)
+
+    def test_reject_action_stamps_rejected(self):
+        kyc = self._pending_kyc("254700000932")
+        self.client.post("/admin/users/kycprofile/", {
+            "action": "reject_kyc", "_selected_action": [str(kyc.pk)]})
+        kyc.refresh_from_db()
+        self.assertEqual(kyc.status, "rejected")
+        self.assertEqual(kyc.verification_state, "rejected")
+        self.assertEqual(kyc.verification_provider, "manual (admin)")
