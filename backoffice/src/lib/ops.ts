@@ -1,0 +1,58 @@
+// Back Office API client. Staff-only: a dedicated ops JWT (separate from the
+// customer app), stored under its own key, sent as a Bearer token. On 401 the
+// operator is sent back to sign in — staff tokens don't silently refresh.
+import axios from 'axios'
+
+const BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8000/api'
+const TOKEN_KEY = 'ops_token'
+
+export const getToken = () =>
+  typeof window === 'undefined' ? null : localStorage.getItem(TOKEN_KEY)
+export const setToken = (t: string) => localStorage.setItem(TOKEN_KEY, t)
+export const clearToken = () => localStorage.removeItem(TOKEN_KEY)
+
+export const api = axios.create({ baseURL: BASE_URL, headers: { 'Content-Type': 'application/json' } })
+
+api.interceptors.request.use((cfg) => {
+  const t = getToken()
+  if (t) cfg.headers['Authorization'] = `Bearer ${t}`
+  return cfg
+})
+
+api.interceptors.response.use(
+  (r) => r,
+  (err) => {
+    if (err.response?.status === 401 && typeof window !== 'undefined') {
+      clearToken()
+      if (!window.location.pathname.startsWith('/login')) window.location.href = '/login'
+    }
+    return Promise.reject(err)
+  },
+)
+
+export function apiError(err: unknown, fallback = 'Something went wrong.'): string {
+  if (axios.isAxiosError(err)) {
+    const d = err.response?.data as { detail?: string } | undefined
+    if (d?.detail) return d.detail
+    if (!err.response) return 'Cannot reach the server.'
+  }
+  return fallback
+}
+
+export interface OpsMe {
+  id: number; email: string; name: string; is_superuser: boolean
+  must_change_password: boolean; roles: string[]; capabilities: string[]
+}
+export type OpsResultType = 'user' | 'community' | 'verification' | 'journal'
+export interface OpsSearchResult { type: OpsResultType; id: number; label: string; sublabel: string; url: string }
+
+export const ops = {
+  login: (email: string, password: string) =>
+    api.post<{ token: string; must_change_password: boolean; email: string; name: string }>(
+      '/ops/auth/login/', { email, password }),
+  changePassword: (current_password: string, new_password: string) =>
+    api.post('/ops/auth/change-password/', { current_password, new_password }),
+  me: () => api.get<OpsMe>('/ops/me/'),
+  search: (q: string) => api.get<{ query: string; results: OpsSearchResult[]; counts: Record<string, number> }>(
+    '/ops/search/', { params: { q } }),
+}
