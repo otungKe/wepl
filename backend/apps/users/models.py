@@ -149,6 +149,10 @@ class KYCProfile(models.Model):
     id_number   = models.CharField(max_length=20, unique=True)
     date_of_birth = models.DateField()
     email       = models.EmailField(blank=True, default='')
+    # KRA (Kenya Revenue Authority) tax PIN. Entered manually today; a future
+    # identity-verification vendor may auto-populate it after ID verification
+    # (ADR-0023). Kept blank-able at the model level; required at submit.
+    kra_pin     = models.CharField(max_length=11, blank=True, default='')
 
     # ID documents + selfie
     id_front = models.ImageField(upload_to='kyc/ids/')

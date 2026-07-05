@@ -30,6 +30,7 @@ class DataExportView(APIView):
                 "status": k.status,
                 "given_names": k.given_names,
                 "surname": k.surname,
+                "kra_pin": getattr(k, "kra_pin", ""),
                 "county": getattr(k, "county", ""),
                 "physical_address": getattr(k, "physical_address", ""),
                 "email_verified": k.email_verified,

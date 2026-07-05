@@ -656,11 +656,25 @@ class KYCMandatoryDocsTests(TestCase):
     def _base_payload(self):
         return {
             "given_names": "Jane", "surname": "Doe", "id_number": "12345678",
+            "kra_pin": "A012345678Z",
             "date_of_birth": "1990-01-01", "email": "j@example.com",
             "physical_address": "123 Riverside", "county": "Nairobi",
             "occupation": "Engineer", "source_of_income": "employment",
             "expected_monthly_income": "under_250k",
         }
+
+    def test_kra_pin_required_and_format_checked(self):
+        from apps.users.serializers import KYCSubmitSerializer
+        # Missing
+        p = self._base_payload(); p.pop("kra_pin")
+        s = KYCSubmitSerializer(data=p)
+        self.assertFalse(s.is_valid())
+        self.assertIn("kra_pin", s.errors)
+        # Bad format
+        p = self._base_payload(); p["kra_pin"] = "12345"
+        s = KYCSubmitSerializer(data=p)
+        self.assertFalse(s.is_valid())
+        self.assertIn("kra_pin", s.errors)
 
     def test_documents_are_required(self):
         from apps.users.serializers import KYCSubmitSerializer

@@ -145,7 +145,7 @@ class KYCProfileAdmin(UnfoldModelAdmin):
     actions = [approve_kyc, reject_kyc]
 
     fieldsets = (
-        ('Applicant',   {'fields': ('user', 'given_names', 'surname', 'id_number', 'date_of_birth', 'email')}),
+        ('Applicant',   {'fields': ('user', 'given_names', 'surname', 'id_number', 'kra_pin', 'date_of_birth', 'email')}),
         ('Documents',   {'fields': ('id_front_preview', 'id_back_preview', 'selfie_preview')}),
         ('Automated checks', {'fields': ('verification_summary',)}),
         ('Location',    {'fields': ('county', 'physical_address')}),
