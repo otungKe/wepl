@@ -14,10 +14,35 @@ export interface QueueRow {
   resubmission_pending: boolean
 }
 
-export interface DocRef { available: boolean; url: string | null; name: string | null }
+export interface DocVersion {
+  version: number
+  url: string | null
+  name: string
+  source: string
+  sha256: string
+  at: string
+}
+
+export interface DocRef {
+  available: boolean
+  url: string | null
+  name: string | null
+  versions: DocVersion[]
+}
+
+export interface TimelineEvent {
+  seq: number
+  type: string
+  actor: string
+  actor_kind: 'customer' | 'staff' | 'system'
+  at: string
+  payload: Record<string, unknown>
+}
 
 export interface CaseDetail {
   user_id: number
+  case_id: string
+  case_state: string
   phone_number: string
   status: string
   applicant: Record<string, string | boolean | null>
@@ -31,7 +56,7 @@ export interface CaseDetail {
   resubmittable_items: Record<string, string>
   submitted_at: string | null
   age_hours: number | null
-  history: { action: string; by: string; at: string; detail: Record<string, unknown> }[]
+  timeline: TimelineEvent[]
 }
 
 export type Decision =

@@ -92,6 +92,15 @@ review, `FakeProvider` = tests, resolved via `registry.get_provider()`, mirrors 
 port). `KYCEmailVerifyView` calls it via `_run_identity_check()`; a real vendor / IPRS lookup
 drops in as another adapter without touching the view (ADR-0023).
 
+**Identity is a ledger too (`apps/verification/`).** Every KYC journey has a `VerificationCase`
+whose immutable `CaseEvent` timeline is the source of truth; `KYCProfile.status` is a projection.
+All review decisions (ops console, Django-admin actions/form, automated provider outcomes) go
+through `apps.verification.service.decide()` — the identity analogue of `post_journal()` —
+which enforces the declared transition table and appends the event. Documents are versioned
+`CaseDocument` rows pinned to their storage objects; a re-submission adds a version and never
+overwrites the evidence a prior decision was made against. Don't mutate case/KYC review state
+outside the service.
+
 **Back Office staff are a separate identity from customers.** `apps/backoffice` powers the
 operations console at `/api/ops/*`: operators are `StaffAccount` rows (corporate **email +
 password**, admin-provisioned, `must_change_password`, no self-serve reset) — *not* customer

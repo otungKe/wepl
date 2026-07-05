@@ -64,15 +64,38 @@ def _queue_row(kyc):
     }
 
 
+def _doc_versions(case):
+    """All immutable document versions on the case, newest first per type."""
+    from apps.verification.models import CaseDocument
+    out = {}
+    for d in CaseDocument.objects.filter(case=case).order_by("doc_type", "-version"):
+        try:
+            url = d.file.url if d.file.storage.exists(d.file.name) else None
+        except Exception:
+            url = None
+        out.setdefault(d.doc_type, []).append({
+            "version": d.version, "url": url, "name": d.file.name,
+            "source": d.source, "sha256": d.sha256,
+            "at": d.created_at.isoformat(),
+        })
+    return out
+
+
 def _case(kyc, request):
-    from apps.audit.models import AuditEvent
-    history = [
-        {"action": e.action, "by": e.actor_label or "system",
-         "at": e.created_at.isoformat(), "detail": e.metadata}
-        for e in AuditEvent.objects.filter(
-            target_type="KYCProfile", target_id=str(kyc.id)).order_by("-created_at")[:20]
+    from apps.verification import service as case_service
+    from apps.verification.models import CaseEvent
+
+    case = case_service.case_for(kyc)
+    timeline = [
+        {"seq": e.seq, "type": e.event_type, "actor": e.actor_label or "system",
+         "actor_kind": e.actor_kind, "at": e.created_at.isoformat(),
+         "payload": e.payload}
+        for e in CaseEvent.objects.filter(case=case).order_by("-seq")[:50]
     ]
+    versions = _doc_versions(case)
     return {
+        "case_id": str(case.id),
+        "case_state": case.state,
         "user_id": kyc.user_id,
         "phone_number": kyc.user.phone_number,
         "status": kyc.status,
@@ -86,9 +109,9 @@ def _case(kyc, request):
             "expected_monthly_income": kyc.expected_monthly_income,
         },
         "documents": {
-            "id_front": _doc(kyc.id_front),
-            "id_back": _doc(kyc.id_back),
-            "selfie": _doc(kyc.selfie),
+            "id_front": {**_doc(kyc.id_front), "versions": versions.get("id_front", [])},
+            "id_back": {**_doc(kyc.id_back), "versions": versions.get("id_back", [])},
+            "selfie": {**_doc(kyc.selfie), "versions": versions.get("selfie", [])},
         },
         "checks": {
             "provider": kyc.verification_provider,
@@ -101,7 +124,7 @@ def _case(kyc, request):
         "resubmittable_items": dict(KYCProfile.RESUBMITTABLE_ITEMS),
         "submitted_at": kyc.submitted_at.isoformat() if kyc.submitted_at else None,
         "age_hours": _age_hours(kyc.submitted_at),
-        "history": history,
+        "timeline": timeline,
     }
 
 
@@ -134,49 +157,42 @@ class VerificationDecisionView(OpsAPIView):
     permission_classes = [RequireCapability("verification.decide")]
 
     def post(self, request, user_id):
-        from apps.users.admin import _notify_kyc_decision, _notify_resubmission_request
+        from apps.verification import service as case_service
 
         kyc = get_object_or_404(KYCProfile.objects.select_related("user"), user_id=user_id)
         action = (request.data.get("action") or "").strip()
         operator = request.user.email
-        now = timezone.now()
 
-        def _stamp(state):
-            kyc.verification_provider = f"ops:{operator}"
-            kyc.verification_state = state
-            kyc.verification_checked_at = now
-            kyc.reviewed_at = now
+        try:
+            if action == "approve":
+                case_service.decide(kyc, "approve", actor_label=f"ops:{operator}",
+                                    staff=request.user)
 
-        if action == "approve":
-            kyc.status = "approved"
-            kyc.rejection_reason = ""
-            _stamp("verified")
-            kyc.save(update_fields=["status", "rejection_reason", "reviewed_at",
-                                    "verification_provider", "verification_state", "verification_checked_at"])
-            _notify_kyc_decision(kyc)
+            elif action == "reject":
+                reason = (request.data.get("reason") or "").strip()
+                if not reason:
+                    return Response({"detail": "A rejection reason is required."},
+                                    status=http.HTTP_400_BAD_REQUEST)
+                case_service.decide(kyc, "reject", actor_label=f"ops:{operator}",
+                                    staff=request.user, reason=reason)
 
-        elif action == "reject":
-            reason = (request.data.get("reason") or "").strip()
-            if not reason:
-                return Response({"detail": "A rejection reason is required."}, status=http.HTTP_400_BAD_REQUEST)
-            kyc.status = "rejected"
-            kyc.rejection_reason = reason
-            _stamp("rejected")
-            kyc.save(update_fields=["status", "rejection_reason", "reviewed_at",
-                                    "verification_provider", "verification_state", "verification_checked_at"])
-            _notify_kyc_decision(kyc)
+            elif action == "request_resubmission":
+                items = request.data.get("items") or ["id_front", "id_back", "selfie"]
+                items = [i for i in items if i in KYCProfile.RESUBMITTABLE_KEYS]
+                if not items:
+                    return Response({"detail": "Select at least one valid item."},
+                                    status=http.HTTP_400_BAD_REQUEST)
+                case_service.decide(kyc, "request_info", actor_label=f"ops:{operator}",
+                                    staff=request.user, items=items)
 
-        elif action == "request_resubmission":
-            items = request.data.get("items") or ["id_front", "id_back", "selfie"]
-            items = [i for i in items if i in KYCProfile.RESUBMITTABLE_KEYS]
-            if not items:
-                return Response({"detail": "Select at least one valid item."}, status=http.HTTP_400_BAD_REQUEST)
-            kyc.resubmission_requested = items
-            kyc.save(update_fields=["resubmission_requested"])
-            _notify_resubmission_request(kyc)
+            else:
+                return Response({"detail": f"Unknown action: {action!r}."}, status=http.HTTP_400_BAD_REQUEST)
 
-        else:
-            return Response({"detail": f"Unknown action: {action!r}."}, status=http.HTTP_400_BAD_REQUEST)
+        except case_service.IllegalTransition as exc:
+            return Response(
+                {"detail": f"This case is {exc.state} — {action.replace('_', ' ')} isn't available from that state."},
+                status=http.HTTP_409_CONFLICT,
+            )
 
         record_action(
             action=f"ops.verification.{action}", actor=request.user, request=request,

@@ -61,17 +61,6 @@ class UserAdmin(BaseUserAdmin, UnfoldModelAdmin):
 # KYC ADMIN
 # ─────────────────────────────────────────────────────────────
 
-def _stamp_manual_decision(kyc):
-    """Record that a human made this call on the identity-verification audit
-    fields, so the "Provider & OCR cross-check" panel stays consistent with the
-    KYC status instead of showing the earlier automated 'manual_review' result.
-    Returns the field names to include in the caller's save(update_fields=...)."""
-    kyc.verification_provider   = 'manual (admin)'
-    kyc.verification_state      = 'verified' if kyc.status == 'approved' else 'rejected'
-    kyc.verification_checked_at = timezone.now()
-    return ['verification_provider', 'verification_state', 'verification_checked_at']
-
-
 def _notify_kyc_decision(kyc):
     """Tell the applicant their KYC was approved/rejected (in-app notification).
 
@@ -100,34 +89,29 @@ def _notify_kyc_decision(kyc):
 
 @admin.action(description='Approve selected KYC submissions', permissions=['change'])
 def approve_kyc(modeladmin, request, queryset):
+    from apps.verification import service as case_service
     n = 0
     for kyc in queryset.filter(status='pending'):
-        kyc.status          = 'approved'
-        kyc.reviewed_by     = request.user
-        kyc.reviewed_at     = timezone.now()
-        kyc.rejection_reason = ''
-        extra = _stamp_manual_decision(kyc)
-        kyc.save(update_fields=['status', 'reviewed_by', 'reviewed_at', 'rejection_reason', *extra])
-        _notify_kyc_decision(kyc)
+        try:
+            case_service.decide(kyc, 'approve', actor_label='manual (admin)',
+                                reviewer_user=request.user)
+        except case_service.IllegalTransition:
+            continue
         n += 1
     modeladmin.message_user(request, f"{n} KYC submission(s) approved and applicant(s) notified.")
 
 
 @admin.action(description='Reject selected KYC submissions', permissions=['change'])
 def reject_kyc(modeladmin, request, queryset):
+    from apps.verification import service as case_service
     n = 0
     for kyc in queryset.filter(status='pending'):
-        kyc.status      = 'rejected'
-        kyc.reviewed_by = request.user
-        kyc.reviewed_at = timezone.now()
-        if not kyc.rejection_reason:
-            kyc.rejection_reason = (
-                'Your documents could not be verified. Please re-submit clear '
-                'photos of your ID.'
-            )
-        extra = _stamp_manual_decision(kyc)
-        kyc.save(update_fields=['status', 'reviewed_by', 'reviewed_at', 'rejection_reason', *extra])
-        _notify_kyc_decision(kyc)
+        try:
+            case_service.decide(kyc, 'reject', actor_label='manual (admin)',
+                                reviewer_user=request.user,
+                                reason=kyc.rejection_reason)
+        except case_service.IllegalTransition:
+            continue
         n += 1
     modeladmin.message_user(
         request,
@@ -160,11 +144,12 @@ def request_kyc_resubmission(modeladmin, request, queryset):
     for a different set of items, open the record and edit
     "Requested for re-submission" instead.
     """
+    from apps.verification import service as case_service
     n = 0
     for kyc in queryset:
-        kyc.resubmission_requested = ['id_front', 'id_back', 'selfie']
-        kyc.save(update_fields=['resubmission_requested'])
-        _notify_resubmission_request(kyc)
+        case_service.decide(kyc, 'request_info', actor_label='manual (admin)',
+                            reviewer_user=request.user,
+                            items=['id_front', 'id_back', 'selfie'])
         n += 1
     modeladmin.message_user(
         request,
@@ -309,22 +294,27 @@ class KYCProfileAdmin(UnfoldModelAdmin):
         )
 
     def save_model(self, request, obj, form, change):
-        """When an admin sets status to approved/rejected via the form, stamp the
-        reviewer/time and notify the applicant — so a decision with a typed
-        rejection reason behaves like the bulk actions."""
+        """When an admin sets status to approved/rejected (or asks for items to
+        be re-submitted) via the form, apply it through the case state machine
+        (apps.verification.service) so the decision is evented, projected, and
+        notified exactly like the bulk actions and the ops console."""
+        from apps.verification import service as case_service
+
         decision = 'status' in form.changed_data and obj.status in ('approved', 'rejected')
-        if decision:
-            obj.reviewed_by = request.user
-            obj.reviewed_at = timezone.now()
-            if obj.status == 'approved':
-                obj.rejection_reason = ''
-            _stamp_manual_decision(obj)   # keep the verification audit fields consistent
         super().save_model(request, obj, form, change)
         if decision:
-            _notify_kyc_decision(obj)
-        # A reviewer ticked items to re-request via the form → notify the user.
+            action = 'approve' if obj.status == 'approved' else 'reject'
+            try:
+                case_service.decide(obj, action, actor_label='manual (admin)',
+                                    reviewer_user=request.user,
+                                    reason=obj.rejection_reason)
+            except case_service.IllegalTransition:
+                pass  # form save already reflects the state; nothing to advance
+        # A reviewer ticked items to re-request via the form → event + notify.
         if 'resubmission_requested' in form.changed_data and obj.resubmission_requested:
-            _notify_resubmission_request(obj)
+            case_service.decide(obj, 'request_info', actor_label='manual (admin)',
+                                reviewer_user=request.user,
+                                items=obj.resubmission_requested)
 
 
 # ─────────────────────────────────────────────────────────────
