@@ -122,6 +122,45 @@ def reject_kyc(modeladmin, request, queryset):
     )
 
 
+@admin.action(description='Request re-submission (ask user to re-upload their KYC)', permissions=['change'])
+def request_kyc_resubmission(modeladmin, request, queryset):
+    """Ask selected users to re-submit their KYC — works on ANY status, including
+    already-approved profiles (e.g. when documents need refreshing). Moves the
+    profile to 'rejected' so the KYC form unlocks re-submission (approved profiles
+    are otherwise locked) and the mobile app shows its "Re-submit" call-to-action,
+    then notifies the user with a re-upload message (not a rejection verdict).
+
+    Note: because full access (Tier 1) requires an *approved* KYC, this reverts
+    an approved user to unverified until they re-submit and are re-approved.
+    """
+    from apps.core.events import emit
+
+    n = 0
+    for kyc in queryset:
+        kyc.status      = 'rejected'
+        kyc.reviewed_by = request.user
+        kyc.reviewed_at = timezone.now()
+        kyc.rejection_reason = (
+            'We need you to re-submit your identity documents. Please open WEPL '
+            'and upload fresh photos of your ID and a selfie.'
+        )
+        kyc.save(update_fields=['status', 'reviewed_by', 'reviewed_at', 'rejection_reason'])
+        # Dedicated, non-punitive message (distinct from a rejection verdict).
+        emit(
+            'kyc_resubmission_requested',
+            user_id=kyc.user_id,
+            title='Action needed: re-submit your ID',
+            message='Please re-submit your identity documents in WEPL so we can '
+                    're-verify your account.',
+        )
+        n += 1
+    modeladmin.message_user(
+        request,
+        f"Re-submission requested from {n} user(s). They have been notified and "
+        f"can now re-upload their KYC. (Approved users revert to unverified until re-approved.)",
+    )
+
+
 def _img(file):
     """Render a KYC document preview for the admin, degrading legibly:
     - no file on the record → '—'
@@ -165,7 +204,7 @@ class KYCProfileAdmin(UnfoldModelAdmin):
         'id_front_preview', 'id_back_preview', 'selfie_preview',
         'verification_summary',
     )
-    actions = [approve_kyc, reject_kyc]
+    actions = [approve_kyc, reject_kyc, request_kyc_resubmission]
 
     fieldsets = (
         ('Applicant',   {'fields': ('user', 'given_names', 'surname', 'id_number', 'kra_pin', 'date_of_birth', 'email')}),
