@@ -5,9 +5,11 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 
-# System deps for psycopg2 + Pillow
+# System deps for psycopg2 + Pillow, and tesseract-ocr for in-house KYC ID OCR
+# (ADR-0023 follow-up). The OCR path degrades gracefully to manual review when
+# the binary is absent, so this only takes effect under the Docker runtime.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    libpq-dev gcc libjpeg-dev zlib1g-dev \
+    libpq-dev gcc libjpeg-dev zlib1g-dev tesseract-ocr \
     && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt .

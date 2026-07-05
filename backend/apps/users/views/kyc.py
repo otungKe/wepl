@@ -92,6 +92,29 @@ def _send_kyc_verification_email(kyc, request):
     )
 
 
+def _read_id_scan_ocr(kyc):
+    """Advisory in-house OCR cross-check of the front ID scan against the typed
+    values. Best-effort and never fatal — returns a detail dict for the reviewer;
+    an empty/degraded result (no OCR backend) just means manual review proceeds."""
+    from ..ocr import run_id_ocr
+    try:
+        if not kyc.id_front:
+            return {"detected": False, "engine": "none"}
+        kyc.id_front.open('rb')
+        try:
+            image = kyc.id_front.read()
+        finally:
+            kyc.id_front.close()
+        return run_id_ocr(
+            image,
+            id_number=kyc.id_number or '',
+            date_of_birth=kyc.date_of_birth.isoformat() if kyc.date_of_birth else '',
+        )
+    except Exception as exc:
+        logger.warning("ID-scan OCR failed for user %s: %s", kyc.user_id, exc)
+        return {"detected": False, "engine": "error"}
+
+
 def _run_identity_check(kyc):
     """Run the active identity-verification provider against a KYC row and apply
     the outcome. Records the provider result for audit and derives the KYC status
@@ -123,7 +146,7 @@ def _run_identity_check(kyc):
     kyc.verification_provider   = result.provider
     kyc.verification_ref        = result.provider_ref
     kyc.verification_state      = result.state
-    kyc.verification_detail     = result.raw or {}
+    kyc.verification_detail     = {**(result.raw or {}), 'ocr': _read_id_scan_ocr(kyc)}
     kyc.verification_checked_at = timezone.now()
 
     if result.state == VERIFIED:
