@@ -131,6 +131,46 @@ class CaseLedgerTests(TestCase):
         self.assertEqual(case.state, VerificationCase.State.SUBMITTED)
         self.assertIsNone(case.closed_at)
 
+    def test_subject_case_opens_in_requires_info_and_dedupes(self):
+        """EDD cases (Phase A): generic-subject cases open awaiting evidence,
+        idempotently per subject, and the KYC transition table applies."""
+        kyc = _kyc(phone='+254700000003', id_number='33333334')
+        case = service.open_subject_case(
+            kyc.user, case_type=VerificationCase.CaseType.EDD_TRANSACTION,
+            subject_type='HeldMovement', subject_id=917,
+            requested_items=['proof_of_funds', 'invoice'])
+        self.assertEqual(case.state, VerificationCase.State.REQUIRES_INFO)
+        self.assertIsNone(case.kyc)
+        self.assertEqual(case.subject_type, 'HeldMovement')
+        opened = case.events.get(seq=1)
+        self.assertEqual(opened.payload['requested_items'], ['proof_of_funds', 'invoice'])
+
+        # Same subject while open → same case, no duplicate.
+        again = service.open_subject_case(
+            kyc.user, case_type=VerificationCase.CaseType.EDD_TRANSACTION,
+            subject_type='HeldMovement', subject_id=917)
+        self.assertEqual(again.pk, case.pk)
+
+        # Evidence kinds beyond the KYC trio version normally.
+        doc = CaseDocument(case=case, doc_type='proof_of_funds', version=1,
+                           source=CaseDocument.Source.SUBMISSION)
+        doc.file.name = 'verification/documents/pof.pdf'
+        doc.save()
+        self.assertEqual(case.documents.get().doc_type, 'proof_of_funds')
+
+        # KYC cases cannot be opened through this door.
+        with self.assertRaises(ValueError):
+            service.open_subject_case(
+                kyc.user, case_type=VerificationCase.CaseType.KYC_INDIVIDUAL,
+                subject_type='X', subject_id=1)
+
+    def test_case_requires_kyc_or_subject(self):
+        from django.db import IntegrityError
+        kyc = _kyc(phone='+254700000004', id_number='44444445')
+        with self.assertRaises(IntegrityError):
+            VerificationCase.objects.create(user=kyc.user, kyc=None,
+                                            case_type='edd_transaction')
+
     def test_approved_case_is_closed_to_resubmission(self):
         """After approval, staff cannot request items and no top-up re-enters
         review — the only legal action left is revocation."""

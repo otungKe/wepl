@@ -14,11 +14,14 @@ from django.db import models
 
 
 class VerificationCase(models.Model):
-    """Aggregate root for one identity-verification journey of one user.
+    """Aggregate root for one verification journey of one user.
 
-    Exactly one case exists per KYC profile today (opened on first submission,
-    backfilled for pre-existing rows). Periodic re-verification later opens a
-    NEW linked case rather than mutating an approved one.
+    ``kyc_individual`` cases (one per KYC profile, opened on first submission,
+    backfilled for pre-existing rows) verify identity; EDD case types verify a
+    *thing* — a held large transaction, a large community drive — referenced
+    generically via ``subject_type``/``subject_id`` (the AuditEvent target
+    pattern), with ``kyc`` null. Periodic re-verification later opens a NEW
+    linked case rather than mutating an approved one.
     """
 
     class State(models.TextChoices):
@@ -27,18 +30,30 @@ class VerificationCase(models.Model):
         APPROVED      = 'approved',      'Approved'
         REJECTED      = 'rejected',      'Rejected'
 
+    class CaseType(models.TextChoices):
+        KYC_INDIVIDUAL  = 'kyc_individual',  'KYC — individual identity'
+        EDD_TRANSACTION = 'edd_transaction', 'EDD — large transaction'
+        EDD_DRIVE       = 'edd_drive',       'EDD — large community drive'
+
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
 
     user = models.ForeignKey(
         settings.AUTH_USER_MODEL, on_delete=models.PROTECT,
         related_name='verification_cases',
     )
+    # Set for kyc_individual cases only; EDD cases reference their subject below.
     kyc = models.ForeignKey(
-        'users.KYCProfile', on_delete=models.PROTECT,
+        'users.KYCProfile', null=True, blank=True, on_delete=models.PROTECT,
         related_name='cases',
     )
 
-    case_type = models.CharField(max_length=30, default='kyc_individual')
+    # What is being verified, for non-KYC cases. Generic reference (no FK —
+    # subjects span models: FinancialTransaction, HeldMovement, a drive, …).
+    subject_type = models.CharField(max_length=60, blank=True, default='')
+    subject_id   = models.CharField(max_length=64, blank=True, default='')
+
+    case_type = models.CharField(max_length=30, choices=CaseType.choices,
+                                 default=CaseType.KYC_INDIVIDUAL, db_index=True)
     state     = models.CharField(max_length=20, choices=State.choices,
                                  default=State.SUBMITTED, db_index=True)
 
@@ -59,6 +74,16 @@ class VerificationCase(models.Model):
         ordering = ['-opened_at']
         indexes = [
             models.Index(fields=['state', 'opened_at'], name='vcase_state_opened_idx'),
+            models.Index(fields=['subject_type', 'subject_id'], name='vcase_subject_idx'),
+        ]
+        constraints = [
+            # A case verifies exactly one thing: identity (kyc set) or a
+            # generic subject (subject_type set) — never neither.
+            models.CheckConstraint(
+                name='vcase_has_kyc_or_subject',
+                condition=(models.Q(kyc__isnull=False)
+                           | ~models.Q(subject_type='')),
+            ),
         ]
 
     def __str__(self):
@@ -135,9 +160,19 @@ class CaseDocument(models.Model):
     """
 
     class DocType(models.TextChoices):
+        # KYC identity documents (snapshot from KYCProfile fields)
         ID_FRONT = 'id_front', 'Front of ID'
         ID_BACK  = 'id_back',  'Back of ID'
         SELFIE   = 'selfie',   'Selfie'
+        # EDD evidence kinds (attached directly to a case)
+        PROOF_OF_FUNDS = 'proof_of_funds', 'Proof of funds'
+        BANK_STATEMENT = 'bank_statement', 'Bank statement'
+        INVOICE        = 'invoice',        'Invoice'
+        RECEIPT        = 'receipt',        'Receipt'
+        SUPPORTING_DOC = 'supporting_doc', 'Supporting document'
+
+    # The KYC subset that snapshot_documents() mirrors from KYCProfile fields.
+    KYC_DOC_TYPES = ('id_front', 'id_back', 'selfie')
 
     class Source(models.TextChoices):
         SUBMISSION   = 'submission',   'Initial submission'
@@ -146,7 +181,7 @@ class CaseDocument(models.Model):
 
     case     = models.ForeignKey(VerificationCase, on_delete=models.PROTECT,
                                  related_name='documents')
-    doc_type = models.CharField(max_length=12, choices=DocType.choices)
+    doc_type = models.CharField(max_length=20, choices=DocType.choices)
     version  = models.PositiveIntegerField()
 
     # References the storage object the KYC upload created; assigned by name,
