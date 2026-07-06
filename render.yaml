@@ -1,15 +1,7 @@
-databases:
-  - name: wepl-db
-    databaseName: wepl
-    user: wepl
-    plan: free
-  # Staging DB — kept fully separate from production so validating the Tier-1
-  # enforcement rollout (ADR-0022) never touches real data.
-  - name: wepl-db-staging
-    databaseName: wepl_staging
-    user: wepl_staging
-    plan: free
-
+# Postgres lives on Neon (serverless, no 30-day free-tier expiry) — NOT on
+# Render. Each API service gets its DATABASE_URL (the Neon connection string,
+# incl. sslmode=require) set directly on the service in the dashboard; use a
+# separate Neon branch/database for staging so it never touches real data.
 services:
   - type: redis
     name: wepl-redis
@@ -93,26 +85,12 @@ services:
         sync: false
       - key: OPS_ADMIN_PASSWORD
         sync: false
-      - key: DB_NAME
-        fromDatabase:
-          name: wepl-db
-          property: database
-      - key: DB_USER
-        fromDatabase:
-          name: wepl-db
-          property: user
-      - key: DB_PASSWORD
-        fromDatabase:
-          name: wepl-db
-          property: password
-      - key: DB_HOST
-        fromDatabase:
-          name: wepl-db
-          property: host
-      - key: DB_PORT
-        fromDatabase:
-          name: wepl-db
-          property: port
+      # Neon Postgres connection string (postgresql://…?sslmode=require…).
+      # Set in the dashboard — never committed. Use the DIRECT (non-pooled)
+      # endpoint: Django holds persistent connections (CONN_MAX_AGE) and the
+      # process count here is small.
+      - key: DATABASE_URL
+        sync: false
       - key: REDIS_URL
         fromService:
           type: redis
@@ -268,26 +246,10 @@ services:
         sync: false
       - key: OPS_ADMIN_PASSWORD
         sync: false
-      - key: DB_NAME
-        fromDatabase:
-          name: wepl-db-staging
-          property: database
-      - key: DB_USER
-        fromDatabase:
-          name: wepl-db-staging
-          property: user
-      - key: DB_PASSWORD
-        fromDatabase:
-          name: wepl-db-staging
-          property: password
-      - key: DB_HOST
-        fromDatabase:
-          name: wepl-db-staging
-          property: host
-      - key: DB_PORT
-        fromDatabase:
-          name: wepl-db-staging
-          property: port
+      # Neon connection string for the STAGING branch/database — a separate
+      # Neon branch keeps staging fully isolated from production data.
+      - key: DATABASE_URL
+        sync: false
       - key: REDIS_URL
         fromService:
           type: redis

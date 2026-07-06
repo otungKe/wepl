@@ -127,3 +127,9 @@ separate app/deployment — never co-hosted with the customer web app.
 Render via `render.yaml` (blueprint). Note a blueprint sync does **not** delete env vars already
 set directly on a service. Python is pinned to 3.12 (`PYTHON_VERSION` + `backend/.python-version`)
 so Render doesn't drift from CI.
+
+Postgres is on **Neon**, not Render: each API service carries a `DATABASE_URL` (Neon direct,
+non-pooled connection string with `sslmode=require`) set directly on the service in the Render
+dashboard. `production.py` prefers `DATABASE_URL` (parsed via `dj-database-url`, with
+`CONN_HEALTH_CHECKS` so Neon autosuspend wake-ups reconnect transparently) and falls back to
+discrete `DB_*` vars. Staging uses a separate Neon branch/database.

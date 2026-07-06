@@ -34,6 +34,8 @@ pillow==12.2.0
 # In-house KYC ID OCR (ADR-0023). Pure-Python wrapper; the `tesseract` binary is
 # optional at runtime — the OCR path degrades to manual review when it's absent.
 pytesseract==0.3.13
+# Parses DATABASE_URL (Neon/any hosted Postgres) in config/settings/production.py.
+dj-database-url==3.1.2
 psycopg2-binary==2.9.12
 py-ubjson==0.16.1
 pyasn1==0.6.3
