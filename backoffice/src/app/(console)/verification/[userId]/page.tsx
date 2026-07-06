@@ -20,6 +20,7 @@ export default function VerificationCase() {
   const [status, setStatus] = useState<'loading' | 'ready' | 'error'>('loading')
   const [tab, setTab] = useState<Tab>('overview')
   const [busy, setBusy] = useState(false)
+  const [mode, setMode] = useState<'approve' | 'reject' | 'resubmit'>('approve')
   const [reason, setReason] = useState('')
   const [reasonCode, setReasonCode] = useState('')
   const [items, setItems] = useState<string[]>([])
@@ -99,12 +100,14 @@ export default function VerificationCase() {
       </div>
 
       {/* Meta strip */}
-      <div className="mb-4 flex flex-wrap gap-x-5 gap-y-1 text-xs text-slate-400">
+      <div className="mb-4 flex flex-wrap items-center gap-x-5 gap-y-1 text-xs text-slate-400">
         <span className="font-mono">{data.phone_number}</span>
         {data.case_opened_at && <span>Opened {new Date(data.case_opened_at).toLocaleDateString(undefined, { dateStyle: 'medium' })}</span>}
         {data.age_hours != null && <span>Submitted {Math.round(data.age_hours)}h ago</span>}
+        {data.attempts > 1 && <span>Attempt <b className="text-slate-600 dark:text-slate-300">{data.attempts}</b></span>}
         {data.case_closed_at && <span>Closed {new Date(data.case_closed_at).toLocaleDateString(undefined, { dateStyle: 'medium' })}</span>}
         {data.assignee && <span>Working: <b className="text-slate-600 dark:text-slate-300">{data.assignee.split('@')[0]}</b></span>}
+        {data.sla && <SlaChip sla={data.sla} />}
       </div>
 
       {/* Tabs */}
@@ -167,60 +170,83 @@ export default function VerificationCase() {
           {canDecide ? (
             <Card title="Decision">
               {err && <p className="mb-2 text-sm text-red-500">{err}</p>}
-              <button disabled={busy} onClick={() => decide({ action: 'approve' })}
-                className="mb-2 flex w-full items-center justify-center gap-2 rounded-lg bg-emerald-600 py-2.5 text-sm font-semibold text-white hover:bg-emerald-500 disabled:opacity-60">
-                <Check className="h-4 w-4" /> Approve
-              </button>
 
-              <div className="mb-2 rounded-lg border border-slate-200 p-2.5 dark:border-slate-800">
-                <select value={reasonCode} onChange={(e) => setReasonCode(e.target.value)}
-                  className="mb-1.5 w-full rounded-md border border-slate-200 bg-transparent px-2 py-1.5 text-sm outline-none dark:border-slate-700 dark:bg-slate-900">
-                  <option value="">Rejection reason…</option>
-                  {data.rejection_reasons.map((r) => (
-                    <option key={r.code} value={r.code}>{r.label}</option>
-                  ))}
-                </select>
-                {reasonCode && reasonCode !== 'OTHER' && (
-                  <p className="mb-1.5 rounded bg-slate-50 px-2 py-1.5 text-xs text-slate-500 dark:bg-slate-800/60">
-                    Applicant sees: “{data.rejection_reasons.find((r) => r.code === reasonCode)?.customer_message}”
-                  </p>
-                )}
-                <textarea value={reason} onChange={(e) => setReason(e.target.value)} rows={2}
-                  placeholder={reasonCode === 'OTHER' ? 'Reason shown to the applicant (required)'
-                    : reasonCode ? 'Internal detail (optional, not shown to the applicant)'
-                    : 'Free-text reason shown to the applicant'}
-                  className="w-full resize-none bg-transparent text-sm outline-none placeholder:text-slate-400" />
-                <button
-                  disabled={busy || (reasonCode === 'OTHER' || !reasonCode ? !reason.trim() : false)}
-                  onClick={() => decide({ action: 'reject',
-                    ...(reasonCode ? { reason_code: reasonCode } : {}),
-                    ...(reason.trim() ? { reason: reason.trim() } : {}) })}
-                  className="mt-1 flex w-full items-center justify-center gap-2 rounded-md bg-red-600 py-2 text-sm font-semibold text-white hover:bg-red-500 disabled:opacity-50">
-                  <X className="h-4 w-4" /> Reject
-                </button>
+              {/* Mode selector */}
+              <div className="mb-3 grid grid-cols-3 gap-1.5">
+                <ModeBtn active={mode === 'approve'} activeCls="border-emerald-500 bg-emerald-50 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-400"
+                  onClick={() => setMode('approve')} icon={<Check className="h-4 w-4" />} label="Approve" />
+                <ModeBtn active={mode === 'reject'} activeCls="border-red-500 bg-red-50 text-red-700 dark:bg-red-500/10 dark:text-red-400"
+                  onClick={() => setMode('reject')} icon={<X className="h-4 w-4" />} label="Reject" />
+                <ModeBtn active={mode === 'resubmit'} activeCls="border-blue-500 bg-blue-50 text-blue-700 dark:bg-blue-500/10 dark:text-blue-400"
+                  onClick={() => setMode('resubmit')} icon={<Upload className="h-4 w-4" />} label="Re-submit" />
               </div>
 
-              <div className="rounded-lg border border-slate-200 p-2.5 dark:border-slate-800">
-                <p className="mb-1.5 text-xs font-medium text-slate-500">Request re-submission of:</p>
-                <div className="mb-2 grid grid-cols-2 gap-1">
-                  {Object.entries(data.resubmittable_items).map(([key, label]) => (
-                    <label key={key} className="flex items-center gap-1.5 text-xs">
-                      <input type="checkbox" checked={items.includes(key)}
-                        onChange={(e) => setItems((s) => e.target.checked ? [...s, key] : s.filter((x) => x !== key))} />
-                      {label}
-                    </label>
-                  ))}
+              {mode === 'approve' && (
+                <p className="mb-3 rounded-lg bg-slate-50 px-3 py-2 text-xs text-slate-500 dark:bg-slate-800/60">
+                  Grants full (Tier-1) access and notifies the applicant.
+                </p>
+              )}
+
+              {mode === 'reject' && (
+                <div className="mb-3">
+                  <select value={reasonCode} onChange={(e) => setReasonCode(e.target.value)}
+                    className="mb-1.5 w-full rounded-md border border-slate-200 bg-transparent px-2 py-1.5 text-sm outline-none dark:border-slate-700 dark:bg-slate-900">
+                    <option value="">Rejection reason…</option>
+                    {data.rejection_reasons.map((r) => (
+                      <option key={r.code} value={r.code}>{r.label}</option>
+                    ))}
+                  </select>
+                  {reasonCode && reasonCode !== 'OTHER' && (
+                    <p className="mb-1.5 rounded bg-slate-50 px-2 py-1.5 text-xs text-slate-500 dark:bg-slate-800/60">
+                      Applicant sees: “{data.rejection_reasons.find((r) => r.code === reasonCode)?.customer_message}”
+                    </p>
+                  )}
+                  <textarea value={reason} onChange={(e) => setReason(e.target.value)} rows={2}
+                    placeholder={reasonCode === 'OTHER' ? 'Reason shown to the applicant (required)'
+                      : reasonCode ? 'Internal detail (optional, not shown to the applicant)'
+                      : 'Free-text reason shown to the applicant'}
+                    className="w-full resize-none rounded-md border border-slate-200 px-2 py-1.5 text-sm outline-none placeholder:text-slate-400 dark:border-slate-700" />
                 </div>
-                <button disabled={busy || items.length === 0} onClick={() => decide({ action: 'request_resubmission', items })}
-                  className="flex w-full items-center justify-center gap-2 rounded-md bg-blue-600 py-2 text-sm font-semibold text-white hover:bg-blue-500 disabled:opacity-50">
-                  <Upload className="h-4 w-4" /> Request re-submission
-                </button>
-              </div>
+              )}
+
+              {mode === 'resubmit' && (
+                <div className="mb-3">
+                  <p className="mb-1.5 text-xs font-medium text-slate-500">Ask the applicant to re-provide:</p>
+                  <div className="grid grid-cols-2 gap-1">
+                    {Object.entries(data.resubmittable_items).map(([key, label]) => (
+                      <label key={key} className="flex items-center gap-1.5 text-xs">
+                        <input type="checkbox" checked={items.includes(key)}
+                          onChange={(e) => setItems((s) => e.target.checked ? [...s, key] : s.filter((x) => x !== key))} />
+                        {label}
+                      </label>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              <button
+                disabled={busy
+                  || (mode === 'reject' && (reasonCode === 'OTHER' || !reasonCode ? !reason.trim() : false))
+                  || (mode === 'resubmit' && items.length === 0)}
+                onClick={() => {
+                  if (mode === 'approve') decide({ action: 'approve' })
+                  else if (mode === 'reject') decide({ action: 'reject',
+                    ...(reasonCode ? { reason_code: reasonCode } : {}),
+                    ...(reason.trim() ? { reason: reason.trim() } : {}) })
+                  else decide({ action: 'request_resubmission', items })
+                }}
+                className={`flex w-full items-center justify-center gap-2 rounded-lg py-2.5 text-sm font-semibold text-white disabled:opacity-50 ${
+                  mode === 'approve' ? 'bg-emerald-600 hover:bg-emerald-500'
+                  : mode === 'reject' ? 'bg-red-600 hover:bg-red-500'
+                  : 'bg-blue-600 hover:bg-blue-500'}`}>
+                Submit decision
+              </button>
             </Card>
           ) : (
             <Card title="Decision"><p className="text-sm text-slate-500">You have read-only access to this case.</p></Card>
           )}
 
+          <CaseSummary data={data} />
           <TasksAndEvents data={data} onViewLog={() => setTab('timeline')} />
         </div>
       </div>
@@ -235,6 +261,8 @@ function Overview({ data }: { data: CaseDetail }) {
   const v = (x: unknown) => (x == null || x === '' ? '—' : String(x))
   return (
     <>
+      <ProgressStepper data={data} />
+
       <Card title="Applicant">
         <Section label="Personal information">
           <Field k="Given names" v={v(a.given_names)} />
@@ -257,6 +285,10 @@ function Overview({ data }: { data: CaseDetail }) {
         </Section>
       </Card>
 
+      <Card title="Requested information">
+        <RequestedInfo data={data} />
+      </Card>
+
       <Card title="Documents">
         <div className="grid gap-3 sm:grid-cols-3">
           <Doc label="ID front" doc={data.documents.id_front} />
@@ -271,9 +303,171 @@ function Overview({ data }: { data: CaseDetail }) {
           <span>Result: <b className="text-slate-700 dark:text-slate-200">{data.checks.state || '—'}</b></span>
         </div>
         <OcrPanel ocr={data.checks.ocr} typed={{ id: String(a.id_number ?? ''), dob: String(a.date_of_birth ?? '') }} />
+        <div className="mt-2 flex justify-between border-t border-slate-100 pt-2 text-sm dark:border-slate-800">
+          <span className="text-slate-400">Duplicate check (email)</span>
+          {data.checks.duplicate_email
+            ? <span className="font-semibold text-red-600 dark:text-red-400">✗ used by another profile</span>
+            : <span className="text-emerald-600 dark:text-emerald-400">✓ no matches</span>}
+        </div>
+        <ChecksBanner data={data} />
       </Card>
     </>
   )
+}
+
+function ChecksBanner({ data }: { data: CaseDetail }) {
+  if (!data.checks.checked_at) {
+    return (
+      <p className="mt-3 rounded-lg bg-slate-50 px-3 py-2 text-xs text-slate-500 dark:bg-slate-800/60">
+        Automated checks run after the applicant confirms their email address.
+      </p>
+    )
+  }
+  const ocr = data.checks.ocr as Record<string, unknown>
+  const attention = data.checks.duplicate_email || ocr?.mismatch === true
+    || ocr?.id_number_match === false || ocr?.dob_match === false
+  return attention ? (
+    <p className="mt-3 rounded-lg bg-red-50 px-3 py-2 text-xs font-medium text-red-700 dark:bg-red-500/10 dark:text-red-400">
+      One or more signals need attention — review the documents carefully before deciding.
+    </p>
+  ) : (
+    <p className="mt-3 rounded-lg bg-amber-50 px-3 py-2 text-xs font-medium text-amber-700 dark:bg-amber-500/10 dark:text-amber-400">
+      Automated checks complete — manual review required.
+    </p>
+  )
+}
+
+/* ── Progress stepper ─────────────────────────────────────────────────── */
+
+function ProgressStepper({ data }: { data: CaseDetail }) {
+  const docsDone = (['id_front', 'id_back', 'selfie'] as const)
+    .every((k) => (data.documents[k]?.versions?.length ?? 0) > 0 || data.documents[k]?.available)
+  const decided = data.status !== 'pending'
+  const steps = [
+    { label: 'Account created', done: true },
+    { label: 'Phone verified', done: data.phone_verified },
+    { label: 'Profile info', done: true },
+    { label: 'Documents', done: docsDone },
+    { label: 'Checks', done: !!data.checks.checked_at },
+    { label: data.status === 'approved' ? 'Approved' : data.status === 'rejected' ? 'Rejected' : 'Decision', done: decided },
+  ]
+  const current = steps.findIndex((s) => !s.done)
+  return (
+    <Card title="Onboarding progress">
+      <div className="overflow-x-auto">
+        <div className="flex min-w-[540px] items-start">
+          {steps.map((s, i) => (
+            <div key={s.label} className="flex flex-1 flex-col items-center">
+              <div className="flex w-full items-center">
+                <div className={`h-px flex-1 ${i === 0 ? 'invisible' : ''} ${steps[i - 1]?.done ? 'bg-blue-500' : 'bg-slate-200 dark:bg-slate-700'}`} />
+                <div className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-[11px] font-semibold ${
+                  s.done ? 'bg-emerald-500 text-white'
+                  : i === current ? 'border-2 border-blue-500 text-blue-600 dark:text-blue-400'
+                  : 'border border-slate-300 text-slate-400 dark:border-slate-600'}`}>
+                  {s.done ? <Check className="h-3.5 w-3.5" /> : i + 1}
+                </div>
+                <div className={`h-px flex-1 ${i === steps.length - 1 ? 'invisible' : ''} ${s.done ? 'bg-blue-500' : 'bg-slate-200 dark:bg-slate-700'}`} />
+              </div>
+              <p className={`mt-1.5 px-1 text-center text-[10px] leading-tight ${
+                i === current ? 'font-semibold text-blue-600 dark:text-blue-400' : 'text-slate-500'}`}>
+                {s.label}
+              </p>
+            </div>
+          ))}
+        </div>
+      </div>
+    </Card>
+  )
+}
+
+/* ── Requested information ────────────────────────────────────────────── */
+
+function RequestedInfo({ data }: { data: CaseDetail }) {
+  const a = data.applicant
+  const received = (key: string): boolean => {
+    if (key === 'id_front' || key === 'id_back' || key === 'selfie') {
+      const d = data.documents[key as 'id_front' | 'id_back' | 'selfie']
+      return (d?.versions?.length ?? 0) > 0 || !!d?.available
+    }
+    const map: Record<string, unknown> = {
+      id_number: a.id_number, kra_pin: a.kra_pin, date_of_birth: a.date_of_birth,
+      physical_address: a.physical_address, county: a.county, occupation: a.occupation,
+      source_of_income: a.source_of_income, expected_monthly_income: a.expected_monthly_income,
+      email: a.email,
+    }
+    const v = map[key]
+    return v != null && v !== ''
+  }
+  return (
+    <div className="grid gap-x-6 gap-y-1.5 sm:grid-cols-2">
+      {Object.entries(data.resubmittable_items).map(([key, label]) => {
+        const rerequested = data.resubmission_requested.includes(key)
+        return (
+          <div key={key} className="flex items-center justify-between text-sm">
+            <span className="text-slate-500">{label}</span>
+            {rerequested
+              ? <span className="text-xs font-semibold text-amber-600 dark:text-amber-400">Re-requested</span>
+              : received(key)
+                ? <span className="text-xs font-medium text-emerald-600 dark:text-emerald-400">Received ✓</span>
+                : <span className="text-xs text-slate-400">—</span>}
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
+/* ── Case summary + SLA ───────────────────────────────────────────────── */
+
+function CaseSummary({ data }: { data: CaseDetail }) {
+  const a = data.applicant
+  const v = (x: unknown) => (x == null || x === '' ? '—' : String(x))
+  return (
+    <Card title="Case summary">
+      <dl className="space-y-1.5 text-sm">
+        <SummaryRow k="Applicant" v={`${v(a.given_names)} ${v(a.surname)}`} />
+        <SummaryRow k="Phone" v={data.phone_number} verified={data.phone_verified} mono />
+        <SummaryRow k="Email" v={v(a.email)} verified={!!a.email_verified} />
+        <SummaryRow k="Date of birth" v={v(a.date_of_birth)} />
+        <SummaryRow k="County" v={v(a.county)} />
+        <SummaryRow k="Income" v={v(a.expected_monthly_income)} />
+      </dl>
+    </Card>
+  )
+}
+function SummaryRow({ k, v, verified, mono }: { k: string; v: string; verified?: boolean; mono?: boolean }) {
+  return (
+    <div className="flex justify-between gap-3">
+      <dt className="shrink-0 text-slate-400">{k}</dt>
+      <dd className={`min-w-0 truncate text-right text-slate-700 dark:text-slate-200 ${mono ? 'font-mono text-xs' : ''}`}>
+        {v}{verified && <span className="ml-1 text-[10px] font-semibold text-emerald-600 dark:text-emerald-400">Verified</span>}
+      </dd>
+    </div>
+  )
+}
+
+function ModeBtn({ active, activeCls, onClick, icon, label }: {
+  active: boolean; activeCls: string; onClick: () => void; icon: React.ReactNode; label: string
+}) {
+  return (
+    <button onClick={onClick}
+      className={`flex flex-col items-center gap-1 rounded-lg border py-2 text-xs font-semibold ${
+        active ? activeCls : 'border-slate-200 text-slate-500 hover:border-slate-300 dark:border-slate-700 dark:hover:border-slate-600'}`}>
+      {icon}{label}
+    </button>
+  )
+}
+
+function SlaChip({ sla }: { sla: NonNullable<CaseDetail['sla']> }) {
+  const label = sla.overdue
+    ? `SLA overdue by ${Math.abs(Math.round(sla.remaining_hours))}h`
+    : sla.remaining_hours < 1
+      ? `SLA ${Math.max(1, Math.round(sla.remaining_hours * 60))}m remaining`
+      : `SLA ${Math.round(sla.remaining_hours)}h remaining`
+  const cls = sla.overdue ? 'bg-red-100 text-red-700 dark:bg-red-500/10 dark:text-red-400'
+    : sla.remaining_hours < 6 ? 'bg-amber-100 text-amber-700 dark:bg-amber-500/10 dark:text-amber-400'
+    : 'bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-400'
+  return <span className={`rounded-full px-2 py-0.5 text-[11px] font-semibold ${cls}`}>{label}</span>
 }
 
 function Section({ label, children, last }: { label: string; children: React.ReactNode; last?: boolean }) {

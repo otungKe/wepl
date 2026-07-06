@@ -205,7 +205,12 @@ function Queue({ tab }: { tab: string }) {
                   {r.resubmission_pending && <Sig icon={<Upload className="h-3 w-3" />}>re-submit pending</Sig>}
                 </div>
               </td>
-              <td className="px-4 py-2.5 text-right font-mono text-xs tabular-nums text-slate-500">{age(r.age_hours)}</td>
+              <td className={`px-4 py-2.5 text-right font-mono text-xs tabular-nums ${
+                r.sla?.overdue ? 'font-bold text-red-600 dark:text-red-400'
+                : r.sla && r.sla.remaining_hours < 6 ? 'font-semibold text-amber-600 dark:text-amber-400'
+                : 'text-slate-500'}`}>
+                {age(r.age_hours)}{r.sla?.overdue && ' !'}
+              </td>
             </tr>
           ))}
         </tbody>
