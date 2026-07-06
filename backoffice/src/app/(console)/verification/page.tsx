@@ -6,6 +6,7 @@ import {
   Inbox, UserCheck, Users, CheckCircle2, Clock,
 } from 'lucide-react'
 import { verification, type QueueRow, type VerificationStats } from '@/lib/verification'
+import { staffFirstName } from '@/lib/staff'
 import { useOpsStore } from '@/store/ops'
 
 const TABS = [
@@ -66,10 +67,7 @@ function Dashboard({ onOpenQueue }: { onOpenQueue: () => void }) {
   if (status === 'loading') return <div className="flex justify-center py-16"><Loader2 className="h-6 w-6 animate-spin text-slate-400" /></div>
   if (status === 'error' || !stats) return <p className="py-16 text-center text-sm text-slate-500">Couldn&apos;t load the dashboard.</p>
 
-  // First name only, capitalised — falls back to the email local-part's first
-  // segment (harry.otung@… → Harry) when no display name is set.
-  const raw = (me?.name?.trim() || me?.email || 'there').split(/[\s@._-]+/)[0] || 'there'
-  const firstName = raw.charAt(0).toUpperCase() + raw.slice(1)
+  const firstName = staffFirstName(me?.name || me?.email) || 'there'
   const pct = stats.total_cases > 0 ? Math.round((stats.decided_total / stats.total_cases) * 100) : 0
 
   return (
@@ -194,7 +192,7 @@ function Queue({ tab }: { tab: string }) {
               <td className="px-4 py-2.5 font-mono text-xs text-slate-600 dark:text-slate-300">{r.id_number || '—'}</td>
               <td className="px-4 py-2.5"><StatusChip status={r.status} /></td>
               <td className="px-4 py-2.5 text-xs text-slate-500">
-                {r.assignee ? r.assignee.split('@')[0] : <span className="text-slate-300 dark:text-slate-600">—</span>}
+                {r.assignee ? staffFirstName(r.assignee) : <span className="text-slate-300 dark:text-slate-600">—</span>}
               </td>
               <td className="px-4 py-2.5">
                 <div className="flex flex-wrap items-center gap-1.5">

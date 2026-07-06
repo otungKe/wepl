@@ -6,6 +6,7 @@ import {
   StickyNote, ClipboardList,
 } from 'lucide-react'
 import { verification, type CaseDetail, type DocRef, type Decision, type TimelineEvent } from '@/lib/verification'
+import { staffFirstName } from '@/lib/staff'
 import { useCan, useOpsStore } from '@/store/ops'
 
 type Tab = 'overview' | 'documents' | 'timeline' | 'notes'
@@ -106,7 +107,7 @@ export default function VerificationCase() {
         {data.age_hours != null && <span>Submitted {Math.round(data.age_hours)}h ago</span>}
         {data.attempts > 1 && <span>Attempt <b className="text-slate-600 dark:text-slate-300">{data.attempts}</b></span>}
         {data.case_closed_at && <span>Closed {new Date(data.case_closed_at).toLocaleDateString(undefined, { dateStyle: 'medium' })}</span>}
-        {data.assignee && <span>Working: <b className="text-slate-600 dark:text-slate-300">{data.assignee.split('@')[0]}</b></span>}
+        {data.assignee && <span>Working: <b className="text-slate-600 dark:text-slate-300">{staffFirstName(data.assignee)}</b></span>}
         {data.sla && <SlaChip sla={data.sla} />}
       </div>
 
@@ -156,7 +157,7 @@ export default function VerificationCase() {
                   {data.notes.map((n) => (
                     <li key={n.id} className="rounded-lg bg-slate-50 p-2.5 text-xs dark:bg-slate-800/60">
                       <p className="text-sm text-slate-700 dark:text-slate-200">{n.body}</p>
-                      <p className="mt-1 text-[10px] text-slate-400">{n.author} · {new Date(n.at).toLocaleString()}</p>
+                      <p className="mt-1 text-[10px] text-slate-400">{staffFirstName(n.author) || n.author} · {new Date(n.at).toLocaleString()}</p>
                     </li>
                   ))}
                 </ul>
@@ -647,6 +648,10 @@ function OcrPanel({ ocr, typed }: { ocr: Record<string, unknown>; typed: { id: s
 function TimelineRow({ e }: { e: TimelineEvent }) {
   const kindColor = e.actor_kind === 'staff' ? 'bg-blue-500'
     : e.actor_kind === 'customer' ? 'bg-emerald-500' : 'bg-slate-400'
+  // Staff actors read by first name; customer phone numbers and system
+  // provider labels stay as-is.
+  const actor = e.actor_kind === 'staff' && e.actor.includes('@')
+    ? staffFirstName(e.actor) : e.actor
   const detail = [
     typeof e.payload?.reason === 'string' && e.payload.reason ? `“${e.payload.reason}”` : null,
     typeof e.payload?.reason_code === 'string' ? String(e.payload.reason_code) : null,
@@ -660,7 +665,7 @@ function TimelineRow({ e }: { e: TimelineEvent }) {
         <span className="font-medium text-slate-700 dark:text-slate-200">
           {EVENT_LABELS[e.type] ?? e.type}
         </span>
-        <span className="text-slate-400"> · {e.actor}</span>
+        <span className="text-slate-400"> · {actor}</span>
         {detail && <span className="block truncate text-slate-400">{detail}</span>}
         <span className="block font-mono text-[10px] text-slate-400">
           #{e.seq} · {new Date(e.at).toLocaleString()}

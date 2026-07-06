@@ -3,6 +3,7 @@ import Link from 'next/link'
 import { useOpsStore, useCan } from '@/store/ops'
 import { usePaletteStore } from '@/store/palette'
 import { NAV, roleLabel } from '@/lib/opsNav'
+import { staffFirstName } from '@/lib/staff'
 
 const TILES = [
   { label: 'Pending payouts', hint: 'Financial Operations · P2' },
@@ -27,7 +28,7 @@ export default function Dashboard() {
   return (
     <div className="mx-auto max-w-6xl">
       <div className="mb-6">
-        <h1 className="text-xl font-semibold">{greeting}, {me?.name || me?.email}</h1>
+        <h1 className="text-xl font-semibold">{greeting}, {staffFirstName(me?.name || me?.email) || 'Operator'}</h1>
         <p className="text-sm text-slate-500">
           {me?.is_superuser ? 'Platform Super Admin' : primaryRole ? roleLabel(primaryRole) : 'Operator'} · your shift overview
         </p>

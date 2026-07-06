@@ -7,6 +7,7 @@ import { getToken, clearToken, type OpsMe } from '@/lib/ops'
 import { useOpsStore, useCan } from '@/store/ops'
 import { usePaletteStore } from '@/store/palette'
 import { NAV, roleLabel } from '@/lib/opsNav'
+import { staffFirstName } from '@/lib/staff'
 import { CommandPalette } from '@/components/CommandPalette'
 
 export default function ConsoleLayout({ children }: { children: React.ReactNode }) {
@@ -120,7 +121,7 @@ function TopBar({ dark, toggleTheme, me, onSignOut }: {
         {dark ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
       </button>
       <div className="hidden text-right sm:block">
-        <div className="text-sm font-medium leading-tight">{me?.name || me?.email}</div>
+        <div className="text-sm font-medium leading-tight">{staffFirstName(me?.name || me?.email) || 'Operator'}</div>
         <div className="text-[11px] text-slate-400">
           {me?.is_superuser ? 'Platform Super Admin' : primaryRole ? roleLabel(primaryRole) : 'Operator'}
         </div>
