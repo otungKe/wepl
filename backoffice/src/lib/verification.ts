@@ -109,8 +109,50 @@ export type Decision =
   | { action: 'reject'; reason?: string; reason_code?: string }
   | { action: 'request_resubmission'; items: string[] }
 
+export interface EddRow {
+  case_id: string
+  reference: string
+  case_type: string
+  state: string
+  name: string
+  phone_number: string
+  amount: string | null
+  op_type: string | null
+  reason: string
+  age_hours: number | null
+}
+
+export interface EddCase {
+  case_id: string
+  reference: string
+  case_type: string
+  state: string
+  opened_at: string | null
+  closed_at: string | null
+  age_hours: number | null
+  user_id: number
+  name: string
+  phone_number: string
+  subject: {
+    type: string; id: string
+    op_type: string | null; direction: string | null
+    amount: string | null; reason: string
+    status: string | null; recipient_phone: string
+  }
+  requested_items: string[]
+  customer_note: string
+  request_status: string | null
+  documents: Record<string, DocVersion[]>
+  timeline: TimelineEvent[]
+}
+
 export const verification = {
   stats: () => api.get<VerificationStats>('/ops/verification/stats/'),
+  eddQueue: (state = 'open') =>
+    api.get<{ results: EddRow[]; count: number }>('/ops/verification/edd/', { params: { state } }),
+  eddCase: (caseId: string) => api.get<EddCase>(`/ops/verification/edd/${caseId}/`),
+  eddDecide: (caseId: string, body: { action: 'approve' | 'reject'; reason?: string }) =>
+    api.post<EddCase>(`/ops/verification/edd/${caseId}/decision/`, body),
   queue: (status = 'pending', assigned?: 'me' | 'nobody') =>
     api.get<{ results: QueueRow[]; count: number }>('/ops/verification/queue/', { params: { status, ...(assigned ? { assigned } : {}) } }),
   case: (userId: number | string) => api.get<CaseDetail>(`/ops/verification/${userId}/`),

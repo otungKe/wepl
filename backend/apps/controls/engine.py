@@ -19,7 +19,7 @@ from django.utils import timezone
 from apps.core.exceptions import ControlHeld, LimitExceeded
 from apps.ledger.models import FinancialTransaction
 
-from .models import ControlDecision, LimitRule
+from .models import ControlDecision, ControlOverride, LimitRule
 
 logger = logging.getLogger(__name__)
 
@@ -98,6 +98,7 @@ def evaluate(*, subject_user_id, op_type, direction, amount, financial_transacti
     matched = None
     win_amount = None
     win_count = None
+    used_override = None   # one clearance covers the whole movement
 
     rules = LimitRule.objects.filter(is_active=True).filter(
         direction__in=[LimitRule.Direction.ANY, direction]
@@ -133,8 +134,34 @@ def evaluate(*, subject_user_id, op_type, direction, amount, financial_transacti
                 ControlDecision.Outcome.DENY, why, rule, cur_amount, cur_count)
             break  # DENY short-circuits
         elif outcome != ControlDecision.Outcome.DENY:
+            # A compliance-approved EDD case issues a single-use pre-clearance
+            # that lets THIS movement pass a HOLD (never a DENY — hard caps
+            # stay hard). Locked to serialise concurrent spends of the same
+            # override; one clearance covers every HOLD rule this movement hits.
+            if used_override is None:
+                # The row lock is held to the end of the posting transaction,
+                # so a concurrent evaluation cannot spend the same override;
+                # consumption itself is deferred until the movement ALLOWs.
+                from django.db import transaction as db_txn
+                ov_qs = ControlOverride.objects.filter(
+                    user_id=subject_user_id, consumed_at__isnull=True,
+                    expires_at__gt=now, max_amount__gte=amount,
+                ).filter(Q(op_type='') | Q(op_type=op_type)).order_by('expires_at')
+                if db_txn.get_connection().in_atomic_block:
+                    ov_qs = ov_qs.select_for_update()
+                used_override = ov_qs.first()
+            if used_override is not None:
+                logger.info("HOLD rule %s bypassed by override %s (case %s) for user=%s",
+                            rule.pk, used_override.pk, used_override.source_case or '—',
+                            subject_user_id)
+                reason = f"Pre-cleared by compliance (override {used_override.pk})"
+                continue
             outcome, reason, matched, win_amount, win_count = (
                 ControlDecision.Outcome.HOLD, why, rule, cur_amount, cur_count)
+
+    if used_override is not None and outcome == ControlDecision.Outcome.ALLOW:
+        used_override.consumed_at = now
+        used_override.save(update_fields=['consumed_at'])
 
     decision = ControlDecision.objects.create(
         decision=outcome, op_type=op_type, direction=direction, amount=amount,

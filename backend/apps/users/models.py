@@ -349,6 +349,13 @@ class VerificationRequest(models.Model):
         settings.AUTH_USER_MODEL, on_delete=models.CASCADE,
         related_name='verification_requests',
     )
+    # When set, this request is the customer-facing projection of a
+    # verification case (EDD): the response is pinned onto the case as a
+    # versioned CaseDocument and the case decides the outcome.
+    case = models.ForeignKey(
+        'verification.VerificationCase', null=True, blank=True,
+        on_delete=models.SET_NULL, related_name='customer_requests',
+    )
     kind   = models.CharField(max_length=24, choices=Kind.choices, default=Kind.OTHER)
     title  = models.CharField(max_length=140)
     detail = models.TextField(help_text='What the user is being asked to provide.')

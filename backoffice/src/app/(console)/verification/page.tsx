@@ -5,7 +5,7 @@ import {
   Loader2, ShieldCheck, AlertTriangle, MailCheck, MailX, Upload,
   Inbox, UserCheck, Users, CheckCircle2, Clock,
 } from 'lucide-react'
-import { verification, type QueueRow, type VerificationStats } from '@/lib/verification'
+import { verification, type QueueRow, type EddRow, type VerificationStats } from '@/lib/verification'
 import { staffFirstName } from '@/lib/staff'
 import { useOpsStore } from '@/store/ops'
 
@@ -13,6 +13,7 @@ const TABS = [
   { key: 'dashboard', label: 'Dashboard' },
   { key: 'pending', label: 'Pending' },
   { key: 'mine', label: 'My cases' },
+  { key: 'edd', label: 'Transaction reviews' },
   { key: 'approved', label: 'Approved' },
   { key: 'rejected', label: 'Rejected' },
   { key: 'all', label: 'All' },
@@ -46,7 +47,9 @@ export default function VerificationCentre() {
         ))}
       </div>
 
-      {tab === 'dashboard' ? <Dashboard onOpenQueue={() => setTab('pending')} /> : <Queue tab={tab} />}
+      {tab === 'dashboard' ? <Dashboard onOpenQueue={() => setTab('pending')} />
+        : tab === 'edd' ? <EddQueue />
+        : <Queue tab={tab} />}
     </div>
   )
 }
@@ -215,6 +218,72 @@ function Queue({ tab }: { tab: string }) {
       </table>
     </div>
   )
+}
+
+function EddQueue() {
+  const [rows, setRows] = useState<EddRow[]>([])
+  const [status, setStatus] = useState<'loading' | 'ready' | 'error'>('loading')
+
+  useEffect(() => {
+    verification.eddQueue()
+      .then((r) => { setRows(r.data.results); setStatus('ready') })
+      .catch(() => setStatus('error'))
+  }, [])
+
+  if (status === 'loading') return <div className="flex justify-center py-16"><Loader2 className="h-6 w-6 animate-spin text-slate-400" /></div>
+  if (status === 'error') return <p className="py-16 text-center text-sm text-slate-500">Couldn&apos;t load transaction reviews.</p>
+  if (rows.length === 0) return (
+    <div className="rounded-xl border border-dashed border-slate-300 py-16 text-center text-sm text-slate-500 dark:border-slate-700">
+      No transactions waiting on supporting documents.
+    </div>
+  )
+
+  return (
+    <div className="overflow-x-auto rounded-xl border border-slate-200 dark:border-slate-800">
+      <table className="w-full min-w-[760px] text-sm">
+        <thead>
+          <tr className="bg-slate-50 text-[11px] uppercase tracking-wide text-slate-400 dark:bg-slate-900">
+            <th className="px-4 py-2.5 text-left font-semibold">Member</th>
+            <th className="px-4 py-2.5 text-left font-semibold">Movement</th>
+            <th className="px-4 py-2.5 text-right font-semibold">Amount (KES)</th>
+            <th className="px-4 py-2.5 text-left font-semibold">Held because</th>
+            <th className="px-4 py-2.5 text-left font-semibold">State</th>
+            <th className="px-4 py-2.5 text-right font-semibold">Age</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((r) => (
+            <tr key={r.case_id} className="border-t border-slate-100 hover:bg-slate-50 dark:border-slate-800 dark:hover:bg-slate-900">
+              <td className="px-4 py-2.5">
+                <Link href={`/verification/edd/${r.case_id}`} className="block">
+                  <span className="font-medium text-slate-800 dark:text-slate-100">{r.name}</span>
+                  <span className="block font-mono text-[10px] text-slate-400">{r.reference}</span>
+                </Link>
+              </td>
+              <td className="px-4 py-2.5 text-xs text-slate-600 dark:text-slate-300">
+                {(r.op_type ?? '—').replace(/_/g, ' ').toLowerCase()}
+              </td>
+              <td className="px-4 py-2.5 text-right font-mono text-xs tabular-nums">{r.amount ?? '—'}</td>
+              <td className="max-w-[260px] truncate px-4 py-2.5 text-xs text-slate-500">{r.reason || '—'}</td>
+              <td className="px-4 py-2.5"><EddStateChip state={r.state} /></td>
+              <td className="px-4 py-2.5 text-right font-mono text-xs tabular-nums text-slate-500">{age(r.age_hours)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  )
+}
+
+function EddStateChip({ state }: { state: string }) {
+  const m: Record<string, [string, string]> = {
+    requires_info: ['awaiting documents', 'bg-amber-100 text-amber-700 dark:bg-amber-500/10 dark:text-amber-400'],
+    submitted: ['ready for review', 'bg-blue-100 text-blue-700 dark:bg-blue-500/10 dark:text-blue-400'],
+    approved: ['cleared', 'bg-emerald-100 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-400'],
+    rejected: ['refused', 'bg-red-100 text-red-700 dark:bg-red-500/10 dark:text-red-400'],
+  }
+  const [label, cls] = m[state] ?? [state, 'bg-slate-100 text-slate-600']
+  return <span className={`whitespace-nowrap rounded-full px-2 py-0.5 text-[11px] font-semibold ${cls}`}>{label}</span>
 }
 
 function StatusChip({ status }: { status: string }) {

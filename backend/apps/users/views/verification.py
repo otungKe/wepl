@@ -45,5 +45,19 @@ class VerificationRequestRespondView(APIView):
         req.responded_at = timezone.now()
         req.save(update_fields=['response_note', 'document', 'status', 'responded_at'])
 
+        # Case-backed request (EDD): pin the answer onto the case ledger — the
+        # upload becomes an immutable CaseDocument version and the case moves
+        # to SUBMITTED for compliance review. Best-effort: the customer's
+        # response is already saved above.
+        if req.case_id:
+            from apps.verification import service as case_service
+            try:
+                case_service.record_customer_evidence(
+                    req.case, user=request.user,
+                    field_file=req.document or None, note=req.response_note,
+                )
+            except Exception:
+                logger.exception("Case evidence recording failed for request %s", req.id)
+
         logger.info("VerificationRequest %s answered by user %s", req.id, request.user.id)
         return Response(VerificationRequestSerializer(req).data)

@@ -185,6 +185,158 @@ class CaseLedgerTests(TestCase):
         self.assertEqual(case.state, VerificationCase.State.REJECTED)
 
 
+class EddPipelineTests(TestCase):
+    """Phase B: HOLD → EDD case → customer evidence → decision → pre-clearance."""
+
+    def setUp(self):
+        from apps.controls.models import HeldMovement
+        self.kyc = _kyc(phone='+254700000051', id_number='51515151')
+        self.user = self.kyc.user
+        self.held = HeldMovement.objects.create(
+            decision='HOLD', op_type='CONTRIBUTION', direction='PAYIN',
+            amount='500000.00', subject_user=self.user, reason='Daily total exceeded')
+        self.staff = StaffAccount.objects.create(
+            email='edd@wepl.app', full_name='Edd', is_superuser=True)
+        self.staff.set_password('S3cure-pass!')
+        self.staff.save()
+
+    def _open(self):
+        from apps.controls.review import _open_edd_case
+        _open_edd_case(self.held)
+        return VerificationCase.objects.get(subject_type='HeldMovement',
+                                            subject_id=str(self.held.pk))
+
+    def test_hold_opens_case_and_customer_request_once(self):
+        from apps.users.models import VerificationRequest
+        case = self._open()
+        self.assertEqual(case.state, VerificationCase.State.REQUIRES_INFO)
+        vreq = VerificationRequest.objects.get(case=case)
+        self.assertEqual(vreq.user, self.user)
+        self.assertEqual(vreq.kind, VerificationRequest.Kind.TRANSACTION_DOCS)
+        # Re-running the trigger neither duplicates the case nor the request.
+        from apps.controls.review import _open_edd_case
+        _open_edd_case(self.held)
+        self.assertEqual(VerificationCase.objects.filter(
+            subject_id=str(self.held.pk)).count(), 1)
+        self.assertEqual(VerificationRequest.objects.filter(case=case).count(), 1)
+
+    def test_customer_evidence_pins_document_and_submits_case(self):
+        case = self._open()
+        from django.core.files.storage import default_storage
+        name = default_storage.save('verification/requests/statement.png', _png('statement.png'))
+        ff = CaseDocument().file  # a FieldFile bound to default storage
+        ff.name = name
+        service.record_customer_evidence(case, user=self.user, field_file=ff,
+                                         note='M-PESA statement attached')
+        case.refresh_from_db()
+        self.assertEqual(case.state, VerificationCase.State.SUBMITTED)
+        doc = CaseDocument.objects.get(case=case)
+        self.assertEqual(doc.doc_type, 'supporting_doc')
+        self.assertEqual(doc.version, 1)
+
+    def test_approve_issues_single_use_override_and_releases_hold(self):
+        from apps.controls.models import ControlOverride
+        from apps.users.models import VerificationRequest
+        case = self._open()
+        service.record_customer_evidence(case, user=self.user, note='see note')
+        service.decide_subject_case(case, 'approve',
+                                    actor_label='ops:edd@wepl.app', staff=self.staff)
+        case.refresh_from_db(); self.held.refresh_from_db()
+        self.assertEqual(case.state, VerificationCase.State.APPROVED)
+        self.assertEqual(self.held.status, 'RELEASED')
+        ov = ControlOverride.objects.get(user=self.user)
+        self.assertEqual(str(ov.max_amount), '500000.00')
+        self.assertEqual(ov.op_type, 'CONTRIBUTION')
+        self.assertIsNone(ov.consumed_at)
+        self.assertEqual(ov.source_case, str(case.id))
+        vreq = VerificationRequest.objects.get(case=case)
+        self.assertEqual(vreq.status, VerificationRequest.Status.RESOLVED)
+
+    def test_reject_refuses_hold_and_needs_no_override(self):
+        from apps.controls.models import ControlOverride
+        case = self._open()
+        service.record_customer_evidence(case, user=self.user, note='x')
+        service.decide_subject_case(case, 'reject', actor_label='ops:edd@wepl.app',
+                                    staff=self.staff, reason='Source of funds unclear')
+        self.held.refresh_from_db()
+        self.assertEqual(self.held.status, 'REJECTED')
+        self.assertFalse(ControlOverride.objects.exists())
+        # Terminal for repeats — a second reject is illegal (reversal via
+        # 'approve' stays legal for reconsideration).
+        with self.assertRaises(service.IllegalTransition):
+            service.decide_subject_case(case, 'reject', actor_label='x', reason='again')
+
+    def test_override_lets_retry_pass_hold_once(self):
+        from decimal import Decimal
+        from apps.controls import engine
+        from apps.controls.models import ControlDecision, ControlOverride, LimitRule
+        LimitRule.objects.create(
+            name='Hold big pay-ins', scope='PER_USER', direction='PAYIN',
+            period='TXN', max_amount=Decimal('250000'), action='HOLD')
+
+        d1 = engine.evaluate(subject_user_id=self.user.pk, op_type='CONTRIBUTION',
+                             direction='PAYIN', amount=Decimal('500000'))
+        self.assertEqual(d1.decision, ControlDecision.Outcome.HOLD)
+
+        case = self._open()
+        service.decide_subject_case(case, 'approve', actor_label='ops:x', staff=self.staff)
+
+        d2 = engine.evaluate(subject_user_id=self.user.pk, op_type='CONTRIBUTION',
+                             direction='PAYIN', amount=Decimal('500000'))
+        self.assertEqual(d2.decision, ControlDecision.Outcome.ALLOW)
+        self.assertIn('Pre-cleared', d2.reason)
+        self.assertIsNotNone(ControlOverride.objects.get().consumed_at)
+
+        # Single use: the next oversized movement is held again.
+        d3 = engine.evaluate(subject_user_id=self.user.pk, op_type='CONTRIBUTION',
+                             direction='PAYIN', amount=Decimal('500000'))
+        self.assertEqual(d3.decision, ControlDecision.Outcome.HOLD)
+
+    def test_override_never_bypasses_deny(self):
+        from decimal import Decimal
+        from django.utils import timezone as tz
+        from apps.controls import engine
+        from apps.controls.models import ControlDecision, ControlOverride, LimitRule
+        LimitRule.objects.create(
+            name='Hard cap', scope='PER_USER', direction='PAYIN',
+            period='TXN', max_amount=Decimal('250000'), action='DENY')
+        ControlOverride.objects.create(
+            user=self.user, op_type='CONTRIBUTION', max_amount=Decimal('999999'),
+            expires_at=tz.now() + tz.timedelta(hours=1))
+        d = engine.evaluate(subject_user_id=self.user.pk, op_type='CONTRIBUTION',
+                            direction='PAYIN', amount=Decimal('500000'))
+        self.assertEqual(d.decision, ControlDecision.Outcome.DENY)
+        self.assertIsNone(ControlOverride.objects.get().consumed_at)
+
+    def test_ops_edd_endpoints(self):
+        case = self._open()
+        service.record_customer_evidence(case, user=self.user, note='statement sent')
+        client = APIClient()
+        client.credentials(HTTP_AUTHORIZATION=f'Bearer {issue_staff_token(self.staff)}')
+
+        q = client.get('/api/ops/verification/edd/')
+        self.assertEqual(q.status_code, 200)
+        self.assertEqual(q.data['count'], 1)
+        self.assertEqual(q.data['results'][0]['amount'], '500000.00')
+
+        detail = client.get(f'/api/ops/verification/edd/{case.id}/')
+        self.assertEqual(detail.status_code, 200)
+        self.assertEqual(detail.data['subject']['op_type'], 'CONTRIBUTION')
+        self.assertEqual(detail.data['requested_items'], ['proof_of_funds', 'supporting_doc'])
+
+        bad = client.post(f'/api/ops/verification/edd/{case.id}/decision/',
+                          {'action': 'reject'}, format='json')
+        self.assertEqual(bad.status_code, 400)   # reason required
+
+        ok = client.post(f'/api/ops/verification/edd/{case.id}/decision/',
+                         {'action': 'approve'}, format='json')
+        self.assertEqual(ok.status_code, 200)
+        self.assertEqual(ok.data['state'], 'approved')
+        again = client.post(f'/api/ops/verification/edd/{case.id}/decision/',
+                            {'action': 'approve'}, format='json')
+        self.assertEqual(again.status_code, 409)
+
+
 class OpsDecisionEndpointTests(TestCase):
     """The console decision API drives the same chokepoint."""
 
