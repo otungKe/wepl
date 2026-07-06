@@ -5,7 +5,7 @@ import {
   Loader2, ArrowLeft, Check, X, Upload, FileWarning, UserCheck, UserMinus,
   StickyNote, ClipboardList,
 } from 'lucide-react'
-import { verification, type CaseDetail, type DocRef, type Decision, type TimelineEvent } from '@/lib/verification'
+import { verification, type CaseDetail, type Decision, type TimelineEvent } from '@/lib/verification'
 import { staffFirstName } from '@/lib/staff'
 import { useCan, useOpsStore } from '@/store/ops'
 
@@ -168,7 +168,21 @@ export default function VerificationCase() {
 
         {/* Right rail */}
         <div className="space-y-5">
-          {canDecide ? (
+          {canDecide && data.status !== 'pending' ? (
+            <Card title="Decision">
+              <p className={`rounded-lg px-3 py-2 text-sm font-medium ${
+                data.status === 'approved'
+                  ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-400'
+                  : 'bg-red-50 text-red-700 dark:bg-red-500/10 dark:text-red-400'}`}>
+                This case is {data.status} — decisions are closed.
+              </p>
+              <p className="mt-2 text-xs text-slate-400">
+                {data.status === 'approved'
+                  ? 'Post-approval follow-ups go through verification requests; a periodic re-verification opens a new case.'
+                  : 'The applicant can re-submit their KYC from the app, which re-opens the case for review.'}
+              </p>
+            </Card>
+          ) : canDecide ? (
             <Card title="Decision">
               {err && <p className="mb-2 text-sm text-red-500">{err}</p>}
 
@@ -288,14 +302,6 @@ function Overview({ data }: { data: CaseDetail }) {
 
       <Card title="Requested information">
         <RequestedInfo data={data} />
-      </Card>
-
-      <Card title="Documents">
-        <div className="grid gap-3 sm:grid-cols-3">
-          <Doc label="ID front" doc={data.documents.id_front} />
-          <Doc label="ID back" doc={data.documents.id_back} />
-          <Doc label="Selfie" doc={data.documents.selfie} />
-        </div>
       </Card>
 
       <Card title="Automated checks">
@@ -590,32 +596,6 @@ function StatusChip({ status }: { status: string }) {
   }
   return <span className={`rounded-full px-2.5 py-0.5 text-xs font-semibold ${m[status] ?? 'bg-slate-100 text-slate-600'}`}>{status}</span>
 }
-function Doc({ label, doc }: { label: string; doc: DocRef }) {
-  const versions = doc.versions ?? []
-  return (
-    <div>
-      <p className="mb-1 text-xs font-medium text-slate-500">
-        {label}
-        {versions.length > 1 && (
-          <span className="ml-1.5 rounded bg-slate-100 px-1 py-0.5 font-mono text-[10px] text-slate-500 dark:bg-slate-800">
-            v{versions[0].version}
-          </span>
-        )}
-      </p>
-      {doc.available && doc.url ? (
-        <a href={doc.url} target="_blank" rel="noreferrer" className="block overflow-hidden rounded-lg border border-slate-200 dark:border-slate-700">
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src={doc.url} alt={label} className="h-32 w-full object-cover" />
-        </a>
-      ) : (
-        <div className="flex h-32 flex-col items-center justify-center gap-1 rounded-lg border border-dashed border-slate-300 text-center text-[11px] text-slate-400 dark:border-slate-700">
-          <FileWarning className="h-5 w-5" /> not in storage
-        </div>
-      )}
-    </div>
-  )
-}
-
 const EVENT_LABELS: Record<string, string> = {
   'case.opened': 'Case opened',
   'case.backfilled': 'Case opened (migrated)',

@@ -145,17 +145,21 @@ def request_kyc_resubmission(modeladmin, request, queryset):
     "Requested for re-submission" instead.
     """
     from apps.verification import service as case_service
-    n = 0
+    n = skipped = 0
     for kyc in queryset:
-        case_service.decide(kyc, 'request_info', actor_label='manual (admin)',
-                            reviewer_user=request.user,
-                            items=['id_front', 'id_back', 'selfie'])
+        try:
+            case_service.decide(kyc, 'request_info', actor_label='manual (admin)',
+                                reviewer_user=request.user,
+                                items=['id_front', 'id_back', 'selfie'])
+        except case_service.IllegalTransition:
+            skipped += 1   # approved cases are closed to re-submission
+            continue
         n += 1
-    modeladmin.message_user(
-        request,
-        f"Requested document re-submission from {n} user(s). They have been "
-        f"notified and can top up just those items in the app.",
-    )
+    msg = (f"Requested document re-submission from {n} user(s). They have been "
+           f"notified and can top up just those items in the app.")
+    if skipped:
+        msg += f" Skipped {skipped} approved case(s) — approved KYC is closed to re-submission."
+    modeladmin.message_user(request, msg)
 
 
 def _img(file):
@@ -311,10 +315,15 @@ class KYCProfileAdmin(UnfoldModelAdmin):
             except case_service.IllegalTransition:
                 pass  # form save already reflects the state; nothing to advance
         # A reviewer ticked items to re-request via the form → event + notify.
+        # Approved cases refuse (closed to re-submission) — nothing to notify.
         if 'resubmission_requested' in form.changed_data and obj.resubmission_requested:
-            case_service.decide(obj, 'request_info', actor_label='manual (admin)',
-                                reviewer_user=request.user,
-                                items=obj.resubmission_requested)
+            try:
+                case_service.decide(obj, 'request_info', actor_label='manual (admin)',
+                                    reviewer_user=request.user,
+                                    items=obj.resubmission_requested)
+            except case_service.IllegalTransition:
+                obj.resubmission_requested = []
+                obj.save(update_fields=['resubmission_requested'])
 
 
 # ─────────────────────────────────────────────────────────────

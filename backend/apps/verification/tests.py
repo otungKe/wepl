@@ -131,6 +131,19 @@ class CaseLedgerTests(TestCase):
         self.assertEqual(case.state, VerificationCase.State.SUBMITTED)
         self.assertIsNone(case.closed_at)
 
+    def test_approved_case_is_closed_to_resubmission(self):
+        """After approval, staff cannot request items and no top-up re-enters
+        review — the only legal action left is revocation."""
+        kyc = _kyc(phone='+254700000002', id_number='22222223')
+        service.decide(kyc, 'approve', actor_label='x')
+        with self.assertRaises(service.IllegalTransition):
+            service.decide(kyc, 'request_info', actor_label='x', items=['selfie'])
+        with self.assertRaises(service.IllegalTransition):
+            service.record_submission(kyc, kind='targeted_resubmit', items=['selfie'])
+        # Revocation remains possible.
+        case = service.decide(kyc, 'reject', actor_label='x', reason='revoked')
+        self.assertEqual(case.state, VerificationCase.State.REJECTED)
+
 
 class OpsDecisionEndpointTests(TestCase):
     """The console decision API drives the same chokepoint."""
@@ -163,6 +176,11 @@ class OpsDecisionEndpointTests(TestCase):
     def test_double_approve_is_a_409_conflict(self):
         self.assertEqual(self._decide({'action': 'approve'}).status_code, 200)
         res = self._decide({'action': 'approve'})
+        self.assertEqual(res.status_code, 409)
+
+    def test_resubmission_request_on_approved_case_is_409(self):
+        self.assertEqual(self._decide({'action': 'approve'}).status_code, 200)
+        res = self._decide({'action': 'request_resubmission', 'items': ['selfie']})
         self.assertEqual(res.status_code, 409)
 
     def test_case_payload_includes_document_versions(self):
