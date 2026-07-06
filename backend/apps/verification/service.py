@@ -249,6 +249,104 @@ def record_check(kyc, *, provider, state, detail=None) -> None:
                          'ocr_mismatch': bool(ocr.get('mismatch'))})
 
 
+def record_customer_evidence(case, *, user, field_file=None, note='',
+                             doc_type=CaseDocument.DocType.SUPPORTING_DOC) -> None:
+    """Pin a customer's answer to an EDD case: the uploaded document becomes
+    the next immutable version and the case moves REQUIRES_INFO → SUBMITTED
+    for review."""
+    with transaction.atomic():
+        payload = {'note_provided': bool(note)}
+        if field_file is not None and field_file.name:
+            latest = (CaseDocument.objects
+                      .filter(case=case, doc_type=doc_type)
+                      .order_by('-version').first())
+            sha, size = _sha256(field_file)
+            doc = CaseDocument(
+                case=case, doc_type=doc_type,
+                version=(latest.version + 1) if latest else 1,
+                sha256=sha, size_bytes=size,
+                source=CaseDocument.Source.SUBMISSION, uploaded_by=user,
+            )
+            doc.file.name = field_file.name
+            doc.save()
+            payload['documents'] = [{'doc_type': doc_type, 'version': doc.version,
+                                     'sha256': sha[:16]}]
+        if note:
+            payload['note'] = note[:500]
+        _transition(case, 'resubmit', event_type='submission.received',
+                    actor_kind=CaseEvent.Actor.CUSTOMER,
+                    actor_label=user.phone_number, actor_user=user,
+                    payload=payload)
+
+
+def decide_subject_case(case, action, *, actor_label, staff=None, reason='',
+                        notify=True) -> VerificationCase:
+    """Decide an EDD (generic-subject) case — the non-KYC counterpart of
+    ``decide()``. Approve issues a single-use control pre-clearance so the
+    customer's retry passes the HOLD; both outcomes resolve the customer-facing
+    request and notify the applicant. Raises IllegalTransition when the action
+    isn't legal from the case's state."""
+    if case.case_type == VerificationCase.CaseType.KYC_INDIVIDUAL:
+        raise ValueError("KYC cases are decided via decide(), not decide_subject_case().")
+    if action not in ('approve', 'reject'):
+        raise ValueError(f"Unknown decision action: {action!r}")
+
+    from apps.users.models import VerificationRequest
+
+    with transaction.atomic():
+        payload = {'reason': reason} if reason else {}
+        _transition(case, action, event_type=_REVIEW_EVENT[action],
+                    actor_kind=CaseEvent.Actor.STAFF if staff else CaseEvent.Actor.SYSTEM,
+                    actor_label=actor_label, actor_staff=staff, payload=payload)
+
+        override = None
+        held = _held_movement_for(case)
+        if action == 'approve' and held is not None:
+            from apps.controls.models import ControlOverride
+            override = ControlOverride.objects.create(
+                user_id=case.user_id, op_type=held.op_type,
+                max_amount=held.amount,
+                expires_at=timezone.now() + timezone.timedelta(hours=72),
+                source_case=str(case.id), held_movement=held,
+                issued_by_label=actor_label[:120],
+            )
+        if held is not None and held.status == held.Status.OPEN:
+            held.status = (held.Status.RELEASED if action == 'approve'
+                           else held.Status.REJECTED)
+            held.reviewed_at = timezone.now()
+            held.review_note = f"{actor_label}: {reason}" if reason else actor_label
+            held.save(update_fields=['status', 'reviewed_at', 'review_note'])
+
+        # Resolve the customer-facing projection.
+        now = timezone.now()
+        VerificationRequest.objects.filter(case=case).exclude(
+            status=VerificationRequest.Status.RESOLVED,
+        ).update(status=VerificationRequest.Status.RESOLVED, resolved_at=now,
+                 review_note=reason or ('Cleared' if action == 'approve' else ''))
+
+    if notify:
+        from apps.core.events import emit
+        if action == 'approve':
+            emit('edd_cleared', user_id=case.user_id,
+                 title='Transaction cleared ✅',
+                 message='Thanks — your documents checked out. You can retry '
+                         'your transaction now; it will go through within the '
+                         'next 72 hours.')
+        else:
+            emit('edd_rejected', user_id=case.user_id,
+                 title='Transaction review outcome',
+                 message=('We could not clear your transaction. '
+                          + (reason or 'Please contact support for details.')))
+    return case
+
+
+def _held_movement_for(case):
+    if case.subject_type != 'HeldMovement' or not case.subject_id:
+        return None
+    from apps.controls.models import HeldMovement
+    return HeldMovement.objects.filter(pk=case.subject_id).first()
+
+
 def record_email_verified(kyc) -> None:
     with transaction.atomic():
         case = case_for(kyc)

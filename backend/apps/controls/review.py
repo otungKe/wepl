@@ -19,7 +19,7 @@ def record_blocked_movement(exc) -> HeldMovement | None:
     ctx = getattr(exc, 'context', None)
     if not ctx:
         return None
-    return HeldMovement.objects.create(
+    held = HeldMovement.objects.create(
         decision=ctx.get('decision', HeldMovement.Decision.HOLD),
         op_type=ctx.get('op_type', ''),
         direction=ctx.get('direction', ''),
@@ -32,3 +32,42 @@ def record_blocked_movement(exc) -> HeldMovement | None:
         rule_id=ctx.get('rule_id'),
         reason=ctx.get('reason', ''),
     )
+    if held.decision == HeldMovement.Decision.HOLD and held.subject_user_id:
+        _open_edd_case(held)
+    return held
+
+
+def _open_edd_case(held: HeldMovement) -> None:
+    """A HOLD starts evidence collection: open an EDD case over the held
+    movement and raise the customer-facing request (the mobile Verification
+    Center's "Requests & documents" section). Best-effort — a failure here
+    must never break the error response the customer is already receiving."""
+    try:
+        from apps.users.models import VerificationRequest
+        from apps.verification import service as case_service
+        from apps.verification.models import VerificationCase
+
+        case = case_service.open_subject_case(
+            held.subject_user, case_type=VerificationCase.CaseType.EDD_TRANSACTION,
+            subject_type='HeldMovement', subject_id=held.pk,
+            requested_items=['proof_of_funds', 'supporting_doc'],
+            actor_label='controls',
+        )
+        # One customer-facing request per open case.
+        if VerificationRequest.objects.filter(case=case).exclude(
+                status=VerificationRequest.Status.RESOLVED).exists():
+            return
+        vreq = VerificationRequest.objects.create(
+            user=held.subject_user, case=case,
+            kind=VerificationRequest.Kind.TRANSACTION_DOCS,
+            title='Supporting documents needed for your transaction',
+            detail=(f'Your {held.op_type.replace("_", " ")} of KES {held.amount} '
+                    'needs a quick review before it can go through. Please upload '
+                    'a document showing the source of these funds — for example a '
+                    'bank or mobile-money statement, an invoice, or a receipt — '
+                    'and add a short note if helpful.'),
+        )
+        from apps.users.admin import _notify_verification_request
+        _notify_verification_request(vreq)
+    except Exception:
+        logger.exception("Failed to open EDD case for held movement %s", held.pk)

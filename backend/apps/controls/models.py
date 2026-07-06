@@ -161,3 +161,44 @@ class HeldMovement(models.Model):
     def __str__(self):
         return f"[{self.status}] {self.decision} {self.op_type} {self.amount}"
 
+
+
+class ControlOverride(models.Model):
+    """A single-use, time-boxed pre-clearance for a HOLD-class limit.
+
+    Issued when compliance approves an EDD case over a held movement (the
+    customer provided supporting documents), so their retry of that specific
+    movement passes the HOLD rule instead of being re-held. Overrides never
+    bypass DENY rules — hard caps stay hard.
+    """
+
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.CASCADE,
+        related_name='control_overrides',
+    )
+    # Blank = any op type; normally copied from the held movement.
+    op_type    = models.CharField(max_length=30, blank=True)
+    max_amount = models.DecimalField(max_digits=14, decimal_places=2)
+
+    expires_at  = models.DateTimeField(db_index=True)
+    consumed_at = models.DateTimeField(null=True, blank=True)
+
+    # Provenance (loose references — no cross-app FK coupling to verification).
+    source_case     = models.CharField(max_length=64, blank=True, default='')
+    held_movement   = models.ForeignKey(
+        HeldMovement, null=True, blank=True,
+        on_delete=models.SET_NULL, related_name='overrides',
+    )
+    issued_by_label = models.CharField(max_length=120, blank=True, default='')
+
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ('-created_at',)
+        indexes = [
+            models.Index(fields=['user', 'expires_at'], name='override_user_expiry_idx'),
+        ]
+
+    def __str__(self):
+        state = 'consumed' if self.consumed_at else 'active'
+        return f"Override({self.user_id}, {self.op_type or 'any'}, <={self.max_amount}, {state})"

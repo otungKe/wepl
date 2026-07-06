@@ -299,6 +299,134 @@ class VerificationDecisionView(OpsAPIView):
         return Response(_case(kyc, request))
 
 
+def _edd_case_payload(case):
+    """Full EDD case-file payload: subject context (the held movement),
+    requested evidence kinds, versioned documents, and the timeline."""
+    from apps.verification import service as case_service
+    from apps.verification.models import CaseEvent
+
+    held = case_service._held_movement_for(case)
+    opening = case.events.order_by("seq").first()
+    requested = (opening.payload.get("requested_items") if opening else None) or []
+    timeline = [
+        {"seq": e.seq, "type": e.event_type, "actor": e.actor_label or "system",
+         "actor_kind": e.actor_kind, "at": e.created_at.isoformat(),
+         "payload": e.payload}
+        for e in CaseEvent.objects.filter(case=case).order_by("-seq")[:50]
+    ]
+    vreq = case.customer_requests.order_by("-created_at").first()
+    return {
+        "case_id": str(case.id),
+        "reference": f"VC-{case.id.hex[:8].upper()}",
+        "case_type": case.case_type,
+        "state": case.state,
+        "opened_at": case.opened_at.isoformat() if case.opened_at else None,
+        "closed_at": case.closed_at.isoformat() if case.closed_at else None,
+        "age_hours": _age_hours(case.opened_at),
+        "user_id": case.user_id,
+        "name": case.user.name or case.user.phone_number,
+        "phone_number": case.user.phone_number,
+        "subject": {
+            "type": case.subject_type, "id": case.subject_id,
+            "op_type": held.op_type if held else None,
+            "direction": held.direction if held else None,
+            "amount": str(held.amount) if held else None,
+            "reason": held.reason if held else "",
+            "status": held.status if held else None,
+            "recipient_phone": held.recipient_phone if held else "",
+        },
+        "requested_items": requested,
+        "customer_note": vreq.response_note if vreq else "",
+        "request_status": vreq.status if vreq else None,
+        "documents": _doc_versions(case),
+        "timeline": timeline,
+    }
+
+
+class EddQueueView(OpsAPIView):
+    """GET /api/ops/verification/edd/ — open (or all) EDD cases, oldest first."""
+    permission_classes = [RequireCapability("verification.view")]
+
+    def get(self, request):
+        from apps.verification import service as case_service
+        from apps.verification.models import VerificationCase
+
+        S = VerificationCase.State
+        scope = request.query_params.get("state", "open")
+        qs = (VerificationCase.objects.exclude(
+                case_type=VerificationCase.CaseType.KYC_INDIVIDUAL)
+              .select_related("user"))
+        if scope == "open":
+            qs = qs.filter(state__in=(S.SUBMITTED, S.REQUIRES_INFO))
+        qs = qs.order_by("opened_at")[:200]
+        rows = []
+        for case in qs:
+            held = case_service._held_movement_for(case)
+            rows.append({
+                "case_id": str(case.id),
+                "reference": f"VC-{case.id.hex[:8].upper()}",
+                "case_type": case.case_type,
+                "state": case.state,
+                "name": case.user.name or case.user.phone_number,
+                "phone_number": case.user.phone_number,
+                "amount": str(held.amount) if held else None,
+                "op_type": held.op_type if held else None,
+                "reason": held.reason if held else "",
+                "age_hours": _age_hours(case.opened_at),
+            })
+        return Response({"results": rows, "count": len(rows)})
+
+
+class EddCaseView(OpsAPIView):
+    permission_classes = [RequireCapability("verification.view")]
+
+    def get(self, request, case_id):
+        from apps.verification.models import VerificationCase
+        case = get_object_or_404(
+            VerificationCase.objects.select_related("user").exclude(
+                case_type=VerificationCase.CaseType.KYC_INDIVIDUAL),
+            pk=case_id)
+        return Response(_edd_case_payload(case))
+
+
+class EddDecisionView(OpsAPIView):
+    """POST … {action: approve|reject, reason?}. Approve issues the single-use
+    control pre-clearance and releases the held movement; reject refuses it.
+    Both resolve the customer-facing request and notify the applicant."""
+    permission_classes = [RequireCapability("verification.decide")]
+
+    def post(self, request, case_id):
+        from apps.verification import service as case_service
+        from apps.verification.models import VerificationCase
+
+        case = get_object_or_404(
+            VerificationCase.objects.select_related("user").exclude(
+                case_type=VerificationCase.CaseType.KYC_INDIVIDUAL),
+            pk=case_id)
+        action = (request.data.get("action") or "").strip()
+        reason = (request.data.get("reason") or "").strip()
+        if action not in ("approve", "reject"):
+            return Response({"detail": f"Unknown action: {action!r}."},
+                            status=http.HTTP_400_BAD_REQUEST)
+        if action == "reject" and not reason:
+            return Response({"detail": "A reason is required to reject."},
+                            status=http.HTTP_400_BAD_REQUEST)
+        try:
+            case_service.decide_subject_case(
+                case, action, actor_label=f"ops:{request.user.email}",
+                staff=request.user, reason=reason)
+        except case_service.IllegalTransition as exc:
+            return Response(
+                {"detail": f"This case is {exc.state} — {action} isn't available from that state."},
+                status=http.HTTP_409_CONFLICT)
+        record_action(
+            action=f"ops.verification.edd.{action}", actor=request.user, request=request,
+            target_type="VerificationCase", target_id=case.id,
+            metadata={"reason": reason, "subject": f"{case.subject_type}:{case.subject_id}"},
+        )
+        return Response(_edd_case_payload(case))
+
+
 class VerificationNoteView(OpsAPIView):
     """POST … {body} — append an internal reviewer note to the case.
     Notes are never customer-visible and cannot be edited or deleted."""
