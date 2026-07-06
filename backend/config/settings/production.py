@@ -23,20 +23,40 @@ CORS_ALLOW_ALL_ORIGINS = False
 CORS_ALLOWED_ORIGINS = config('CORS_ALLOWED_ORIGINS', cast=Csv(), default='')
 CORS_ALLOW_CREDENTIALS = True
 
-DATABASES = {
-    'default': {
-        'ENGINE': 'django.db.backends.postgresql',
-        'NAME': config('DB_NAME'),
-        'USER': config('DB_USER'),
-        'PASSWORD': config('DB_PASSWORD'),
-        'HOST': config('DB_HOST'),
-        'PORT': config('DB_PORT', default='5432'),
-        'CONN_MAX_AGE': 60,
-        'OPTIONS': {
-            'connect_timeout': 10,
-        },
+# ─── Database ───────────────────────────────────────────────────────────────
+# Preferred: a single DATABASE_URL (e.g. a Neon connection string, which carries
+# sslmode=require). Falls back to the discrete DB_* vars for any platform that
+# still injects them. CONN_HEALTH_CHECKS matters on serverless Postgres: after
+# an autosuspend the pooled connection is dead, and the health check transparently
+# reconnects instead of failing the first request with a broken pipe.
+_database_url = config('DATABASE_URL', default='')
+
+if _database_url:
+    import dj_database_url
+    DATABASES = {
+        'default': dj_database_url.parse(
+            _database_url,
+            conn_max_age=60,
+            conn_health_checks=True,
+        )
     }
-}
+    DATABASES['default'].setdefault('OPTIONS', {})['connect_timeout'] = 10
+else:
+    DATABASES = {
+        'default': {
+            'ENGINE': 'django.db.backends.postgresql',
+            'NAME': config('DB_NAME'),
+            'USER': config('DB_USER'),
+            'PASSWORD': config('DB_PASSWORD'),
+            'HOST': config('DB_HOST'),
+            'PORT': config('DB_PORT', default='5432'),
+            'CONN_MAX_AGE': 60,
+            'CONN_HEALTH_CHECKS': True,
+            'OPTIONS': {
+                'connect_timeout': 10,
+            },
+        }
+    }
 
 CHANNEL_LAYERS = {
     "default": {
