@@ -582,8 +582,10 @@ class CommunityService:
             target_id=str(community.id), tenant=community.tenant_id,
             metadata={"name": community.name},
         )
-        logger.info("Community '%s' (id=%s) deleted by %s",
-                    community.name, community.id, _dn(actor))
+        # Log the actor by id, not display name — _dn falls back to the phone
+        # number, which must not land in clear-text logs.
+        logger.info("Community '%s' (id=%s) deleted by user %s",
+                    community.name, community.id, actor.pk)
         community.delete()
 
     # ── Join request actions ───────────────────────────────────────────────────
