@@ -1,18 +1,24 @@
 'use client'
 import { useCallback, useEffect, useState } from 'react'
 import { useParams, useRouter } from 'next/navigation'
-import { Loader2, ArrowLeft, Check, X, Upload, FileWarning, UserCheck, UserMinus, StickyNote } from 'lucide-react'
+import {
+  Loader2, ArrowLeft, Check, X, Upload, FileWarning, UserCheck, UserMinus,
+  StickyNote, ClipboardList,
+} from 'lucide-react'
 import { verification, type CaseDetail, type DocRef, type Decision, type TimelineEvent } from '@/lib/verification'
 import { useCan, useOpsStore } from '@/store/ops'
+
+type Tab = 'overview' | 'documents' | 'timeline' | 'notes'
 
 export default function VerificationCase() {
   const params = useParams()
   const router = useRouter()
   const can = useCan()
-  const userId = String(params.userId)
   const me = useOpsStore((s) => s.me)
+  const userId = String(params.userId)
   const [data, setData] = useState<CaseDetail | null>(null)
   const [status, setStatus] = useState<'loading' | 'ready' | 'error'>('loading')
+  const [tab, setTab] = useState<Tab>('overview')
   const [busy, setBusy] = useState(false)
   const [reason, setReason] = useState('')
   const [reasonCode, setReasonCode] = useState('')
@@ -35,14 +41,12 @@ export default function VerificationCase() {
     catch (e) { fail(e) }
     finally { setBusy(false) }
   }
-
   const assign = async (action: 'claim' | 'release') => {
     setErr(''); setBusy(true)
     try { const r = await verification.assign(userId, action); setData(r.data) }
     catch (e) { fail(e) }
     finally { setBusy(false) }
   }
-
   const addNote = async () => {
     if (!note.trim()) return
     setErr(''); setBusy(true)
@@ -56,24 +60,28 @@ export default function VerificationCase() {
 
   const a = data.applicant
   const canDecide = can('verification.decide')
+  const docCount = ['id_front', 'id_back', 'selfie']
+    .reduce((n, k) => n + (data.documents[k as keyof typeof data.documents]?.versions?.length ?? 0), 0)
+
+  const TABS: { key: Tab; label: string; count?: number }[] = [
+    { key: 'overview', label: 'Overview' },
+    { key: 'documents', label: 'Documents', count: docCount },
+    { key: 'timeline', label: 'Event log', count: data.timeline.length },
+    { key: 'notes', label: 'Notes', count: data.notes.length },
+  ]
 
   return (
     <div className="mx-auto max-w-6xl">
       <button onClick={() => router.push('/verification')} className="mb-4 flex items-center gap-1.5 text-sm text-slate-500 hover:text-slate-700 dark:hover:text-slate-300">
-        <ArrowLeft className="h-4 w-4" /> Queue
+        <ArrowLeft className="h-4 w-4" /> Verification Centre
       </button>
 
-      <div className="mb-5 flex flex-wrap items-center gap-3">
+      {/* Case header */}
+      <div className="mb-1 flex flex-wrap items-center gap-3">
         <h1 className="text-xl font-semibold">{String(a.given_names ?? '')} {String(a.surname ?? '')}</h1>
         <StatusChip status={data.status} />
-        <span className="font-mono text-xs text-slate-400">{data.phone_number}</span>
-        {data.age_hours != null && <span className="text-xs text-slate-400">· submitted {Math.round(data.age_hours)}h ago</span>}
+        <span className="rounded bg-slate-100 px-1.5 py-0.5 font-mono text-[11px] text-slate-500 dark:bg-slate-800">{data.reference}</span>
         <span className="ml-auto flex items-center gap-2">
-          {data.assignee && (
-            <span className="text-xs text-slate-500">
-              Working: <b className="text-slate-700 dark:text-slate-200">{data.assignee}</b>
-            </span>
-          )}
           {canDecide && data.status === 'pending' && (
             data.assignee === me?.email ? (
               <button disabled={busy} onClick={() => assign('release')}
@@ -90,49 +98,72 @@ export default function VerificationCase() {
         </span>
       </div>
 
+      {/* Meta strip */}
+      <div className="mb-4 flex flex-wrap gap-x-5 gap-y-1 text-xs text-slate-400">
+        <span className="font-mono">{data.phone_number}</span>
+        {data.case_opened_at && <span>Opened {new Date(data.case_opened_at).toLocaleDateString(undefined, { dateStyle: 'medium' })}</span>}
+        {data.age_hours != null && <span>Submitted {Math.round(data.age_hours)}h ago</span>}
+        {data.case_closed_at && <span>Closed {new Date(data.case_closed_at).toLocaleDateString(undefined, { dateStyle: 'medium' })}</span>}
+        {data.assignee && <span>Working: <b className="text-slate-600 dark:text-slate-300">{data.assignee.split('@')[0]}</b></span>}
+      </div>
+
+      {/* Tabs */}
+      <div className="mb-4 flex gap-1 overflow-x-auto border-b border-slate-200 dark:border-slate-800">
+        {TABS.map((t) => (
+          <button key={t.key} onClick={() => setTab(t.key)}
+            className={`-mb-px flex items-center gap-1.5 whitespace-nowrap border-b-2 px-3 py-2 text-sm font-medium ${
+              tab === t.key ? 'border-blue-600 text-blue-600 dark:text-blue-400'
+                            : 'border-transparent text-slate-500 hover:text-slate-700 dark:hover:text-slate-300'}`}>
+            {t.label}
+            {t.count != null && t.count > 0 && (
+              <span className="rounded-full bg-slate-100 px-1.5 text-[10px] font-semibold text-slate-500 dark:bg-slate-800">{t.count}</span>
+            )}
+          </button>
+        ))}
+      </div>
+
       <div className="grid gap-5 lg:grid-cols-3">
-        {/* Documents + OCR */}
+        {/* Main pane */}
         <div className="space-y-5 lg:col-span-2">
-          <Card title="Documents">
-            <div className="grid gap-3 sm:grid-cols-3">
-              <Doc label="ID front" doc={data.documents.id_front} />
-              <Doc label="ID back" doc={data.documents.id_back} />
-              <Doc label="Selfie" doc={data.documents.selfie} />
-            </div>
-          </Card>
-
-          <Card title="Automated checks">
-            <div className="mb-3 flex flex-wrap gap-x-6 gap-y-1 text-xs text-slate-500">
-              <span>Checker: <b className="text-slate-700 dark:text-slate-200">{data.checks.provider || '—'}</b></span>
-              <span>Result: <b className="text-slate-700 dark:text-slate-200">{data.checks.state || '—'}</b></span>
-            </div>
-            <OcrPanel ocr={data.checks.ocr} typed={{ id: String(a.id_number ?? ''), dob: String(a.date_of_birth ?? '') }} />
-          </Card>
-
-          {data.timeline.length > 0 && (
-            <Card title="Case timeline">
-              <ul className="space-y-2.5">
-                {data.timeline.map((e) => <TimelineRow key={e.seq} e={e} />)}
-              </ul>
+          {tab === 'overview' && <Overview data={data} />}
+          {tab === 'documents' && <Documents data={data} />}
+          {tab === 'timeline' && (
+            <Card title="Event log">
+              {data.timeline.length === 0
+                ? <p className="text-sm text-slate-400">No events recorded.</p>
+                : <ul className="space-y-2.5">{data.timeline.map((e) => <TimelineRow key={e.seq} e={e} />)}</ul>}
+            </Card>
+          )}
+          {tab === 'notes' && (
+            <Card title="Internal notes">
+              <div className="mb-3 flex gap-1.5">
+                <input value={note} onChange={(e) => setNote(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === 'Enter') addNote() }}
+                  placeholder="Add a note (staff only)…"
+                  className="min-w-0 flex-1 rounded-md border border-slate-200 bg-transparent px-2 py-1.5 text-sm outline-none placeholder:text-slate-400 dark:border-slate-700" />
+                <button disabled={busy || !note.trim()} onClick={addNote}
+                  className="rounded-md bg-slate-800 px-2.5 text-white hover:bg-slate-700 disabled:opacity-50 dark:bg-slate-700 dark:hover:bg-slate-600">
+                  <StickyNote className="h-4 w-4" />
+                </button>
+              </div>
+              {data.notes.length === 0 ? (
+                <p className="text-xs text-slate-400">No notes yet.</p>
+              ) : (
+                <ul className="space-y-2">
+                  {data.notes.map((n) => (
+                    <li key={n.id} className="rounded-lg bg-slate-50 p-2.5 text-xs dark:bg-slate-800/60">
+                      <p className="text-sm text-slate-700 dark:text-slate-200">{n.body}</p>
+                      <p className="mt-1 text-[10px] text-slate-400">{n.author} · {new Date(n.at).toLocaleString()}</p>
+                    </li>
+                  ))}
+                </ul>
+              )}
             </Card>
           )}
         </div>
 
-        {/* Applicant + decisions */}
+        {/* Right rail */}
         <div className="space-y-5">
-          <Card title="Applicant">
-            <dl className="space-y-1.5 text-sm">
-              <Row k="ID number" v={String(a.id_number ?? '—')} mono />
-              <Row k="KRA PIN" v={String(a.kra_pin ?? '—')} mono />
-              <Row k="Date of birth" v={String(a.date_of_birth ?? '—')} />
-              <Row k="Email" v={`${a.email ?? '—'}${a.email_verified ? ' ✓' : ''}`} />
-              <Row k="County" v={String(a.county ?? '—')} />
-              <Row k="Address" v={String(a.physical_address ?? '—')} />
-              <Row k="Occupation" v={String(a.occupation ?? '—')} />
-              <Row k="Income" v={String(a.expected_monthly_income ?? '—')} />
-            </dl>
-          </Card>
-
           {canDecide ? (
             <Card title="Decision">
               {err && <p className="mb-2 text-sm text-red-500">{err}</p>}
@@ -185,59 +216,174 @@ export default function VerificationCase() {
                   <Upload className="h-4 w-4" /> Request re-submission
                 </button>
               </div>
-              {data.resubmission_requested.length > 0 && (
-                <p className="mt-2 text-xs text-amber-600 dark:text-amber-400">
-                  Outstanding: {data.resubmission_requested.join(', ')}
-                </p>
-              )}
             </Card>
           ) : (
             <Card title="Decision"><p className="text-sm text-slate-500">You have read-only access to this case.</p></Card>
           )}
 
-          <Card title="Internal notes">
-            <div className="mb-2 flex gap-1.5">
-              <input value={note} onChange={(e) => setNote(e.target.value)}
-                onKeyDown={(e) => { if (e.key === 'Enter') addNote() }}
-                placeholder="Add a note (staff only)…"
-                className="min-w-0 flex-1 rounded-md border border-slate-200 bg-transparent px-2 py-1.5 text-sm outline-none placeholder:text-slate-400 dark:border-slate-700" />
-              <button disabled={busy || !note.trim()} onClick={addNote}
-                className="rounded-md bg-slate-800 px-2.5 text-white hover:bg-slate-700 disabled:opacity-50 dark:bg-slate-700 dark:hover:bg-slate-600">
-                <StickyNote className="h-4 w-4" />
-              </button>
-            </div>
-            {data.notes.length === 0 ? (
-              <p className="text-xs text-slate-400">No notes yet.</p>
-            ) : (
-              <ul className="space-y-2">
-                {data.notes.map((n) => (
-                  <li key={n.id} className="rounded-lg bg-slate-50 p-2 text-xs dark:bg-slate-800/60">
-                    <p className="text-slate-700 dark:text-slate-200">{n.body}</p>
-                    <p className="mt-1 text-[10px] text-slate-400">{n.author} · {new Date(n.at).toLocaleString()}</p>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </Card>
+          <TasksAndEvents data={data} onViewLog={() => setTab('timeline')} />
         </div>
       </div>
     </div>
   )
 }
 
+/* ── Overview tab ─────────────────────────────────────────────────────── */
+
+function Overview({ data }: { data: CaseDetail }) {
+  const a = data.applicant
+  const v = (x: unknown) => (x == null || x === '' ? '—' : String(x))
+  return (
+    <>
+      <Card title="Applicant">
+        <Section label="Personal information">
+          <Field k="Given names" v={v(a.given_names)} />
+          <Field k="Surname" v={v(a.surname)} />
+          <Field k="Date of birth" v={v(a.date_of_birth)} />
+          <Field k="Email address" v={`${v(a.email)}${a.email_verified ? ' ✓' : ''}`} />
+        </Section>
+        <Section label="Identity">
+          <Field k="National ID number" v={v(a.id_number)} mono />
+          <Field k="KRA PIN" v={v(a.kra_pin)} mono />
+        </Section>
+        <Section label="Address information">
+          <Field k="County" v={v(a.county)} />
+          <Field k="Physical address" v={v(a.physical_address)} />
+        </Section>
+        <Section label="Financial profile" last>
+          <Field k="Occupation" v={v(a.occupation)} />
+          <Field k="Source of income" v={v(a.source_of_income)} />
+          <Field k="Income band" v={v(a.expected_monthly_income)} />
+        </Section>
+      </Card>
+
+      <Card title="Documents">
+        <div className="grid gap-3 sm:grid-cols-3">
+          <Doc label="ID front" doc={data.documents.id_front} />
+          <Doc label="ID back" doc={data.documents.id_back} />
+          <Doc label="Selfie" doc={data.documents.selfie} />
+        </div>
+      </Card>
+
+      <Card title="Automated checks">
+        <div className="mb-3 flex flex-wrap gap-x-6 gap-y-1 text-xs text-slate-500">
+          <span>Checker: <b className="text-slate-700 dark:text-slate-200">{data.checks.provider || '—'}</b></span>
+          <span>Result: <b className="text-slate-700 dark:text-slate-200">{data.checks.state || '—'}</b></span>
+        </div>
+        <OcrPanel ocr={data.checks.ocr} typed={{ id: String(a.id_number ?? ''), dob: String(a.date_of_birth ?? '') }} />
+      </Card>
+    </>
+  )
+}
+
+function Section({ label, children, last }: { label: string; children: React.ReactNode; last?: boolean }) {
+  return (
+    <div className={last ? '' : 'mb-4 border-b border-slate-100 pb-4 dark:border-slate-800'}>
+      <p className="mb-2.5 text-xs font-semibold text-slate-600 dark:text-slate-300">{label}</p>
+      <div className="grid gap-x-6 gap-y-2.5 sm:grid-cols-2">{children}</div>
+    </div>
+  )
+}
+function Field({ k, v, mono }: { k: string; v: string; mono?: boolean }) {
+  return (
+    <div>
+      <p className="text-[11px] text-slate-400">{k}</p>
+      <p className={`text-sm text-slate-800 dark:text-slate-100 ${mono ? 'font-mono text-[13px]' : ''}`}>{v}</p>
+    </div>
+  )
+}
+
+/* ── Documents tab ────────────────────────────────────────────────────── */
+
+const DOC_LABELS: Record<string, string> = { id_front: 'ID front', id_back: 'ID back', selfie: 'Selfie' }
+
+function Documents({ data }: { data: CaseDetail }) {
+  return (
+    <>
+      {(['id_front', 'id_back', 'selfie'] as const).map((key) => {
+        const doc = data.documents[key]
+        const versions = doc.versions ?? []
+        return (
+          <Card key={key} title={`${DOC_LABELS[key]} · ${versions.length} version${versions.length === 1 ? '' : 's'}`}>
+            {versions.length === 0 ? (
+              <p className="text-sm text-slate-400">Never provided.</p>
+            ) : (
+              <div className="space-y-2">
+                {versions.map((ver, i) => (
+                  <div key={ver.version} className="flex items-center gap-3 rounded-lg border border-slate-100 p-2 dark:border-slate-800">
+                    {ver.url ? (
+                      <a href={ver.url} target="_blank" rel="noreferrer" className="shrink-0 overflow-hidden rounded-md border border-slate-200 dark:border-slate-700">
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img src={ver.url} alt={`${DOC_LABELS[key]} v${ver.version}`} className="h-16 w-24 object-cover" />
+                      </a>
+                    ) : (
+                      <div className="flex h-16 w-24 shrink-0 items-center justify-center rounded-md border border-dashed border-slate-300 dark:border-slate-700">
+                        <FileWarning className="h-4 w-4 text-slate-400" />
+                      </div>
+                    )}
+                    <div className="min-w-0 text-xs">
+                      <p className="font-medium text-slate-700 dark:text-slate-200">
+                        v{ver.version}{i === 0 && <span className="ml-1.5 rounded bg-blue-100 px-1 py-0.5 text-[10px] font-semibold text-blue-700 dark:bg-blue-500/10 dark:text-blue-400">current</span>}
+                      </p>
+                      <p className="text-slate-400">{ver.source.replace('_', ' ')} · {new Date(ver.at).toLocaleString()}</p>
+                      {ver.sha256 && <p className="truncate font-mono text-[10px] text-slate-400">sha256 {ver.sha256.slice(0, 16)}…</p>}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </Card>
+        )
+      })}
+    </>
+  )
+}
+
+/* ── Tasks & events rail ──────────────────────────────────────────────── */
+
+function TasksAndEvents({ data, onViewLog }: { data: CaseDetail; onViewLog: () => void }) {
+  const tasks: string[] = []
+  if (data.resubmission_requested.length > 0) {
+    const labels = data.resubmission_requested.map((k) => data.resubmittable_items[k] ?? k)
+    tasks.push(`Awaiting re-submission: ${labels.join(', ')}`)
+  }
+  if (data.status === 'pending' && !data.applicant.email_verified) tasks.push('Email not yet verified by the applicant')
+  if (data.status === 'pending' && !data.assignee) tasks.push('Case is unassigned')
+
+  return (
+    <Card title="Tasks & events">
+      {tasks.length === 0 ? (
+        <p className="mb-3 rounded-lg bg-slate-50 px-3 py-2 text-xs text-slate-500 dark:bg-slate-800/60">
+          No open tasks at this moment.
+        </p>
+      ) : (
+        <ul className="mb-3 space-y-1.5">
+          {tasks.map((t, i) => (
+            <li key={i} className="flex items-start gap-2 rounded-lg bg-amber-50 px-2.5 py-2 text-xs text-amber-800 dark:bg-amber-500/10 dark:text-amber-300">
+              <ClipboardList className="mt-0.5 h-3.5 w-3.5 shrink-0" /> {t}
+            </li>
+          ))}
+        </ul>
+      )}
+      <ul className="space-y-2.5">
+        {data.timeline.slice(0, 4).map((e) => <TimelineRow key={e.seq} e={e} />)}
+      </ul>
+      {data.timeline.length > 4 && (
+        <button onClick={onViewLog} className="mt-2.5 text-xs font-medium text-blue-600 hover:underline dark:text-blue-400">
+          View full event log →
+        </button>
+      )}
+    </Card>
+  )
+}
+
+/* ── Shared bits ──────────────────────────────────────────────────────── */
+
 function Card({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <div className="rounded-xl border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900">
       <h2 className="mb-3 text-[11px] font-bold uppercase tracking-wider text-slate-400">{title}</h2>
       {children}
-    </div>
-  )
-}
-function Row({ k, v, mono }: { k: string; v: string; mono?: boolean }) {
-  return (
-    <div className="flex justify-between gap-3">
-      <dt className="text-slate-400">{k}</dt>
-      <dd className={`text-right text-slate-700 dark:text-slate-200 ${mono ? 'font-mono text-xs' : ''}`}>{v}</dd>
     </div>
   )
 }
@@ -251,7 +397,6 @@ function StatusChip({ status }: { status: string }) {
 }
 function Doc({ label, doc }: { label: string; doc: DocRef }) {
   const versions = doc.versions ?? []
-  const prior = versions.filter((v) => v.url).slice(1) // newest first; [0] is current
   return (
     <div>
       <p className="mb-1 text-xs font-medium text-slate-500">
@@ -272,17 +417,6 @@ function Doc({ label, doc }: { label: string; doc: DocRef }) {
           <FileWarning className="h-5 w-5" /> not in storage
         </div>
       )}
-      {prior.length > 0 && (
-        <p className="mt-1 text-[11px] text-slate-400">
-          Earlier:{' '}
-          {prior.map((v, i) => (
-            <a key={v.version} href={v.url!} target="_blank" rel="noreferrer"
-              className="text-blue-600 hover:underline dark:text-blue-400">
-              {i > 0 && ', '}v{v.version}
-            </a>
-          ))}
-        </p>
-      )}
     </div>
   )
 }
@@ -297,6 +431,23 @@ const EVENT_LABELS: Record<string, string> = {
   'review.rejected': 'Rejected',
   'review.info_requested': 'Re-submission requested',
   'case.resubmit': 'Re-submitted',
+  'case.assigned': 'Case assigned',
+  'case.unassigned': 'Case released',
+}
+
+function OcrPanel({ ocr, typed }: { ocr: Record<string, unknown>; typed: { id: string; dob: string } }) {
+  if (!ocr || Object.keys(ocr).length === 0) return <p className="text-sm text-slate-400">No OCR result — verify the documents manually.</p>
+  const flag = (m: unknown) => m === true ? <span className="text-emerald-600 dark:text-emerald-400">✓ matches</span>
+    : m === false ? <span className="font-semibold text-red-600 dark:text-red-400">✗ MISMATCH</span>
+    : <span className="text-slate-400">— not read</span>
+  return (
+    <dl className="space-y-1 text-sm">
+      <div className="flex justify-between"><dt className="text-slate-400">Kenyan ID detected</dt>
+        <dd>{ocr.detected ? <span className="text-emerald-600 dark:text-emerald-400">yes</span> : <span className="text-red-600 dark:text-red-400">no</span>}</dd></div>
+      <div className="flex justify-between"><dt className="text-slate-400">ID number ({typed.id})</dt><dd>{flag((ocr as Record<string, unknown>).id_number_match)}</dd></div>
+      <div className="flex justify-between"><dt className="text-slate-400">Date of birth</dt><dd>{flag((ocr as Record<string, unknown>).dob_match)}</dd></div>
+    </dl>
+  )
 }
 
 function TimelineRow({ e }: { e: TimelineEvent }) {
@@ -304,6 +455,7 @@ function TimelineRow({ e }: { e: TimelineEvent }) {
     : e.actor_kind === 'customer' ? 'bg-emerald-500' : 'bg-slate-400'
   const detail = [
     typeof e.payload?.reason === 'string' && e.payload.reason ? `“${e.payload.reason}”` : null,
+    typeof e.payload?.reason_code === 'string' ? String(e.payload.reason_code) : null,
     Array.isArray(e.payload?.items) && e.payload.items.length ? `items: ${(e.payload.items as string[]).join(', ')}` : null,
     typeof e.payload?.kind === 'string' ? e.payload.kind.replace(/_/g, ' ') : null,
   ].filter(Boolean).join(' · ')
@@ -321,19 +473,5 @@ function TimelineRow({ e }: { e: TimelineEvent }) {
         </span>
       </div>
     </li>
-  )
-}
-function OcrPanel({ ocr, typed }: { ocr: Record<string, unknown>; typed: { id: string; dob: string } }) {
-  if (!ocr || Object.keys(ocr).length === 0) return <p className="text-sm text-slate-400">No OCR result — verify the documents manually.</p>
-  const flag = (m: unknown) => m === true ? <span className="text-emerald-600 dark:text-emerald-400">✓ matches</span>
-    : m === false ? <span className="font-semibold text-red-600 dark:text-red-400">✗ MISMATCH</span>
-    : <span className="text-slate-400">— not read</span>
-  return (
-    <dl className="space-y-1 text-sm">
-      <div className="flex justify-between"><dt className="text-slate-400">Kenyan ID detected</dt>
-        <dd>{ocr.detected ? <span className="text-emerald-600 dark:text-emerald-400">yes</span> : <span className="text-red-600 dark:text-red-400">no</span>}</dd></div>
-      <div className="flex justify-between"><dt className="text-slate-400">ID number ({typed.id})</dt><dd>{flag((ocr as Record<string, unknown>).id_number_match)}</dd></div>
-      <div className="flex justify-between"><dt className="text-slate-400">Date of birth</dt><dd>{flag((ocr as Record<string, unknown>).dob_match)}</dd></div>
-    </dl>
   )
 }

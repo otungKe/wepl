@@ -303,3 +303,27 @@ class OpsWorkflowEndpointTests(TestCase):
         codes = [r['code'] for r in res.data['rejection_reasons']]
         self.assertIn('DOC_UNREADABLE', codes)
         self.assertEqual(codes[-1], 'OTHER')  # sorted, catch-all last
+
+    def test_case_payload_carries_reference_and_dates(self):
+        res = self.client.get(f'{self.base}/')
+        self.assertTrue(res.data['reference'].startswith('VC-'))
+        self.assertEqual(len(res.data['reference']), 11)
+        self.assertIsNotNone(res.data['case_opened_at'])
+        self.assertIsNone(res.data['case_closed_at'])
+
+    def test_stats_endpoint(self):
+        self.client.post(f'{self.base}/assign/', {'action': 'claim'}, format='json')
+        res = self.client.get('/api/ops/verification/stats/')
+        self.assertEqual(res.status_code, 200)
+        self.assertEqual(res.data['pending'], 1)
+        self.assertEqual(res.data['mine_open'], 1)
+        self.assertEqual(res.data['unassigned_open'], 0)
+        self.assertEqual(res.data['decided_total'], 0)
+        self.assertIsNotNone(res.data['oldest_pending_hours'])
+
+        self.client.post(f'{self.base}/decision/', {'action': 'approve'}, format='json')
+        res = self.client.get('/api/ops/verification/stats/')
+        self.assertEqual(res.data['pending'], 0)
+        self.assertEqual(res.data['approved'], 1)
+        self.assertEqual(res.data['decided_today'], 1)
+        self.assertEqual(res.data['mine_open'], 0)
