@@ -51,8 +51,11 @@ class Contribution(models.Model):
         settings.AUTH_USER_MODEL, on_delete=models.PROTECT,
         related_name='created_contributions'
     )
+    # PROTECT (audit CR-1): a community with financial objects can never be
+    # hard-deleted out from under them; deletion of never-funded shells clears
+    # these rows first via CommunityService.delete_community.
     community = models.ForeignKey(
-        Community, on_delete=models.CASCADE,
+        Community, on_delete=models.PROTECT,
         related_name='contributions', null=True, blank=True,
     )
     invite_code = models.CharField(max_length=20, unique=True, default=_generate_invite_code)
@@ -229,7 +232,7 @@ class ContributionTransaction(models.Model):
 
 class SharesFund(models.Model):
     community = models.OneToOneField(
-        'communities.Community', on_delete=models.CASCADE, related_name='shares_fund',
+        'communities.Community', on_delete=models.PROTECT, related_name='shares_fund',
         null=True, blank=True,
     )
     name        = models.CharField(max_length=255, default='Shares Fund')
@@ -470,7 +473,7 @@ class DisbursementVote(models.Model):
 
 class WelfareFund(models.Model):
     community    = models.ForeignKey(
-        Community, on_delete=models.CASCADE,
+        Community, on_delete=models.PROTECT,
         related_name='welfare_funds', null=True, blank=True,
     )
     name                 = models.CharField(max_length=255, default='Welfare Fund')

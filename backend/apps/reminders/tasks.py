@@ -35,9 +35,13 @@ def fire_due_reminders(self):
     fired = 0
     try:
         now = timezone.now()
+        # Suspended/archived communities fall silent (audit CR-2).
+        # community_id is a loose integer link, so exclude via subquery.
+        from apps.communities.models import Community
+        inactive_ids = Community.objects.exclude(status='active').values('id')
         due = Reminder.objects.filter(
             is_active=True, next_fire_at__lte=now,
-        ).select_related('user')
+        ).exclude(community_id__in=inactive_ids).select_related('user')
 
         for reminder in due:
             # Reserve the occurrence first; skip if another pass already took it.

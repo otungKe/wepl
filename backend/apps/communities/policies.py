@@ -51,6 +51,7 @@ _MIN_RANK = {
     "community.member.assign_role":   _RANK[CREATOR],          # change a member's role
     "community.member.remove":        _RANK[CREATOR],          # remove a member
     "community.delete":               _RANK[CREATOR],          # delete the community
+    "community.archive":              _RANK[CREATOR],          # archive / un-archive
     "community.ownership.transfer":   _RANK[CREATOR],          # (reserved for ADR-0011)
 }
 

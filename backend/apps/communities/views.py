@@ -153,7 +153,7 @@ class DiscoverCommunitiesView(APIView):
 
         qs = (
             Community.objects
-            .filter(is_private=False)
+            .filter(is_private=False, status=Community.Status.ACTIVE)
             .exclude(memberships__user=request.user, memberships__is_active=True)
             .annotate(
                 annotated_member_count=Count(
@@ -263,17 +263,26 @@ class CommunityDeleteView(APIView):
 
     def delete(self, request, community_id):
         community = get_object_or_404(Community, id=community_id)
-        require(request.user, "community.delete", community,
-                "Only the creator can delete this community.")
-        logger.info("Community '%s' (id=%s) deleted by %s", community.name, community.id, request.user.phone_number)
-        # Capture identity before the row is gone.
-        AuditService.log(
-            "community.deleted", actor=request.user, target_type="community",
-            target_id=str(community.id), tenant=community.tenant_id, request=request,
-            metadata={"name": community.name},
-        )
-        community.delete()
+        # Safe-delete rules live in the service (audit CR-1): refused whenever
+        # any financial history exists — the exit for a real community is
+        # archive, never delete.
+        CommunityService.delete_community(request.user, community)
         return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+class CommunityArchiveView(APIView):
+    """POST /<id>/archive/ | /<id>/unarchive/ — the owner's orderly exit and
+    return. Archived communities stay fully readable; joining, money-object
+    creation and new conversations are frozen."""
+    permission_classes = [IsActiveSession]
+
+    def post(self, request, community_id, action):
+        community = get_object_or_404(Community, id=community_id)
+        if action == 'archive':
+            community = CommunityService.archive_community(request.user, community)
+        else:
+            community = CommunityService.unarchive_community(request.user, community)
+        return Response(CommunitySerializer(community, context=_ctx(request)).data)
 
 
 # ── Membership ─────────────────────────────────────────────────────────────────

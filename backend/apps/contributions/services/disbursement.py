@@ -12,6 +12,10 @@ class DisbursementService:
         require(user, "contribution.participate", contribution,
                 "You must be an active participant.")
 
+        if contribution.community:
+            from apps.communities.services import require_active_community
+            require_active_community(contribution.community, 'request a payout')
+
         # Balance check — pool balance from the ledger (contribution row is locked
         # above, serialising concurrent disbursements on this contribution).
         if Decimal(str(amount)) > fund_balance('contribution', contribution.id):

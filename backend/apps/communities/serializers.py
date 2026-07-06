@@ -21,7 +21,7 @@ class CommunitySerializer(serializers.ModelSerializer):
     class Meta:
         model = Community
         fields = [
-            "id", "name", "description", "community_photo", "is_private",
+            "id", "name", "description", "community_photo", "is_private", "status",
             "invite_code", "has_welfare_fund", "has_shares_fund", "category",
             "location", "created_by", "created_by_name", "member_count",
             "is_member", "join_request_status", "created_at",

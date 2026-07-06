@@ -22,6 +22,8 @@ class ConversationService:
         AccessPolicy.gate(user, "Verify your identity to start conversations.")
         require(user, "community.view", community,
                 "You are not a member of this community.")
+        from apps.communities.services import require_active_community
+        require_active_community(community, 'start a conversation')
 
         conversation = Conversation.objects.create(
             community=community,

@@ -10,6 +10,7 @@ from .views import (
     LeaveCommunityView,
     CommunityMuteView,
     CommunityMembersView,
+    CommunityArchiveView,
     CommunityDeleteView,
     AssignRoleView,
     RemoveMemberView,
@@ -37,6 +38,8 @@ urlpatterns = [
     path('<int:community_id>/members/<int:membership_id>/', RemoveMemberView.as_view()),
     path('<int:community_id>/transfer-ownership/', TransferOwnershipView.as_view()),
     path('<int:community_id>/delete/', CommunityDeleteView.as_view()),
+    path('<int:community_id>/archive/', CommunityArchiveView.as_view(), {'action': 'archive'}),
+    path('<int:community_id>/unarchive/', CommunityArchiveView.as_view(), {'action': 'unarchive'}),
     # Invite code
     path('invite/<str:code>/', CommunityByInviteView.as_view()),
     path('invite/<str:code>/request/', JoinRequestCreateView.as_view()),

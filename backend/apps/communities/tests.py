@@ -366,3 +366,111 @@ class CommunityMuteTests(TestCase):
         r = active_client(outsider).post(
             f"/api/communities/{self.c.id}/mute/", {"muted": True}, format="json")
         self.assertEqual(r.status_code, 404)
+
+
+class Sprint1SafetyTests(TestCase):
+    """Communities audit Sprint 1: safe delete (CR-1), lifecycle (CR-2),
+    rejoin cooling-off clock (H-1), owner-departure rule (H-2)."""
+
+    def setUp(self):
+        self.owner  = make_user("254700000061")
+        self.other  = make_user("254700000062")
+        self.c = CommunityService.create_community(
+            self.owner, {"name": "Chama", "is_private": False,
+                         "join_policy": Community.JoinPolicy.OPEN,
+                         "has_welfare_fund": True, "cooling_off_days": 30})
+
+    # ── CR-1: safe delete ──────────────────────────────────────────────────
+
+    def test_shell_delete_still_works_and_cleans_empty_funds(self):
+        CommunityService.delete_community(self.owner, self.c)
+        self.assertFalse(Community.objects.filter(pk=self.c.pk).exists())
+
+    def test_delete_refused_once_money_moved(self):
+        from decimal import Decimal
+        from apps.contributions.models import WelfareContribution
+        fund = self.c.welfare_funds.first()
+        WelfareContribution.objects.create(
+            fund=fund, user=self.owner, amount=Decimal("100.00"))
+        with self.assertRaisesMessage(ValidationError, "financial history"):
+            CommunityService.delete_community(self.owner, self.c)
+        self.assertTrue(Community.objects.filter(pk=self.c.pk).exists())
+
+    # ── CR-2: lifecycle ────────────────────────────────────────────────────
+
+    def test_archived_community_freezes_creation_paths(self):
+        CommunityService.archive_community(self.owner, self.c)
+        self.c.refresh_from_db()
+        self.assertEqual(self.c.status, Community.Status.ARCHIVED)
+        with self.assertRaises(ValidationError):
+            CommunityService.join_community(self.other, self.c)
+        with self.assertRaises(ValidationError):
+            CommunityService.request_to_join(self.other, self.c)
+        # Owner can restore.
+        CommunityService.unarchive_community(self.owner, self.c)
+        self.c.refresh_from_db()
+        self.assertEqual(self.c.status, Community.Status.ACTIVE)
+        CommunityService.join_community(self.other, self.c)
+
+    def test_archive_is_owner_only(self):
+        CommunityService.join_community(self.other, self.c)
+        m = self.c.memberships.get(user=self.other)
+        m.role = Role.ADMIN
+        m.save(update_fields=["role"])
+        with self.assertRaises(PermissionDenied):
+            CommunityService.archive_community(self.other, self.c)
+
+    def test_suspension_blocks_contribution_creation_and_is_ops_only(self):
+        CommunityService.suspend_community(self.c, reason="test freeze")
+        self.c.refresh_from_db()
+        from apps.contributions.services import ContributionService
+        with self.assertRaises(ValidationError):
+            ContributionService.create_contribution(
+                self.owner, {"name": "Pool", "community": self.c})
+        # Suspended cannot be archived by the owner.
+        with self.assertRaises(ValidationError):
+            CommunityService.archive_community(self.owner, self.c)
+        CommunityService.unsuspend_community(self.c)
+        self.c.refresh_from_db()
+        self.assertEqual(self.c.status, Community.Status.ACTIVE)
+
+    def test_discover_hides_non_active(self):
+        CommunityService.archive_community(self.owner, self.c)
+        res = active_client(self.other).get("/api/communities/discover/")
+        ids = [r["id"] for r in res.json()["results"]]
+        self.assertNotIn(self.c.id, ids)
+
+    # ── H-1: rejoin restarts the cooling-off clock ─────────────────────────
+
+    def test_rejoin_resets_cooling_off_clock(self):
+        from datetime import timedelta
+        from django.utils import timezone
+        from apps.communities.services import check_cooling_off
+
+        CommunityService.join_community(self.other, self.c)
+        m = self.c.memberships.get(user=self.other)
+        # Age the original join beyond the cooling-off window.
+        CommunityMembership.objects.filter(pk=m.pk).update(
+            joined_at=timezone.now() - timedelta(days=90))
+        check_cooling_off(self.other, self.c, "welfare_claim")  # eligible
+
+        CommunityService.leave_community(self.other, self.c)
+        CommunityService.join_community(self.other, self.c)     # rejoin today
+        with self.assertRaisesMessage(ValidationError, "must wait"):
+            check_cooling_off(self.other, self.c, "welfare_claim")
+
+    # ── H-2: the owner cannot leave without transferring ───────────────────
+
+    def test_owner_cannot_leave_without_transfer(self):
+        CommunityService.join_community(self.other, self.c)
+        m = self.c.memberships.get(user=self.other)
+        m.role = Role.ADMIN
+        m.save(update_fields=["role"])
+        with self.assertRaisesMessage(ValidationError, "Transfer ownership"):
+            CommunityService.leave_community(self.owner, self.c)
+        # After transfer, the former owner may leave.
+        CommunityService.transfer_ownership(self.owner, self.c, m.id)
+        self.c.refresh_from_db()
+        CommunityService.leave_community(self.owner, self.c)
+        self.assertFalse(self.c.memberships.filter(
+            user=self.owner, is_active=True).exists())
