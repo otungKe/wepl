@@ -66,7 +66,10 @@ function Dashboard({ onOpenQueue }: { onOpenQueue: () => void }) {
   if (status === 'loading') return <div className="flex justify-center py-16"><Loader2 className="h-6 w-6 animate-spin text-slate-400" /></div>
   if (status === 'error' || !stats) return <p className="py-16 text-center text-sm text-slate-500">Couldn&apos;t load the dashboard.</p>
 
-  const firstName = (me?.name || me?.email || 'there').split(/[\s@]/)[0]
+  // First name only, capitalised — falls back to the email local-part's first
+  // segment (harry.otung@… → Harry) when no display name is set.
+  const raw = (me?.name?.trim() || me?.email || 'there').split(/[\s@._-]+/)[0] || 'there'
+  const firstName = raw.charAt(0).toUpperCase() + raw.slice(1)
   const pct = stats.total_cases > 0 ? Math.round((stats.decided_total / stats.total_cases) * 100) : 0
 
   return (
