@@ -20,11 +20,27 @@ from .views import OpsAPIView
 # Statuses that constitute "work" in the queue, oldest first (SLA order).
 _OPEN_STATUSES = ("pending",)
 
+# Review SLA: a pending case should be decided within this window of submission.
+SLA_TARGET_HOURS = 24
+
 
 def _age_hours(dt):
     if not dt:
         return None
     return round((timezone.now() - dt).total_seconds() / 3600, 1)
+
+
+def _sla(kyc):
+    """Remaining review time for a pending case (negative = overdue); None once
+    decided or before submission."""
+    if kyc.status != "pending" or not kyc.submitted_at:
+        return None
+    age = _age_hours(kyc.submitted_at)
+    return {
+        "target_hours": SLA_TARGET_HOURS,
+        "remaining_hours": round(SLA_TARGET_HOURS - age, 1),
+        "overdue": age > SLA_TARGET_HOURS,
+    }
 
 
 def _ocr(kyc):
@@ -63,6 +79,7 @@ def _queue_row(kyc):
         "ocr_mismatch": bool(ocr.get("mismatch")),
         "ocr_detected": ocr.get("detected"),
         "resubmission_pending": bool(kyc.resubmission_requested),
+        "sla": _sla(kyc),
     }
 
 
@@ -104,6 +121,13 @@ def _case(kyc, request):
         {"code": r.code, "label": r.label, "customer_message": r.customer_message}
         for r in RejectionReason.objects.filter(active=True)
     ]
+    # Attempt = the initial submission plus each re-submission. Backfilled
+    # cases carry no submission.received event, so the initial one is floored.
+    _submissions = CaseEvent.objects.filter(case=case, event_type="submission.received").count()
+    _resubmits = CaseEvent.objects.filter(case=case, event_type="case.resubmit").count()
+    attempts = max(1, _submissions) + _resubmits
+    duplicate_email = bool(kyc.email) and KYCProfile.objects.filter(
+        email__iexact=kyc.email).exclude(pk=kyc.pk).exists()
     return {
         "case_id": str(case.id),
         # Human-readable case reference for the console header / audit trails.
@@ -116,7 +140,10 @@ def _case(kyc, request):
         "rejection_reasons": rejection_reasons,
         "user_id": kyc.user_id,
         "phone_number": kyc.user.phone_number,
+        "phone_verified": bool(kyc.user.is_phone_verified),
         "status": kyc.status,
+        "attempts": attempts,
+        "sla": _sla(kyc),
         "applicant": {
             "given_names": kyc.given_names, "surname": kyc.surname,
             "id_number": kyc.id_number, "kra_pin": kyc.kra_pin,
@@ -136,6 +163,9 @@ def _case(kyc, request):
             "state": kyc.verification_state,
             "checked_at": kyc.verification_checked_at.isoformat() if kyc.verification_checked_at else None,
             "ocr": _ocr(kyc),
+            # Real cross-record signal (not a vendor call): another KYC profile
+            # already uses this email address.
+            "duplicate_email": duplicate_email,
         },
         "rejection_reason": kyc.rejection_reason,
         "resubmission_requested": kyc.resubmission_requested or [],

@@ -311,6 +311,35 @@ class OpsWorkflowEndpointTests(TestCase):
         self.assertIsNotNone(res.data['case_opened_at'])
         self.assertIsNone(res.data['case_closed_at'])
 
+    def test_case_payload_sla_attempts_and_duplicate_email(self):
+        res = self.client.get(f'{self.base}/')
+        self.assertEqual(res.data['attempts'], 1)  # backfill-safe floor
+        sla = res.data['sla']
+        self.assertEqual(sla['target_hours'], 24)
+        self.assertFalse(sla['overdue'])
+        self.assertGreater(sla['remaining_hours'], 0)
+        self.assertFalse(res.data['checks']['duplicate_email'])
+
+        # A second submission (targeted resubmit) bumps attempts.
+        service.decide(self.kyc, 'request_info', actor_label='x', items=['selfie'])
+        self.kyc.selfie = _png('selfie2.png')
+        self.kyc.save()
+        service.record_submission(self.kyc, kind='targeted_resubmit', items=['selfie'])
+        res = self.client.get(f'{self.base}/')
+        self.assertEqual(res.data['attempts'], 2)
+
+        # Same email on another profile trips the duplicate signal.
+        self.kyc.email = 'shared@example.com'
+        self.kyc.save(update_fields=['email'])
+        _kyc(phone='+254700000042', id_number='42424242', email='shared@example.com')
+        res = self.client.get(f'{self.base}/')
+        self.assertTrue(res.data['checks']['duplicate_email'])
+
+        # SLA clears once decided.
+        self.client.post(f'{self.base}/decision/', {'action': 'approve'}, format='json')
+        res = self.client.get(f'{self.base}/')
+        self.assertIsNone(res.data['sla'])
+
     def test_stats_endpoint(self):
         self.client.post(f'{self.base}/assign/', {'action': 'claim'}, format='json')
         res = self.client.get('/api/ops/verification/stats/')

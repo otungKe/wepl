@@ -13,6 +13,13 @@ export interface QueueRow {
   ocr_detected: boolean | null
   resubmission_pending: boolean
   assignee: string | null
+  sla: Sla | null
+}
+
+export interface Sla {
+  target_hours: number
+  remaining_hours: number
+  overdue: boolean
 }
 
 export interface DocVersion {
@@ -78,12 +85,16 @@ export interface CaseDetail {
   notes: CaseNote[]
   rejection_reasons: RejectionCode[]
   phone_number: string
+  phone_verified: boolean
   status: string
+  attempts: number
+  sla: Sla | null
   applicant: Record<string, string | boolean | null>
   documents: { id_front: DocRef; id_back: DocRef; selfie: DocRef }
   checks: {
     provider: string; state: string; checked_at: string | null
     ocr: Record<string, unknown>
+    duplicate_email: boolean
   }
   rejection_reason: string
   resubmission_requested: string[]
