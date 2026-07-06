@@ -6,7 +6,7 @@ from .views import (
 )
 from .views_verification import (
     VerificationAssignView, VerificationCaseView, VerificationDecisionView,
-    VerificationNoteView, VerificationQueueView,
+    VerificationNoteView, VerificationQueueView, VerificationStatsView,
 )
 
 # Mounted at /api/ops/
@@ -18,6 +18,7 @@ urlpatterns = [
     path("search/", OpsSearchView.as_view()),
     # Verification Centre (P1)
     path("verification/queue/", VerificationQueueView.as_view()),
+    path("verification/stats/", VerificationStatsView.as_view()),
     path("verification/<int:user_id>/", VerificationCaseView.as_view()),
     path("verification/<int:user_id>/decision/", VerificationDecisionView.as_view()),
     path("verification/<int:user_id>/notes/", VerificationNoteView.as_view()),

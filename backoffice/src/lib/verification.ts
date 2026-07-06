@@ -53,10 +53,27 @@ export interface RejectionCode {
   customer_message: string
 }
 
+export interface VerificationStats {
+  pending: number
+  requires_info: number
+  unassigned_open: number
+  mine_open: number
+  approved: number
+  rejected: number
+  decided_today: number
+  decided_7d: number
+  decided_total: number
+  total_cases: number
+  oldest_pending_hours: number | null
+}
+
 export interface CaseDetail {
   user_id: number
   case_id: string
+  reference: string
   case_state: string
+  case_opened_at: string | null
+  case_closed_at: string | null
   assignee: string | null
   notes: CaseNote[]
   rejection_reasons: RejectionCode[]
@@ -82,6 +99,7 @@ export type Decision =
   | { action: 'request_resubmission'; items: string[] }
 
 export const verification = {
+  stats: () => api.get<VerificationStats>('/ops/verification/stats/'),
   queue: (status = 'pending', assigned?: 'me' | 'nobody') =>
     api.get<{ results: QueueRow[]; count: number }>('/ops/verification/queue/', { params: { status, ...(assigned ? { assigned } : {}) } }),
   case: (userId: number | string) => api.get<CaseDetail>(`/ops/verification/${userId}/`),

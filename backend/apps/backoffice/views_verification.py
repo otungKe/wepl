@@ -106,7 +106,11 @@ def _case(kyc, request):
     ]
     return {
         "case_id": str(case.id),
+        # Human-readable case reference for the console header / audit trails.
+        "reference": f"VC-{case.id.hex[:8].upper()}",
         "case_state": case.state,
+        "case_opened_at": case.opened_at.isoformat() if case.opened_at else None,
+        "case_closed_at": case.closed_at.isoformat() if case.closed_at else None,
         "assignee": case.assigned_to.email if case.assigned_to else None,
         "notes": notes,
         "rejection_reasons": rejection_reasons,
@@ -140,6 +144,44 @@ def _case(kyc, request):
         "age_hours": _age_hours(kyc.submitted_at),
         "timeline": timeline,
     }
+
+
+class VerificationStatsView(OpsAPIView):
+    """GET /api/ops/verification/stats/ — the workspace dashboard numbers:
+    workload (pending / awaiting info / unassigned / mine), throughput
+    (decided today / 7 days / all time vs total), and the oldest wait."""
+    permission_classes = [RequireCapability("verification.view")]
+
+    def get(self, request):
+        from datetime import timedelta
+
+        from apps.verification.models import VerificationCase
+
+        S = VerificationCase.State
+        open_states = (S.SUBMITTED, S.REQUIRES_INFO)
+        now = timezone.now()
+        today = now.replace(hour=0, minute=0, second=0, microsecond=0)
+
+        cases = VerificationCase.objects
+        oldest = (KYCProfile.objects.filter(status="pending")
+                  .order_by("submitted_at").values_list("submitted_at", flat=True).first())
+        total = cases.count()
+        decided_total = cases.filter(state__in=(S.APPROVED, S.REJECTED)).count()
+        return Response({
+            "pending": KYCProfile.objects.filter(status="pending").count(),
+            "requires_info": cases.filter(state=S.REQUIRES_INFO).count(),
+            "unassigned_open": cases.filter(state__in=open_states,
+                                            assigned_to__isnull=True).count(),
+            "mine_open": cases.filter(state__in=open_states,
+                                      assigned_to=request.user).count(),
+            "approved": cases.filter(state=S.APPROVED).count(),
+            "rejected": cases.filter(state=S.REJECTED).count(),
+            "decided_today": cases.filter(closed_at__gte=today).count(),
+            "decided_7d": cases.filter(closed_at__gte=now - timedelta(days=7)).count(),
+            "decided_total": decided_total,
+            "total_cases": total,
+            "oldest_pending_hours": _age_hours(oldest),
+        })
 
 
 class VerificationQueueView(OpsAPIView):
