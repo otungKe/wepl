@@ -132,11 +132,14 @@ services:
         sync: false
       - key: FIREBASE_CREDENTIALS_JSON
         sync: false
-      # ── Durable media storage (S3 / Cloudflare R2) ──────────────────────────
-      # Flip USE_S3 to "true" and populate the creds below so KYC/profile uploads
-      # survive redeploys (the dyno disk is ephemeral). See production.py.
+      # ── Durable media storage (Cloudflare R2, S3-compatible) ────────────────
+      # ENABLED: KYC/profile uploads (the verification case evidence store) live
+      # in the private R2 bucket and are served via signed URLs — they survive
+      # redeploys. The four creds below are set directly on the service
+      # (sync: false). See production.py. If the service ever needs to boot
+      # without R2, set this back to "false" rather than removing creds.
       - key: USE_S3
-        value: "false"
+        value: "true"
       - key: AWS_STORAGE_BUCKET_NAME
         sync: false
       - key: AWS_S3_REGION_NAME
