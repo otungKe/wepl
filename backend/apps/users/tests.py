@@ -780,7 +780,8 @@ class KYCImagePreviewTests(SimpleTestCase):
 
 
 class KYCResubmissionActionTests(TestCase):
-    """Admin can ask any user — including an approved one — to re-submit KYC."""
+    """Admin can ask an under-review user to re-submit KYC; approved cases are
+    closed to re-submission (the action skips them)."""
 
     def setUp(self):
         self.staff = get_user_model().objects.create_user(phone_number="254700000920")
@@ -797,19 +798,35 @@ class KYCResubmissionActionTests(TestCase):
             date_of_birth=date(1990, 1, 1), status=status,
         )
 
-    def test_action_requests_documents_from_approved_user(self):
+    def test_action_requests_documents_from_pending_user(self):
         from apps.core.models import OutboxEvent
-        kyc = self._make_kyc("254700000921", "approved")
+        kyc = self._make_kyc("254700000921", "pending")
         resp = self.client.post("/admin/users/kycprofile/", {
             "action": "request_kyc_resubmission",
             "_selected_action": [str(kyc.pk)],
         }, follow=True)
         self.assertEqual(resp.status_code, 200)
         kyc.refresh_from_db()
-        # Targeted top-up: the three documents are requested, access is NOT revoked.
+        # Targeted top-up: the three documents are requested, access unchanged.
         self.assertEqual(kyc.resubmission_requested, ["id_front", "id_back", "selfie"])
-        self.assertEqual(kyc.status, "approved")
+        self.assertEqual(kyc.status, "pending")
         self.assertTrue(OutboxEvent.objects.filter(
+            event_type="kyc_resubmission_requested", payload__user_id=kyc.user_id).exists())
+
+    def test_action_skips_approved_user(self):
+        """Approved KYC is closed to re-submission — the action skips it and
+        the applicant is never notified."""
+        from apps.core.models import OutboxEvent
+        kyc = self._make_kyc("254700000922", "approved")
+        resp = self.client.post("/admin/users/kycprofile/", {
+            "action": "request_kyc_resubmission",
+            "_selected_action": [str(kyc.pk)],
+        }, follow=True)
+        self.assertEqual(resp.status_code, 200)
+        kyc.refresh_from_db()
+        self.assertEqual(kyc.resubmission_requested, [])
+        self.assertEqual(kyc.status, "approved")
+        self.assertFalse(OutboxEvent.objects.filter(
             event_type="kyc_resubmission_requested", payload__user_id=kyc.user_id).exists())
 
 
@@ -870,8 +887,17 @@ class KYCResubmitTests(TestCase):
             kra_pin="A012345678Z", date_of_birth=date(1990, 1, 1), email="j@example.com",
             physical_address="Old address", county="Nairobi", occupation="Eng",
             source_of_income="employment", expected_monthly_income="under_250k",
-            status="approved", **kw)
+            **{"status": "pending", **kw})
         return u, kyc
+
+    def test_approved_kyc_is_closed_to_resubmission(self):
+        """Even with a stale outstanding request, an approved profile cannot
+        top up — approval closes the case to re-submission."""
+        u, _ = self._kyc("254700000940", status="approved",
+                         resubmission_requested=["physical_address"])
+        r = self._client(u).post("/api/users/kyc/resubmit/",
+                                 {"physical_address": "New"}, format="multipart")
+        self.assertEqual(r.status_code, 409)
 
     def test_requires_outstanding_request(self):
         u, _ = self._kyc("254700000941")
@@ -910,21 +936,21 @@ class KYCResubmitAdminTests(TestCase):
         self.staff.save()
         self.client.force_login(self.staff)
 
-    def _approved_kyc(self, phone):
+    def _pending_kyc(self, phone):
         from datetime import date
         from apps.users.models import KYCProfile
         u = get_user_model().objects.create_user(phone_number=phone)
         return KYCProfile.objects.create(
             user=u, given_names="Jane", surname="Doe", id_number=f"ID{u.pk}",
-            date_of_birth=date(1990, 1, 1), status="approved")
+            date_of_birth=date(1990, 1, 1), status="pending")
 
     def test_documents_action_sets_items_and_keeps_status(self):
         from apps.core.models import OutboxEvent
-        kyc = self._approved_kyc("254700000951")
+        kyc = self._pending_kyc("254700000951")
         self.client.post("/admin/users/kycprofile/", {
             "action": "request_kyc_resubmission", "_selected_action": [str(kyc.pk)]})
         kyc.refresh_from_db()
         self.assertEqual(kyc.resubmission_requested, ["id_front", "id_back", "selfie"])
-        self.assertEqual(kyc.status, "approved")   # access NOT revoked
+        self.assertEqual(kyc.status, "pending")   # access unchanged
         self.assertTrue(OutboxEvent.objects.filter(
             event_type="kyc_resubmission_requested", payload__user_id=kyc.user_id).exists())

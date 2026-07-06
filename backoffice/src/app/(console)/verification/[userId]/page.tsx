@@ -168,7 +168,21 @@ export default function VerificationCase() {
 
         {/* Right rail */}
         <div className="space-y-5">
-          {canDecide ? (
+          {canDecide && data.status !== 'pending' ? (
+            <Card title="Decision">
+              <p className={`rounded-lg px-3 py-2 text-sm font-medium ${
+                data.status === 'approved'
+                  ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-400'
+                  : 'bg-red-50 text-red-700 dark:bg-red-500/10 dark:text-red-400'}`}>
+                This case is {data.status} — decisions are closed.
+              </p>
+              <p className="mt-2 text-xs text-slate-400">
+                {data.status === 'approved'
+                  ? 'Post-approval follow-ups go through verification requests; a periodic re-verification opens a new case.'
+                  : 'The applicant can re-submit their KYC from the app, which re-opens the case for review.'}
+              </p>
+            </Card>
+          ) : canDecide ? (
             <Card title="Decision">
               {err && <p className="mb-2 text-sm text-red-500">{err}</p>}
 

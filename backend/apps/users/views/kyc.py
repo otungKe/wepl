@@ -204,6 +204,12 @@ class KYCResubmitView(APIView):
             return Response({'error': 'No KYC submission found.'},
                             status=status.HTTP_404_NOT_FOUND)
 
+        # Approved KYC is closed to re-submission — nothing can be topped up,
+        # and reviewers can no longer request items on an approved case.
+        if kyc.status == 'approved':
+            return Response({'error': 'Your KYC is approved — no re-submission is needed.'},
+                            status=status.HTTP_409_CONFLICT)
+
         requested = list(kyc.resubmission_requested or [])
         if not requested:
             return Response({'error': 'No re-submission has been requested.'},

@@ -45,8 +45,10 @@ _TRANSITIONS = {
     (S.REJECTED,      'resubmit'):     S.SUBMITTED,
     (S.REJECTED,      'request_info'): S.REJECTED,
     (S.REJECTED,      'approve'):      S.APPROVED,   # reversal after reconsideration
-    (S.APPROVED,      'request_info'): S.APPROVED,
-    (S.APPROVED,      'resubmit'):     S.SUBMITTED,  # targeted top-up re-enters review
+    # APPROVED is terminal for review work: no re-submission can be requested
+    # and no top-up re-enters review. Post-approval follow-ups go through
+    # VerificationRequest (ongoing compliance); a future re-KYC opens a NEW
+    # case. The only legal action is revocation.
     (S.APPROVED,      'reject'):       S.REJECTED,   # revocation (compliance)
 }
 
