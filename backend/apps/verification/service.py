@@ -25,7 +25,7 @@ from .models import (
 
 logger = logging.getLogger(__name__)
 
-_DOC_FIELDS = [c[0] for c in CaseDocument.DocType.choices]  # id_front, id_back, selfie
+_DOC_FIELDS = CaseDocument.KYC_DOC_TYPES  # the KYCProfile-mirrored subset
 
 S = VerificationCase.State
 
@@ -87,6 +87,38 @@ def case_for(kyc) -> VerificationCase:
         )
         _append(case, 'case.opened', actor_kind=CaseEvent.Actor.SYSTEM,
                 actor_label='system', payload={'legacy_status': kyc.status})
+    return case
+
+
+def open_subject_case(user, *, case_type, subject_type, subject_id,
+                      requested_items=None, actor_label='system',
+                      staff=None) -> VerificationCase:
+    """Open an EDD case against a generic subject (a held transaction, a
+    drive, …). Unlike KYC cases these are staff/system-initiated, so they
+    start in REQUIRES_INFO — the ask comes first; the customer's evidence
+    moves them to SUBMITTED. Idempotent per (case_type, subject): an existing
+    open case for the same subject is returned instead of duplicated."""
+    if case_type == VerificationCase.CaseType.KYC_INDIVIDUAL:
+        raise ValueError("KYC cases are opened from submissions, not subjects.")
+    with transaction.atomic():
+        existing = (VerificationCase.objects
+                    .filter(case_type=case_type, subject_type=subject_type,
+                            subject_id=str(subject_id))
+                    .exclude(state__in=(S.APPROVED, S.REJECTED))
+                    .first())
+        if existing:
+            return existing
+        case = VerificationCase.objects.create(
+            user=user, kyc=None, case_type=case_type,
+            subject_type=subject_type, subject_id=str(subject_id),
+            state=S.REQUIRES_INFO,
+        )
+        _append(case, 'case.opened',
+                actor_kind=(CaseEvent.Actor.STAFF if staff else CaseEvent.Actor.SYSTEM),
+                actor_label=actor_label, actor_staff=staff,
+                payload={'case_type': case_type, 'subject_type': subject_type,
+                         'subject_id': str(subject_id),
+                         'requested_items': list(requested_items or [])})
     return case
 
 
