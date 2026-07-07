@@ -7,6 +7,7 @@ from django.shortcuts import get_object_or_404
 from rest_framework import status
 from rest_framework.exceptions import PermissionDenied, ValidationError
 from rest_framework.response import Response
+from rest_framework.throttling import ScopedRateThrottle
 from rest_framework.views import APIView
 
 from apps.audit.services import AuditService
@@ -215,47 +216,27 @@ class CommunityDetailView(APIView):
 
 
 class CommunityUpdateView(APIView):
-    """PATCH — creator or admin can amend community details including governance settings."""
+    """PATCH — creator or admin can amend community details including governance
+    settings. All rules (field whitelist, max_members guard, old→new audit
+    diff) live in CommunityService.update_settings."""
     permission_classes = [IsActiveSession]
-    ALLOWED_FIELDS = {
-        "name", "description", "is_private", "category", "location",
-        # Section A governance settings
-        "join_policy", "invite_permission", "contribution_permission",
-        "member_list_visibility", "max_members",
-        # Section B
-        "cooling_off_days",
-    }
 
     def patch(self, request, community_id):
         community = get_object_or_404(Community, id=community_id)
-        require(request.user, "community.update", community,
-                "Only the creator or an admin can edit community details.")
-
-        payload = {k: v for k, v in request.data.items() if k in self.ALLOWED_FIELDS}
-        if not payload:
-            raise ValidationError(
-                f"No valid fields provided. Editable: {sorted(self.ALLOWED_FIELDS)}"
-            )
-
-        # Guard: can't reduce max_members below current active member count
-        if "max_members" in payload and payload["max_members"] is not None:
-            active = community.memberships.filter(is_active=True).count()
-            if int(payload["max_members"]) < active:
-                raise ValidationError(
-                    f"max_members ({payload['max_members']}) cannot be less than "
-                    f"the current active member count ({active})."
-                )
-
-        serializer = CommunityWriteSerializer(community, data=payload, partial=True)
-        serializer.is_valid(raise_exception=True)
-        serializer.save()
-        logger.info("Community '%s' (id=%s) updated by %s", community.name, community.id, request.user.phone_number)
-        AuditService.log(
-            "community.settings_updated", actor=request.user, target=community,
-            tenant=community.tenant_id, request=request,
-            metadata={"fields": sorted(payload.keys())},
-        )
+        community = CommunityService.update_settings(
+            request.user, community, dict(request.data.items()))
         return Response(CommunitySerializer(community, context=_ctx(request)).data)
+
+
+class RotateInviteCodeView(APIView):
+    """POST /<id>/invite/rotate/ — regenerate the invite code so a leaked code
+    stops working. Authority follows the community's invite_permission."""
+    permission_classes = [IsActiveSession]
+
+    def post(self, request, community_id):
+        community = get_object_or_404(Community, id=community_id)
+        community = CommunityService.rotate_invite_code(request.user, community)
+        return Response({"invite_code": community.invite_code})
 
 
 class CommunityDeleteView(APIView):
@@ -414,8 +395,12 @@ class RemoveMemberView(APIView):
 
     def delete(self, request, community_id, membership_id):
         community = get_object_or_404(Community, id=community_id)
+        # ?ban=true (or body {"ban": true}) marks the member BANNED — they can
+        # never rejoin or re-request (audit H-4). Plain removal stays reversible.
+        ban = str(request.query_params.get("ban",
+                  request.data.get("ban", ""))).lower() in ("true", "1", "yes")
         try:
-            CommunityService.remove_member(request.user, community, membership_id)
+            CommunityService.remove_member(request.user, community, membership_id, ban=ban)
         except CommunityMembership.DoesNotExist:
             return Response({"error": "Member not found."}, status=404)
         return Response(status=status.HTTP_204_NO_CONTENT)
@@ -442,6 +427,8 @@ class TransferOwnershipView(APIView):
 
 class CommunityByInviteView(APIView):
     permission_classes = [IsActiveSession]
+    throttle_scope = 'invite_lookup'
+    throttle_classes = [ScopedRateThrottle]
 
     def get(self, request, code):
         community = CommunityService.get_community_by_invite(code)
@@ -455,6 +442,8 @@ class CommunityByInviteView(APIView):
 class JoinRequestCreateView(APIView):
     """POST /communities/invite/<code>/request/ — submit a join request."""
     permission_classes = [IsActiveSession]
+    throttle_scope = 'join_request'
+    throttle_classes = [ScopedRateThrottle]
 
     def post(self, request, code):
         community = CommunityService.get_community_by_invite(code)
@@ -496,6 +485,8 @@ class JoinRequestCreateByIdView(APIView):
     non-members, so the client must use the community ID instead.
     """
     permission_classes = [IsActiveSession]
+    throttle_scope = 'join_request'
+    throttle_classes = [ScopedRateThrottle]
 
     def post(self, request, community_id):
         community = get_object_or_404(Community, id=community_id)

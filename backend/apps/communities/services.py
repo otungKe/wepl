@@ -95,7 +95,8 @@ def _notify_admins(community, *, exclude_user=None, **kwargs):
     """Send a notification to every active admin of *community*.
     Pass exclude_user to skip one (e.g. the action's initiator)."""
     from apps.notifications.services import NotificationService
-    qs = community.memberships.filter(role=Role.ADMIN, is_active=True)
+    qs = community.memberships.filter(role=Role.ADMIN, is_active=True,
+                                      user__is_active=True)
     if exclude_user is not None:
         qs = qs.exclude(user=exclude_user)
     for m in qs:
@@ -177,12 +178,15 @@ class CommunityService:
         membership, created = CommunityMembership.objects.get_or_create(
             user=user, community=community, defaults={"role": Role.MEMBER},
         )
+        if not created and membership.member_status == CommunityMembership.MemberStatus.BANNED:
+            raise PermissionDenied("You cannot rejoin this community.")
         if not created and not membership.is_active:
             membership.is_active = True
             membership.role = Role.MEMBER
+            membership.member_status = CommunityMembership.MemberStatus.ACTIVE
             # Restart the cooling-off clock: this stint begins now (audit G-4).
             membership.rejoined_at = timezone.now()
-            membership.save(update_fields=["is_active", "role", "rejoined_at"])
+            membership.save(update_fields=["is_active", "role", "member_status", "rejoined_at"])
         elif not created:
             # Already an active member — idempotent no-op, skip duplicate notifications.
             logger.debug("join_community: %s already a member of '%s'", _dn(user), community.name)
@@ -248,7 +252,8 @@ class CommunityService:
             )
 
         membership.is_active = False
-        membership.save(update_fields=["is_active"])
+        membership.member_status = CommunityMembership.MemberStatus.LEFT
+        membership.save(update_fields=["is_active", "member_status"])
         logger.info("%s left community '%s' (id=%s)", _dn(user), community.name, community.id)
         ActivityService.record(
             actor=user,
@@ -287,6 +292,10 @@ class CommunityService:
         require_active_community(community, 'request to join it')
         if CommunityService.is_member(user, community):
             raise ValidationError("You are already a member of this community.")
+        if community.memberships.filter(
+                user=user,
+                member_status=CommunityMembership.MemberStatus.BANNED).exists():
+            raise PermissionDenied("You cannot rejoin this community.")
 
         req, created = CommunityJoinRequest.objects.get_or_create(
             community=community,
@@ -356,8 +365,13 @@ class CommunityService:
 
     @staticmethod
     @transaction.atomic
-    def remove_member(creator, community, membership_id):
-        """Only the community creator can remove other members (ADR-0009 policy)."""
+    def remove_member(creator, community, membership_id, *, ban=False):
+        """Only the community creator can remove other members (ADR-0009 policy).
+
+        ``ban=True`` (audit H-4) marks the membership BANNED: the person can
+        never rejoin or re-request — the plain-removal revolving door is shut
+        for the cases where it matters.
+        """
         require(creator, "community.member.remove", community,
                 "Only the community creator can remove members.")
 
@@ -370,13 +384,17 @@ class CommunityService:
             raise ValidationError("The community owner cannot be removed.")
 
         membership.is_active = False
-        membership.save(update_fields=["is_active"])
+        membership.member_status = (CommunityMembership.MemberStatus.BANNED if ban
+                                    else CommunityMembership.MemberStatus.REMOVED)
+        membership.save(update_fields=["is_active", "member_status"])
         logger.info(
-            "Member removed from '%s': %s (by %s)",
-            community.name, _dn(membership.user), _dn(creator),
+            "Member %s from '%s': user %s (by user %s)",
+            "banned" if ban else "removed", community.name,
+            membership.user_id, creator.pk,
         )
         AuditService.log(
-            "community.member_removed", actor=creator, target=community, tenant=community.tenant_id,
+            "community.member_banned" if ban else "community.member_removed",
+            actor=creator, target=community, tenant=community.tenant_id,
             metadata={"membership_id": membership.id, "user_id": membership.user_id},
         )
         return membership
@@ -453,6 +471,84 @@ class CommunityService:
         )
         return community
 
+
+    # ── Governance settings & invites (audit H-3 / M-1) ──────────────────────
+
+    # The settings a community may edit after creation. Single source of truth
+    # for the update endpoint.
+    EDITABLE_SETTINGS = frozenset({
+        "name", "description", "is_private", "category", "location",
+        "join_policy", "invite_permission", "contribution_permission",
+        "member_list_visibility", "max_members", "cooling_off_days",
+    })
+
+    @staticmethod
+    @transaction.atomic
+    def update_settings(actor, community, payload: dict):
+        """Apply governance/profile changes with a full old→new audit diff —
+        flipping join_policy or invite_permission is security-relevant and must
+        leave a trail (audit M-1)."""
+        require(actor, "community.update", community,
+                "Only the creator or an admin can edit community details.")
+        payload = {k: v for k, v in payload.items()
+                   if k in CommunityService.EDITABLE_SETTINGS}
+        if not payload:
+            raise ValidationError(
+                f"No valid fields provided. Editable: "
+                f"{sorted(CommunityService.EDITABLE_SETTINGS)}"
+            )
+
+        community = Community.objects.select_for_update().get(pk=community.pk)
+
+        # Guard: can't reduce max_members below current active member count.
+        if payload.get("max_members") is not None:
+            active = community.memberships.filter(is_active=True).count()
+            if int(payload["max_members"]) < active:
+                raise ValidationError(
+                    f"max_members ({payload['max_members']}) cannot be less than "
+                    f"the current active member count ({active})."
+                )
+
+        from .serializers import CommunityWriteSerializer
+        old = {k: getattr(community, k) for k in payload}
+        serializer = CommunityWriteSerializer(community, data=payload, partial=True)
+        serializer.is_valid(raise_exception=True)
+        community = serializer.save()
+
+        diff = {k: {"old": str(old[k]), "new": str(getattr(community, k))}
+                for k in payload if str(old[k]) != str(getattr(community, k))}
+        if diff:
+            AuditService.log(
+                "community.settings_updated", actor=actor, target=community,
+                tenant=community.tenant_id, metadata={"changes": diff},
+            )
+        logger.info("Community '%s' (id=%s) settings updated by user %s: %s",
+                    community.name, community.id, actor.pk, sorted(diff))
+        return community
+
+    @staticmethod
+    @transaction.atomic
+    def rotate_invite_code(actor, community):
+        """Regenerate the invite code (audit H-3): a leaked code is now
+        recoverable. Rotation authority follows the sharing setting — when
+        invite_permission is 'creator', only the creator may rotate."""
+        from .models import _generate_invite_code
+        from .policies import can_see_invite_code
+
+        require(actor, "community.invite.rotate", community,
+                "Only admins can rotate the invite code.")
+        if not can_see_invite_code(actor, community):
+            raise PermissionDenied(
+                "Invite sharing is restricted to the creator in this community.")
+
+        community = Community.objects.select_for_update().get(pk=community.pk)
+        community.invite_code = _generate_invite_code()
+        community.save(update_fields=["invite_code"])
+        AuditService.log("community.invite_rotated", actor=actor, target=community,
+                         tenant=community.tenant_id)
+        logger.info("Invite code rotated for community '%s' (id=%s) by user %s",
+                    community.name, community.id, actor.pk)
+        return community
 
     # ── Lifecycle (audit CR-1 / CR-2) ─────────────────────────────────────────
 

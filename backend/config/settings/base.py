@@ -151,6 +151,8 @@ REST_FRAMEWORK = {
         'otp_request': '3/hour',
         'pin_login': '5/minute',
         'stk_push': '5/minute',   # per-user cap on STK prompts (curbs prompt-spam)
+        'invite_lookup': '30/hour',   # invite-code lookups (curbs enumeration)
+        'join_request': '10/hour',    # join-request creation (curbs admin spam)
     },
     # OpenAPI schema generation (P1 #6).
     'DEFAULT_SCHEMA_CLASS': 'drf_spectacular.openapi.AutoSchema',

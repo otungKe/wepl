@@ -474,3 +474,108 @@ class Sprint1SafetyTests(TestCase):
         CommunityService.leave_community(self.owner, self.c)
         self.assertFalse(self.c.memberships.filter(
             user=self.owner, is_active=True).exists())
+
+
+class Sprint2GovernanceTests(TestCase):
+    """Communities audit Sprint 2: invite_permission enforcement + rotation
+    (H-3), ban semantics (H-4), settings audit diff (M-1), deactivated-user
+    authority (M-4)."""
+
+    def setUp(self):
+        self.owner  = make_user("254700000071")
+        self.admin  = make_user("254700000072")
+        self.member = make_user("254700000073")
+        self.c = CommunityService.create_community(
+            self.owner, {"name": "Chama", "is_private": False,
+                         "join_policy": Community.JoinPolicy.OPEN})
+        CommunityMembership.objects.create(user=self.admin,  community=self.c, role=Role.ADMIN)
+        CommunityMembership.objects.create(user=self.member, community=self.c, role=Role.MEMBER)
+
+    def _code_visible_to(self, user):
+        res = active_client(user).get(f"/api/communities/{self.c.id}/")
+        return res.json().get("invite_code")
+
+    # ── H-3: invite_permission enforced + rotation ─────────────────────────
+
+    def test_invite_code_visibility_honours_setting(self):
+        # members: everyone active sees it
+        Community.objects.filter(pk=self.c.pk).update(invite_permission="members")
+        self.assertIsNotNone(self._code_visible_to(self.member))
+        # admins: plain member no longer sees it
+        Community.objects.filter(pk=self.c.pk).update(invite_permission="admins")
+        self.assertIsNone(self._code_visible_to(self.member))
+        self.assertIsNotNone(self._code_visible_to(self.admin))
+        # creator: even admins are blind
+        Community.objects.filter(pk=self.c.pk).update(invite_permission="creator")
+        self.assertIsNone(self._code_visible_to(self.admin))
+        self.assertIsNotNone(self._code_visible_to(self.owner))
+
+    def test_rotation_regenerates_and_respects_setting(self):
+        old_code = self.c.invite_code
+        res = active_client(self.admin).post(f"/api/communities/{self.c.id}/invite/rotate/")
+        self.assertEqual(res.status_code, 200)
+        new_code = res.json()["invite_code"]
+        self.assertNotEqual(new_code, old_code)
+        # Old code is dead.
+        self.assertEqual(
+            active_client(self.member).get(f"/api/communities/invite/{old_code}/").status_code, 404)
+        # Creator-only sharing → admin may not rotate either.
+        Community.objects.filter(pk=self.c.pk).update(invite_permission="creator")
+        res = active_client(self.admin).post(f"/api/communities/{self.c.id}/invite/rotate/")
+        self.assertEqual(res.status_code, 403)
+        # Plain member never rotates.
+        res = active_client(self.member).post(f"/api/communities/{self.c.id}/invite/rotate/")
+        self.assertEqual(res.status_code, 403)
+
+    # ── H-4: ban semantics ─────────────────────────────────────────────────
+
+    def test_removed_member_can_rejoin_but_banned_cannot(self):
+        m = self.c.memberships.get(user=self.member)
+        CommunityService.remove_member(self.owner, self.c, m.id)          # plain removal
+        m.refresh_from_db()
+        self.assertEqual(m.member_status, "removed")
+        CommunityService.join_community(self.member, self.c)              # revolving door OK
+        self.assertTrue(self.c.memberships.get(user=self.member).is_active)
+
+        m = self.c.memberships.get(user=self.member)
+        CommunityService.remove_member(self.owner, self.c, m.id, ban=True)
+        m.refresh_from_db()
+        self.assertEqual(m.member_status, "banned")
+        with self.assertRaises(PermissionDenied):
+            CommunityService.join_community(self.member, self.c)
+        with self.assertRaises(PermissionDenied):
+            CommunityService.request_to_join(self.member, self.c)
+
+    def test_ban_via_endpoint_and_leave_marks_left(self):
+        m = self.c.memberships.get(user=self.member)
+        res = active_client(self.owner).delete(
+            f"/api/communities/{self.c.id}/members/{m.id}/?ban=true")
+        self.assertEqual(res.status_code, 204)
+        m.refresh_from_db()
+        self.assertEqual(m.member_status, "banned")
+
+        m2 = self.c.memberships.get(user=self.admin)
+        CommunityService.leave_community(self.admin, self.c)
+        m2.refresh_from_db()
+        self.assertEqual(m2.member_status, "left")
+
+    # ── M-1: settings changes audited with old→new diff ───────────────────
+
+    def test_settings_update_audits_diff(self):
+        from apps.audit.models import AuditEvent
+        CommunityService.update_settings(self.owner, self.c,
+                                         {"join_policy": "request", "ignored_field": "x"})
+        ev = AuditEvent.objects.filter(action="community.settings_updated").latest("created_at")
+        self.assertEqual(ev.metadata["changes"]["join_policy"]["old"], "open")
+        self.assertEqual(ev.metadata["changes"]["join_policy"]["new"], "request")
+        self.assertNotIn("ignored_field", ev.metadata["changes"])
+
+    # ── M-4: deactivated users hold no authority weight ───────────────────
+
+    def test_deactivated_admin_does_not_satisfy_last_admin_guard(self):
+        # Two admins; deactivate one at the platform level.
+        self.admin.is_active = False
+        self.admin.save(update_fields=["is_active"])
+        self.assertEqual(self.c.active_admin_count(), 1)  # only the owner counts
+        # Owner is now effectively the last admin — and (Sprint 1) owners must
+        # transfer before leaving anyway; the guard math no longer counts ghosts.
