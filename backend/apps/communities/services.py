@@ -156,7 +156,7 @@ class CommunityService:
             )
             ShareHolding.objects.create(shares_fund=fund, user=user)
 
-        logger.info("Community created: '%s' (id=%s) by %s", community.name, community.id, _dn(user))
+        logger.info("Community created: '%s' (id=%s) by user %s", community.name, community.id, user.pk)
         ActivityService.record(
             actor=user,
             verb="community_created",
@@ -211,10 +211,10 @@ class CommunityService:
             membership.save(update_fields=["is_active", "role", "member_status", "rejoined_at"])
         elif not created:
             # Already an active member — idempotent no-op, skip duplicate notifications.
-            logger.debug("join_community: %s already a member of '%s'", _dn(user), community.name)
+            logger.debug("join_community: user %s already a member of '%s'", user.pk, community.name)
             return membership
 
-        logger.info("%s joined community '%s' (id=%s)", _dn(user), community.name, community.id)
+        logger.info("User %s joined community '%s' (id=%s)", user.pk, community.name, community.id)
         ActivityService.record(
             actor=user,
             verb="community_joined",
@@ -276,7 +276,7 @@ class CommunityService:
         membership.is_active = False
         membership.member_status = CommunityMembership.MemberStatus.LEFT
         membership.save(update_fields=["is_active", "member_status"])
-        logger.info("%s left community '%s' (id=%s)", _dn(user), community.name, community.id)
+        logger.info("User %s left community '%s' (id=%s)", user.pk, community.name, community.id)
         ActivityService.record(
             actor=user,
             verb="community_left",
@@ -331,7 +331,7 @@ class CommunityService:
             community=community, requester=user, status=Status.PENDING,
         )
         created = True
-        logger.info("Join request created: %s -> '%s'", _dn(user), community.name)
+        logger.info("Join request created: user %s -> '%s'", user.pk, community.name)
 
         _notify_admins(
             community,
@@ -386,8 +386,8 @@ class CommunityService:
         membership.role = role
         membership.save(update_fields=["role"])
         logger.info(
-            "Role changed for %s in '%s': %s → %s (by %s)",
-            _dn(membership.user), community.name, old_role, role, _dn(creator),
+            "Role changed for user %s in '%s': %s -> %s (by user %s)",
+            membership.user_id, community.name, old_role, role, creator.pk,
         )
         AuditService.log(
             "community.role_changed", actor=creator, target=community, tenant=community.tenant_id,
@@ -498,8 +498,8 @@ class CommunityService:
             former.save(update_fields=["role"])
 
         logger.info(
-            "Ownership of '%s' (id=%s) transferred %s → %s (by %s)",
-            community.name, community.id, old_owner_id, new_owner.id, _dn(creator),
+            "Ownership of '%s' (id=%s) transferred %s -> %s (by user %s)",
+            community.name, community.id, old_owner_id, new_owner.id, creator.pk,
         )
         AuditService.log(
             "community.ownership_transferred", actor=creator, target=community,
@@ -765,8 +765,8 @@ class CommunityService:
         req.save(update_fields=["status", "reviewed_by", "reviewed_at"])
 
         logger.info(
-            "Join request %s: %s → '%s' (by %s)",
-            req.status, _dn(req.requester), req.community.name, _dn(admin_user),
+            "Join request %s: user %s -> '%s' (by user %s)",
+            req.status, req.requester_id, req.community.name, admin_user.pk,
         )
 
         from apps.core.events import emit
