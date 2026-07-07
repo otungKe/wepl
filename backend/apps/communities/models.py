@@ -10,6 +10,17 @@ def _generate_invite_code() -> str:
 
 class Community(models.Model):
 
+    # Lifecycle (Communities audit CR-2). ACTIVE is the only state in which new
+    # money objects, memberships, or conversations may be created. SUSPENDED is
+    # an ops-only freeze (fraud investigation / compliance); ARCHIVED is the
+    # owner's orderly exit for a community whose cycle is done. Reads stay open
+    # in every state — members can always see their history. Hard delete is
+    # reserved for never-funded shells (see CommunityService.delete_community).
+    class Status(models.TextChoices):
+        ACTIVE    = 'active',    'Active'
+        SUSPENDED = 'suspended', 'Suspended (ops freeze)'
+        ARCHIVED  = 'archived',  'Archived'
+
     class Category(models.TextChoices):
         SAVINGS    = "savings",    "Savings"
         CHAMA      = "chama",      "Chama / Investment Club"
@@ -44,6 +55,8 @@ class Community(models.Model):
     has_shares_fund  = models.BooleanField(default=False)
     category         = models.CharField(max_length=20, choices=Category.choices, default=Category.GENERAL)
     location         = models.CharField(max_length=120, blank=True, default="")
+    status           = models.CharField(max_length=10, choices=Status.choices,
+                                        default=Status.ACTIVE, db_index=True)
     created_at       = models.DateTimeField(auto_now_add=True)
 
     # ── Section A: Community Access & Visibility settings ─────────────────────
@@ -117,6 +130,11 @@ class CommunityMembership(models.Model):
     role      = models.CharField(max_length=20, choices=Role.choices, default=Role.MEMBER)
     is_active = models.BooleanField(default=True)
     joined_at = models.DateTimeField(auto_now_add=True)
+    # Set whenever an inactive membership is reactivated. The cooling-off clock
+    # runs from membership_start (the LATER of joined_at / rejoined_at) so
+    # leaving and rejoining can never bypass the waiting period (audit G-4),
+    # while joined_at keeps the original tenure for history.
+    rejoined_at = models.DateTimeField(null=True, blank=True)
     # When True, this member gets no *push* for this community's activity (the
     # in-app record is still kept). Per-community notification mute.
     notifications_muted = models.BooleanField(default=False)
@@ -130,6 +148,11 @@ class CommunityMembership(models.Model):
 
     def __str__(self):
         return f"{self.user.phone_number} - {self.community.name}"
+
+    @property
+    def membership_start(self):
+        """When the CURRENT stint of membership began — cooling-off runs from here."""
+        return self.rejoined_at or self.joined_at
 
 
 class CommunityJoinRequest(models.Model):

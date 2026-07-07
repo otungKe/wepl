@@ -32,6 +32,18 @@ Role   = CommunityMembership.Role
 Status = CommunityJoinRequest.Status
 
 
+def require_active_community(community, action: str = 'do this') -> None:
+    """The lifecycle chokepoint (audit CR-2): creation of memberships, money
+    objects, and conversations is only legal while a community is ACTIVE.
+    Reads — and money flows that settle existing obligations (advance
+    repayments, in-flight callbacks) — are deliberately NOT gated here."""
+    if community.status == Community.Status.ACTIVE:
+        return
+    label = ('suspended pending review' if community.status == Community.Status.SUSPENDED
+             else 'archived')
+    raise ValidationError(f"This community is {label} — you can't {action} right now.")
+
+
 def check_cooling_off(user, community, action: str) -> None:
     """
     Raise ValidationError if the user joined *community* too recently
@@ -55,7 +67,9 @@ def check_cooling_off(user, community, action: str) -> None:
         return
 
     from datetime import timedelta
-    joined   = membership.joined_at
+    # membership_start = later of joined_at / rejoined_at, so leaving and
+    # rejoining restarts the clock (audit G-4).
+    joined   = membership.membership_start
     eligible = joined + timedelta(days=days)
 
     if timezone.now() < eligible:
@@ -143,6 +157,7 @@ class CommunityService:
         Public communities can be joined directly.
         """
         AccessPolicy.gate(user, "Verify your identity to join communities.")
+        require_active_community(community, 'join it')
         if community.is_private and not _approved:
             raise PermissionDenied(
                 "This community is private. Request to join using an invite code."
@@ -165,7 +180,9 @@ class CommunityService:
         if not created and not membership.is_active:
             membership.is_active = True
             membership.role = Role.MEMBER
-            membership.save(update_fields=["is_active", "role"])
+            # Restart the cooling-off clock: this stint begins now (audit G-4).
+            membership.rejoined_at = timezone.now()
+            membership.save(update_fields=["is_active", "role", "rejoined_at"])
         elif not created:
             # Already an active member — idempotent no-op, skip duplicate notifications.
             logger.debug("join_community: %s already a member of '%s'", _dn(user), community.name)
@@ -199,6 +216,16 @@ class CommunityService:
         )
         if not membership:
             raise ValidationError("You are not a member of this community.")
+
+        # The owner cannot walk away with rank-4 authority (audit G-1): they'd
+        # keep exclusive member-management power from outside while nobody
+        # inside could exercise it. Transfer first — the mirror of the
+        # last-admin guard below.
+        if community.created_by_id == user.id:
+            raise ValidationError(
+                "You are the community owner. Transfer ownership to another "
+                "member before leaving."
+            )
 
         if membership.role == Role.ADMIN and community.active_admin_count() <= 1:
             # Check if removing this admin would deadlock any active contribution
@@ -257,6 +284,7 @@ class CommunityService:
         Notifies all community admins.
         """
         AccessPolicy.gate(user, "Verify your identity to join communities.")
+        require_active_community(community, 'request to join it')
         if CommunityService.is_member(user, community):
             raise ValidationError("You are already a member of this community.")
 
@@ -425,6 +453,140 @@ class CommunityService:
         )
         return community
 
+
+    # ── Lifecycle (audit CR-1 / CR-2) ─────────────────────────────────────────
+
+    @staticmethod
+    def has_financial_history(community) -> bool:
+        """True when ANY money object linked to this community has recorded
+        movement. Strict on purpose: when in doubt, the community must be
+        archived, never deleted."""
+        from apps.contributions.models import (
+            ContributionTransaction, EmergencyAdvance, ShareHolding,
+            WelfareContribution, WelfareClaim,
+        )
+        if ContributionTransaction.objects.filter(
+                contribution__community=community).exists():
+            return True
+        if EmergencyAdvance.objects.filter(
+                contribution__community=community).exists():
+            return True
+        if WelfareContribution.objects.filter(fund__community=community).exists():
+            return True
+        if WelfareClaim.objects.filter(fund__community=community).exists():
+            return True
+        if ShareHolding.objects.filter(
+                shares_fund__community=community, total_contributed__gt=0).exists():
+            return True
+        return False
+
+    @staticmethod
+    @transaction.atomic
+    def archive_community(actor, community):
+        """Owner's orderly exit: freezes joins, money-object creation and new
+        conversations while keeping every record readable."""
+        require(actor, "community.archive", community,
+                "Only the community owner can archive this community.")
+        community = Community.objects.select_for_update().get(pk=community.pk)
+        if community.status == Community.Status.ARCHIVED:
+            raise ValidationError("This community is already archived.")
+        if community.status == Community.Status.SUSPENDED:
+            raise ValidationError("A suspended community cannot be archived until "
+                                  "the suspension is lifted.")
+        community.status = Community.Status.ARCHIVED
+        community.save(update_fields=["status"])
+        AuditService.log("community.archived", actor=actor, target=community,
+                         tenant=community.tenant_id)
+        ActivityService.record(
+            actor=actor, verb="community_archived",
+            params={"community_name": community.name},
+            visibility=Activity.Visibility.COMMUNITY, community=community,
+        )
+        return community
+
+    @staticmethod
+    @transaction.atomic
+    def unarchive_community(actor, community):
+        require(actor, "community.archive", community,
+                "Only the community owner can restore this community.")
+        community = Community.objects.select_for_update().get(pk=community.pk)
+        if community.status != Community.Status.ARCHIVED:
+            raise ValidationError("This community is not archived.")
+        community.status = Community.Status.ACTIVE
+        community.save(update_fields=["status"])
+        AuditService.log("community.unarchived", actor=actor, target=community,
+                         tenant=community.tenant_id)
+        return community
+
+    @staticmethod
+    @transaction.atomic
+    def suspend_community(community, *, actor=None, reason=""):
+        """Ops-only freeze (fraud investigation / compliance / court order).
+        Not exposed to any customer role — callers are the Django admin action
+        and, later, the Back Office console."""
+        community = Community.objects.select_for_update().get(pk=community.pk)
+        if community.status == Community.Status.SUSPENDED:
+            raise ValidationError("This community is already suspended.")
+        previous = community.status
+        community.status = Community.Status.SUSPENDED
+        community.save(update_fields=["status"])
+        AuditService.log("community.suspended", actor=actor, target=community,
+                         tenant=community.tenant_id,
+                         metadata={"reason": reason, "previous_status": previous})
+        logger.warning("Community '%s' (id=%s) SUSPENDED: %s",
+                       community.name, community.id, reason or "no reason recorded")
+        return community
+
+    @staticmethod
+    @transaction.atomic
+    def unsuspend_community(community, *, actor=None, reason=""):
+        community = Community.objects.select_for_update().get(pk=community.pk)
+        if community.status != Community.Status.SUSPENDED:
+            raise ValidationError("This community is not suspended.")
+        community.status = Community.Status.ACTIVE
+        community.save(update_fields=["status"])
+        AuditService.log("community.unsuspended", actor=actor, target=community,
+                         tenant=community.tenant_id, metadata={"reason": reason})
+        return community
+
+    @staticmethod
+    @transaction.atomic
+    def delete_community(actor, community):
+        """Hard delete — legal ONLY for never-funded shells (audit CR-1).
+
+        Any recorded financial movement makes the community permanent: the
+        ledger's journal lines reference these domain objects, and destroying
+        the context of posted money is indefensible. The exit for a real
+        community is archive_community(). Empty auto-created funds are removed
+        first so PROTECT doesn't block the legitimate shell case.
+        """
+        require(actor, "community.delete", community,
+                "Only the creator can delete this community.")
+        community = Community.objects.select_for_update().get(pk=community.pk)
+
+        if CommunityService.has_financial_history(community):
+            raise ValidationError(
+                "This community has financial history and cannot be deleted. "
+                "Archive it instead — records stay readable and nothing is lost."
+            )
+
+        from apps.contributions.models import Contribution, SharesFund, WelfareFund
+        # Zero-movement money shells (auto-created at birth or never used);
+        # holdings/participants cascade with their fund rows.
+        WelfareFund.objects.filter(community=community).delete()
+        SharesFund.objects.filter(community=community).delete()
+        Contribution.objects.filter(community=community).delete()
+
+        AuditService.log(
+            "community.deleted", actor=actor, target_type="community",
+            target_id=str(community.id), tenant=community.tenant_id,
+            metadata={"name": community.name},
+        )
+        # Log the actor by id, not display name — _dn falls back to the phone
+        # number, which must not land in clear-text logs.
+        logger.info("Community '%s' (id=%s) deleted by user %s",
+                    community.name, community.id, actor.pk)
+        community.delete()
 
     # ── Join request actions ───────────────────────────────────────────────────
 

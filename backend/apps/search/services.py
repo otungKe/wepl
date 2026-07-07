@@ -62,7 +62,8 @@ class SearchService:
     def _communities(actor, q, limit):
         from apps.communities.models import Community
         qs = Community.objects.filter(
-            Q(is_private=False) | Q(memberships__user=actor, memberships__is_active=True)
+            Q(is_private=False, status='active')
+            | Q(memberships__user=actor, memberships__is_active=True)
         )
         tid = SearchService._tenant_id()
         if tid is not None:

@@ -54,9 +54,10 @@ class WelfareService:
         fund   = WelfareFund.objects.select_for_update().get(id=fund_id)
         amount = Decimal(str(amount_requested))
 
-        # Section B: cooling-off period check
+        # Lifecycle + Section B cooling-off checks
         if fund.community:
-            from apps.communities.services import check_cooling_off
+            from apps.communities.services import check_cooling_off, require_active_community
+            require_active_community(fund.community, 'submit a welfare claim')
             check_cooling_off(user, fund.community, 'welfare_claim')
 
         if WelfareClaim.objects.filter(fund=fund, claimant=user, status='PENDING').exists():

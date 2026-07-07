@@ -16,9 +16,10 @@ class EmergencyAdvanceService:
         require(user, "contribution.participate", contribution,
                 "You must be an active participant.")
 
-        # Section B: cooling-off period check
+        # Lifecycle + Section B cooling-off checks
         if contribution.community:
-            from apps.communities.services import check_cooling_off
+            from apps.communities.services import check_cooling_off, require_active_community
+            require_active_community(contribution.community, 'request an advance')
             check_cooling_off(user, contribution.community, 'emergency_advance')
 
         # Eligibility from the double-entry ledger: the member's own contribution
