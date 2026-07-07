@@ -34,14 +34,14 @@ export const NAV: NavGroup[] = [
     items: [
       { label: 'Financial Operations', slug: 'finops', cap: 'finops.view', icon: Banknote, phase: 'P2' },
       { label: 'Transactions', slug: 'transactions', cap: 'transactions.view', icon: ArrowLeftRight, phase: 'P2' },
-      { label: 'Communities', slug: 'communities', cap: 'communities.view', icon: Building2, phase: 'P1' },
+      { label: 'Communities', slug: 'communities', cap: 'communities.view', icon: Building2 },
       { label: 'Users', slug: 'users', cap: 'users.view', icon: Users2, phase: 'P1' },
     ],
   },
   {
     group: 'Trust & Safety',
     items: [
-      { label: 'Verification Centre', slug: 'verification', cap: 'verification.view', icon: ShieldCheck, phase: 'P1' },
+      { label: 'Verification Centre', slug: 'verification', cap: 'verification.view', icon: ShieldCheck },
       { label: 'Risk & Compliance', slug: 'risk', cap: 'risk.view', icon: Siren, phase: 'P4' },
       { label: 'Support', slug: 'support', cap: 'support.view', icon: LifeBuoy, phase: 'P1' },
     ],
@@ -59,7 +59,7 @@ export const NAV: NavGroup[] = [
     group: 'Insight',
     items: [
       { label: 'Reporting', slug: 'reporting', cap: 'reporting.view', icon: BarChart3, phase: 'P4' },
-      { label: 'Audit', slug: 'audit', cap: 'audit.view', icon: ScrollText, phase: 'P4' },
+      { label: 'Audit', slug: 'audit', cap: 'audit.view', icon: ScrollText },
     ],
   },
   {

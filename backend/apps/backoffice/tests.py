@@ -1,3 +1,4 @@
+from django.contrib.auth import get_user_model
 from django.contrib.auth.models import Group
 from django.core.management import call_command
 from django.test import TestCase, override_settings
@@ -250,3 +251,81 @@ class VerificationApiTests(TestCase):
         self.kyc.refresh_from_db()
         self.assertEqual(self.kyc.resubmission_requested, ["selfie"])   # bogus filtered
         self.assertEqual(self.kyc.status, "pending")                    # unchanged
+
+
+class OpsCommunitiesModuleTests(TestCase):
+    """Communities ops module: registry, community file, suspend lever."""
+
+    def setUp(self):
+        from apps.communities.services import CommunityService
+        owner = get_user_model().objects.create_user(phone_number="254700000091")
+        self.community = CommunityService.create_community(
+            owner, {"name": "Ops Test Chama", "is_private": False})
+        self.manager = make_staff("comm-mgr@imbank.co.ke", "operations")
+        self.viewer = make_staff("comm-view@imbank.co.ke", "analyst")
+
+    def test_registry_lists_and_filters(self):
+        res = op_client(self.manager).get("/api/ops/communities/", {"q": "Ops Test"})
+        self.assertEqual(res.status_code, 200)
+        row = res.data["results"][0]
+        self.assertEqual(row["name"], "Ops Test Chama")
+        self.assertEqual(row["status"], "active")
+        self.assertEqual(row["member_count"], 1)
+
+    def test_community_file_payload(self):
+        res = op_client(self.viewer).get(f"/api/ops/communities/{self.community.id}/")
+        self.assertEqual(res.status_code, 200)
+        self.assertEqual(res.data["members"]["admins"], 1)
+        self.assertFalse(res.data["finance"]["has_financial_history"])
+        self.assertIn("join_policy", res.data["settings"])
+
+    def test_suspend_requires_reason_and_capability(self):
+        url = f"/api/ops/communities/{self.community.id}/lifecycle/"
+        # Analyst (view-only) cannot manage.
+        res = op_client(self.viewer).post(url, {"action": "suspend", "reason": "x"}, format="json")
+        self.assertEqual(res.status_code, 403)
+        # Reason required.
+        res = op_client(self.manager).post(url, {"action": "suspend"}, format="json")
+        self.assertEqual(res.status_code, 400)
+        # Suspend → status flips; audit rows on both trails.
+        res = op_client(self.manager).post(url, {"action": "suspend", "reason": "fraud review"}, format="json")
+        self.assertEqual(res.status_code, 200)
+        self.assertEqual(res.data["status"], "suspended")
+        from apps.audit.models import AuditEvent
+        self.assertTrue(AuditEvent.objects.filter(action="ops.community.suspend").exists())
+        self.assertTrue(AuditEvent.objects.filter(action="community.suspended").exists())
+        # Double-suspend → 409; unsuspend restores.
+        res = op_client(self.manager).post(url, {"action": "suspend", "reason": "again"}, format="json")
+        self.assertEqual(res.status_code, 409)
+        res = op_client(self.manager).post(url, {"action": "unsuspend"}, format="json")
+        self.assertEqual(res.data["status"], "active")
+
+
+class OpsMetricsAndAuditTests(TestCase):
+
+    def test_metrics_blocks_follow_capabilities(self):
+        su = make_staff("metrics-su@imbank.co.ke", superuser=True)
+        res = op_client(su).get("/api/ops/metrics/")
+        self.assertEqual(res.status_code, 200)
+        for block in ("verification", "holds", "outbox", "ledger", "communities", "users"):
+            self.assertIn(block, res.data)
+        self.assertTrue(res.data["ledger"]["balanced"])
+
+        support = make_staff("metrics-sup@imbank.co.ke", "support")
+        res = op_client(support).get("/api/ops/metrics/")
+        self.assertEqual(res.status_code, 200)
+        self.assertNotIn("ledger", res.data)   # support holds no ledger.view
+
+    def test_audit_log_view_filters_and_requires_capability(self):
+        from apps.audit.services import AuditService
+        AuditService.log("ops.test.alpha", actor=None, target_type="thing", target_id="1")
+        AuditService.log("community.suspended", actor=None, target_type="community", target_id="9")
+
+        auditor = make_staff("aud@imbank.co.ke", "auditor")
+        res = op_client(auditor).get("/api/ops/audit/", {"action": "community."})
+        self.assertEqual(res.status_code, 200)
+        self.assertEqual(res.data["count"], 1)
+        self.assertEqual(res.data["results"][0]["action"], "community.suspended")
+
+        support = make_staff("sup2@imbank.co.ke", "support")
+        self.assertEqual(op_client(support).get("/api/ops/audit/").status_code, 403)
