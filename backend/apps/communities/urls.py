@@ -20,6 +20,7 @@ from .views import (
     JoinRequestCreateView,
     JoinRequestCreateByIdView,
     JoinRequestActionView,
+    JoinRequestCancelView,
     MyJoinRequestsView,
 )
 
@@ -47,4 +48,5 @@ urlpatterns = [
     path('invite/<str:code>/request/', JoinRequestCreateView.as_view()),
     # Admin actions
     path('join-requests/<int:req_id>/action/', JoinRequestActionView.as_view()),
+    path('join-requests/<int:req_id>/cancel/', JoinRequestCancelView.as_view()),
 ]

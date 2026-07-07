@@ -498,6 +498,16 @@ class JoinRequestCreateByIdView(APIView):
         return Response(CommunityJoinRequestSerializer(req).data, status=201)
 
 
+class JoinRequestCancelView(APIView):
+    """POST /communities/join-requests/<req_id>/cancel/ — the requester
+    withdraws their own pending request (audit M-2)."""
+    permission_classes = [IsActiveSession]
+
+    def post(self, request, req_id):
+        req = CommunityService.cancel_join_request(request.user, req_id)
+        return Response(CommunityJoinRequestSerializer(req).data)
+
+
 class JoinRequestActionView(APIView):
     """POST /communities/join-requests/<req_id>/action/ — admin approves/rejects."""
     permission_classes = [IsActiveSession]

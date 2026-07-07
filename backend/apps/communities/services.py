@@ -44,6 +44,23 @@ def require_active_community(community, action: str = 'do this') -> None:
     raise ValidationError(f"This community is {label} — you can't {action} right now.")
 
 
+def _require_same_tenant(user, community) -> None:
+    """Cross-tenant membership guard (audit G-13/M-3). A no-op while every
+    user resolves to the default tenant; the moment P6-04 maps users to real
+    institutions, every join path inherits this refusal + audit trail."""
+    from apps.tenants.resolve import tenant_for_user
+    if community.tenant_id and tenant_for_user(user).id != community.tenant_id:
+        # The raise rolls back the surrounding service transaction, so a DB
+        # audit row written here would vanish with it — the structured log
+        # line (request_id/tenant/actor context, ADR-0020) is the durable
+        # forensic record for refused attempts.
+        logger.warning(
+            "Cross-tenant join refused: user %s -> community %s (tenant %s)",
+            user.pk, community.id, community.tenant_id,
+        )
+        raise PermissionDenied("This community belongs to a different institution.")
+
+
 def check_cooling_off(user, community, action: str) -> None:
     """
     Raise ValidationError if the user joined *community* too recently
@@ -91,16 +108,20 @@ def _dn(user) -> str:
     return (user.name or "").strip() or user.phone_number
 
 
-def _notify_admins(community, *, exclude_user=None, **kwargs):
-    """Send a notification to every active admin of *community*.
-    Pass exclude_user to skip one (e.g. the action's initiator)."""
-    from apps.notifications.services import NotificationService
+def _notify_admins(community, *, exclude_user=None, notification_type, title,
+                   message, **extra):
+    """Notify every active admin of *community* via the durable event bus
+    (ADR-0006, audit H-5): one outbox event per admin, written in the current
+    transaction — a rollback discards them, a crash never loses them, and
+    delivery (Notification row + push) happens async in the relay."""
+    from apps.core.events import emit
     qs = community.memberships.filter(role=Role.ADMIN, is_active=True,
                                       user__is_active=True)
     if exclude_user is not None:
         qs = qs.exclude(user=exclude_user)
     for m in qs:
-        NotificationService.create(user=m.user, community_id=community.id, **kwargs)
+        emit(notification_type, user_id=m.user_id, title=title, message=message,
+             community_id=community.id, **extra)
 
 
 class CommunityService:
@@ -159,6 +180,7 @@ class CommunityService:
         """
         AccessPolicy.gate(user, "Verify your identity to join communities.")
         require_active_community(community, 'join it')
+        _require_same_tenant(user, community)
         if community.is_private and not _approved:
             raise PermissionDenied(
                 "This community is private. Request to join using an invite code."
@@ -290,6 +312,7 @@ class CommunityService:
         """
         AccessPolicy.gate(user, "Verify your identity to join communities.")
         require_active_community(community, 'request to join it')
+        _require_same_tenant(user, community)
         if CommunityService.is_member(user, community):
             raise ValidationError("You are already a member of this community.")
         if community.memberships.filter(
@@ -297,24 +320,18 @@ class CommunityService:
                 member_status=CommunityMembership.MemberStatus.BANNED).exists():
             raise PermissionDenied("You cannot rejoin this community.")
 
-        req, created = CommunityJoinRequest.objects.get_or_create(
-            community=community,
-            requester=user,
-            defaults={"status": Status.PENDING},
+        # History-preserving (audit M-2): a re-request creates a NEW row —
+        # never re-opens a decided one, so past reviews keep their reviewer
+        # and timestamp. The partial unique constraint (one PENDING per pair)
+        # backstops the existence check under concurrency.
+        if CommunityJoinRequest.objects.filter(
+                community=community, requester=user, status=Status.PENDING).exists():
+            raise ValidationError("You already have a pending request for this community.")
+        req = CommunityJoinRequest.objects.create(
+            community=community, requester=user, status=Status.PENDING,
         )
-        if not created:
-            # Re-lock the existing row before mutating.
-            req = CommunityJoinRequest.objects.select_for_update().get(pk=req.pk)
-            if req.status == Status.PENDING:
-                raise ValidationError("You already have a pending request for this community.")
-            # Previously rejected or removed → re-open.
-            req.status = Status.PENDING
-            req.reviewed_at = None
-            req.reviewed_by = None
-            req.save(update_fields=["status", "reviewed_at", "reviewed_by"])
-            logger.info("Join request re-opened: %s → '%s'", _dn(user), community.name)
-        else:
-            logger.info("Join request created: %s → '%s'", _dn(user), community.name)
+        created = True
+        logger.info("Join request created: %s -> '%s'", _dn(user), community.name)
 
         _notify_admins(
             community,
@@ -324,6 +341,22 @@ class CommunityService:
             join_request_id=req.id,
         )
         return req, created
+
+    @staticmethod
+    @transaction.atomic
+    def cancel_join_request(user, request_id):
+        """Requester withdraws their own PENDING request (audit M-2/G-10)."""
+        req = (CommunityJoinRequest.objects.select_for_update()
+               .filter(id=request_id, requester=user).first())
+        if req is None:
+            raise ValidationError("Request not found.")
+        if req.status != Status.PENDING:
+            raise ValidationError("Only a pending request can be cancelled.")
+        req.status = Status.CANCELLED
+        req.reviewed_at = timezone.now()
+        req.save(update_fields=["status", "reviewed_at"])
+        logger.info("Join request %s cancelled by requester user %s", req.id, user.pk)
+        return req
 
     # ── Role management ────────────────────────────────────────────────────────
 
@@ -361,6 +394,15 @@ class CommunityService:
             metadata={"membership_id": membership.id, "user_id": membership.user_id,
                       "old_role": old_role, "new_role": role},
         )
+        from apps.core.events import emit
+        emit(
+            "community_role_changed",
+            user_id=membership.user_id,
+            community_id=community.id,
+            title=f"Your role in {community.name} changed",
+            message=f"You are now a {membership.get_role_display().lower()} "
+                    f"in {community.name}.",
+        )
         return membership
 
     @staticmethod
@@ -396,6 +438,16 @@ class CommunityService:
             "community.member_banned" if ban else "community.member_removed",
             actor=creator, target=community, tenant=community.tenant_id,
             metadata={"membership_id": membership.id, "user_id": membership.user_id},
+        )
+        # Silent removal was an audit finding: the person deserves to know.
+        # Bans use the same wording on purpose — the ban itself is internal.
+        from apps.core.events import emit
+        emit(
+            "community_removed",
+            user_id=membership.user_id,
+            community_id=community.id,
+            title=f"Membership update — {community.name}",
+            message=f"You are no longer a member of {community.name}.",
         )
         return membership
 
@@ -461,11 +513,11 @@ class CommunityService:
             visibility=Activity.Visibility.COMMUNITY,
             community=community,
         )
-        from apps.notifications.services import NotificationService
-        NotificationService.create(
-            user=new_owner,
+        from apps.core.events import emit
+        emit(
+            "community_ownership",
+            user_id=new_owner.id,
             community_id=community.id,
-            notification_type="community_ownership",
             title=f"You're now the owner of {community.name}",
             message=f"{_dn(creator)} transferred ownership of {community.name} to you.",
         )
@@ -717,20 +769,20 @@ class CommunityService:
             req.status, _dn(req.requester), req.community.name, _dn(admin_user),
         )
 
-        from apps.notifications.services import NotificationService
+        from apps.core.events import emit
         if action == "approve":
             CommunityService.join_community(req.requester, req.community, _approved=True)
-            NotificationService.create(
-                user=req.requester,
-                notification_type="join_approved",
+            emit(
+                "join_approved",
+                user_id=req.requester_id,
                 title=f"Request approved — {req.community.name}",
                 message=f"Welcome! You're now a member of {req.community.name}.",
                 community_id=req.community.id,
             )
         else:
-            NotificationService.create(
-                user=req.requester,
-                notification_type="join_rejected",
+            emit(
+                "join_rejected",
+                user_id=req.requester_id,
                 title=f"Request declined — {req.community.name}",
                 message=f"Your request to join {req.community.name} was not approved.",
                 community_id=req.community.id,

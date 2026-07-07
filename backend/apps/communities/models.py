@@ -177,9 +177,10 @@ class CommunityMembership(models.Model):
 class CommunityJoinRequest(models.Model):
 
     class Status(models.TextChoices):
-        PENDING  = "PENDING",  "Pending"
-        APPROVED = "APPROVED", "Approved"
-        REJECTED = "REJECTED", "Rejected"
+        PENDING   = "PENDING",   "Pending"
+        APPROVED  = "APPROVED",  "Approved"
+        REJECTED  = "REJECTED",  "Rejected"
+        CANCELLED = "CANCELLED", "Cancelled by requester"
 
     community  = models.ForeignKey(Community, on_delete=models.CASCADE, related_name="join_requests")
     requester  = models.ForeignKey(
@@ -194,7 +195,16 @@ class CommunityJoinRequest(models.Model):
     )
 
     class Meta:
-        unique_together = ("community", "requester")
+        # One OPEN request per (community, requester); decided/cancelled rows
+        # accumulate as history — a re-request creates a NEW row instead of
+        # overwriting the previous decision's reviewer/timestamp (audit M-2).
+        constraints = [
+            models.UniqueConstraint(
+                fields=["community", "requester"],
+                condition=models.Q(status="PENDING"),
+                name="joinreq_one_pending_per_pair",
+            ),
+        ]
         indexes = [
             models.Index(fields=["community", "status"], name="joinreq_community_status_idx"),
         ]
