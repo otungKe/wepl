@@ -579,3 +579,109 @@ class Sprint2GovernanceTests(TestCase):
         self.assertEqual(self.c.active_admin_count(), 1)  # only the owner counts
         # Owner is now effectively the last admin — and (Sprint 1) owners must
         # transfer before leaving anyway; the guard math no longer counts ghosts.
+
+
+class Sprint3EventingTests(TestCase):
+    """Communities audit Sprint 3: outbox eventing (H-5), join-request history
+    + cancel (M-2), tenant guard (M-3), tier gate on finance authority (M-7)."""
+
+    def setUp(self):
+        self.owner  = make_user("254700000081")
+        self.member = make_user("254700000082")
+        self.c = CommunityService.create_community(
+            self.owner, {"name": "Chama", "is_private": False,
+                         "join_policy": Community.JoinPolicy.OPEN})
+        CommunityMembership.objects.create(user=self.member, community=self.c, role=Role.MEMBER)
+
+    def _events(self, event_type):
+        from apps.core.models import OutboxEvent
+        return OutboxEvent.objects.filter(event_type=event_type)
+
+    # ── H-5: durable events on the outbox ──────────────────────────────────
+
+    def test_membership_actions_emit_outbox_events(self):
+        m = self.c.memberships.get(user=self.member)
+
+        CommunityService.assign_role(self.owner, self.c, m.id, Role.TREASURER)
+        ev = self._events("community_role_changed").get()
+        self.assertEqual(ev.payload["user_id"], self.member.id)
+        self.assertIn("treasurer", ev.payload["message"])
+
+        CommunityService.remove_member(self.owner, self.c, m.id)
+        ev = self._events("community_removed").get()
+        self.assertEqual(ev.payload["user_id"], self.member.id)
+
+    def test_join_request_flow_emits_events(self):
+        joiner = make_user("254700000083")
+        req, _ = CommunityService.request_to_join(joiner, self.c)
+        self.assertTrue(self._events("join_request").filter(
+            payload__user_id=self.owner.id).exists())   # admin notified
+
+        CommunityService.action_join_request(self.owner, req.id, "approve")
+        self.assertTrue(self._events("join_approved").filter(
+            payload__user_id=joiner.id).exists())
+
+    # ── M-2: history preserved + requester cancel ──────────────────────────
+
+    def test_rerequest_creates_new_row_preserving_decision(self):
+        from apps.communities.models import CommunityJoinRequest
+        joiner = make_user("254700000084")
+        req1, _ = CommunityService.request_to_join(joiner, self.c)
+        CommunityService.action_join_request(self.owner, req1.id, "reject")
+
+        req2, created = CommunityService.request_to_join(joiner, self.c)
+        self.assertTrue(created)
+        self.assertNotEqual(req1.id, req2.id)
+        req1.refresh_from_db()
+        self.assertEqual(req1.status, "REJECTED")          # history intact
+        self.assertEqual(req1.reviewed_by, self.owner)
+        self.assertEqual(
+            CommunityJoinRequest.objects.filter(requester=joiner).count(), 2)
+
+    def test_requester_can_cancel_only_own_pending(self):
+        joiner = make_user("254700000085")
+        req, _ = CommunityService.request_to_join(joiner, self.c)
+        with self.assertRaises(ValidationError):           # not the requester
+            CommunityService.cancel_join_request(self.owner, req.id)
+        CommunityService.cancel_join_request(joiner, req.id)
+        req.refresh_from_db()
+        self.assertEqual(req.status, "CANCELLED")
+        with self.assertRaises(ValidationError):           # already decided
+            CommunityService.cancel_join_request(joiner, req.id)
+        # Cancelled → free to request again.
+        req2, created = CommunityService.request_to_join(joiner, self.c)
+        self.assertTrue(created)
+
+    def test_duplicate_pending_refused(self):
+        joiner = make_user("254700000086")
+        CommunityService.request_to_join(joiner, self.c)
+        with self.assertRaises(ValidationError):
+            CommunityService.request_to_join(joiner, self.c)
+
+    # ── M-3: cross-tenant joins refused ────────────────────────────────────
+
+    def test_cross_tenant_join_refused(self):
+        from apps.tenants.models import Tenant
+        other = Tenant.objects.create(slug="other-sacco", name="Other")
+        Community.objects.filter(pk=self.c.pk).update(tenant=other)
+        self.c.refresh_from_db()
+        joiner = make_user("254700000087")
+        with self.assertRaises(PermissionDenied):
+            CommunityService.join_community(joiner, self.c)
+        with self.assertRaises(PermissionDenied):
+            CommunityService.request_to_join(joiner, self.c)
+        self.assertFalse(self.c.memberships.filter(user=joiner).exists())
+
+    # ── M-7: finance authority requires current Tier-1 (flag-gated) ────────
+
+    def test_finance_manage_requires_tier1_when_enforced(self):
+        from django.test import override_settings
+        m = self.c.memberships.get(user=self.member)
+        CommunityService.assign_role(self.owner, self.c, m.id, Role.TREASURER)
+
+        # Flag off (dev default): rank alone suffices.
+        self.assertTrue(can(self.member, "community.finance.manage", self.c))
+        # Flag on: non-Tier-1 treasurer loses fund authority; view rights stay.
+        with override_settings(ACCESS_TIER_ENFORCEMENT=True):
+            self.assertFalse(can(self.member, "community.finance.manage", self.c))
+            self.assertTrue(can(self.member, "community.view", self.c))

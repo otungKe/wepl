@@ -99,4 +99,14 @@ def _resolve(actor, action: str, community) -> bool:
         needed = _MIN_RANK[action]
     except KeyError:  # unknown action — treat as a config bug, fail closed
         raise KeyError(f"Unknown community action '{action}'. Add it to _MIN_RANK.")
-    return community_rank(actor, community) >= needed
+    if community_rank(actor, community) < needed:
+        return False
+    # Financial administration requires a currently-valid identity (audit
+    # M-7/G-14): a member whose KYC approval was later revoked keeps their
+    # seat but loses fund-management authority until re-approved. Gated by
+    # the platform enforcement flag, like every tier check (ADR-0022).
+    if action == "community.finance.manage":
+        from django.conf import settings
+        if settings.ACCESS_TIER_ENFORCEMENT and not getattr(actor, "is_tier1", False):
+            return False
+    return True
