@@ -109,7 +109,13 @@ class Community(models.Model):
         return self.memberships.filter(is_active=True)
 
     def active_admin_count(self) -> int:
-        return self.memberships.filter(is_active=True, role=CommunityMembership.Role.ADMIN).count()
+        """Admins who can actually act: platform-deactivated users are excluded
+        so a banned/deactivated account can never satisfy (or deadlock) the
+        last-admin guards (audit G-9)."""
+        return self.memberships.filter(
+            is_active=True, role=CommunityMembership.Role.ADMIN,
+            user__is_active=True,
+        ).count()
 
     def membership_for(self, user):
         """Return the active membership for *user*, or None."""
@@ -125,10 +131,23 @@ class CommunityMembership(models.Model):
         TREASURER = "treasurer", "Treasurer"
         MEMBER    = "member",    "Member"
 
+    # WHY a membership is (in)active (audit H-4). is_active stays the fast
+    # query flag; member_status records the reason and carries the one state
+    # with teeth: BANNED members cannot rejoin or re-request — ever — until
+    # an owner lifts it (by removing again without ban… deliberately absent;
+    # unbanning is a future explicit action).
+    class MemberStatus(models.TextChoices):
+        ACTIVE  = "active",  "Active"
+        LEFT    = "left",    "Left voluntarily"
+        REMOVED = "removed", "Removed by owner"
+        BANNED  = "banned",  "Banned — cannot rejoin"
+
     user      = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE)
     community = models.ForeignKey(Community, on_delete=models.CASCADE, related_name="memberships")
     role      = models.CharField(max_length=20, choices=Role.choices, default=Role.MEMBER)
     is_active = models.BooleanField(default=True)
+    member_status = models.CharField(max_length=10, choices=MemberStatus.choices,
+                                     default=MemberStatus.ACTIVE)
     joined_at = models.DateTimeField(auto_now_add=True)
     # Set whenever an inactive membership is reactivated. The cooling-off clock
     # runs from membership_start (the LATER of joined_at / rejoined_at) so

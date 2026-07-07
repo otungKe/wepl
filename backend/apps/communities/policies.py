@@ -52,6 +52,7 @@ _MIN_RANK = {
     "community.member.remove":        _RANK[CREATOR],          # remove a member
     "community.delete":               _RANK[CREATOR],          # delete the community
     "community.archive":              _RANK[CREATOR],          # archive / un-archive
+    "community.invite.rotate":        _RANK[Role.ADMIN],       # regenerate the invite code
     "community.ownership.transfer":   _RANK[CREATOR],          # (reserved for ADR-0011)
 }
 
@@ -70,6 +71,26 @@ def community_rank(actor, community) -> int:
     """Numeric authority of *actor* over *community* (0 = outsider)."""
     role = community_role(actor, community)
     return _RANK.get(role, 0)
+
+
+def can_see_invite_code(actor, community) -> bool:
+    """Layered rule (audit H-3): the community's own ``invite_permission``
+    setting decides which rank may see/share the invite code.
+
+        creator → rank 4 only
+        admins  → admins & treasurers (rank ≥ 2), matching the setting's label
+        members → any active member
+    """
+    from .models import Community
+    rank = community_rank(actor, community)
+    if rank == 0:
+        return False
+    needed = {
+        Community.InvitePermission.CREATOR: _RANK[CREATOR],
+        Community.InvitePermission.ADMINS:  _RANK[Role.TREASURER],
+        Community.InvitePermission.MEMBERS: _RANK[Role.MEMBER],
+    }[community.invite_permission]
+    return rank >= needed
 
 
 @policy("community")

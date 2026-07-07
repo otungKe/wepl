@@ -68,11 +68,12 @@ class CommunitySerializer(serializers.ModelSerializer):
         return req.status if req else None
 
     def get_invite_code(self, obj):
-        """
-        Only expose the invite code to active members.
-        Leaking it on the public discover feed defeats the purpose of private groups.
-        """
-        return obj.invite_code if self._is_active_member(obj) else None
+        """Expose the invite code only to ranks the community's own
+        ``invite_permission`` setting allows (audit H-3) — the setting was
+        previously stored but never enforced. Non-members never see it."""
+        from .policies import can_see_invite_code
+        user = self._request_user()
+        return obj.invite_code if can_see_invite_code(user, obj) else None
 
     def get_total_managed(self, obj):
         """Pooled money across the community's funds (ledger). None when the
