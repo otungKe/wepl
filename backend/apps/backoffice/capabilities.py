@@ -65,7 +65,7 @@ ROLE_PREFIX = "ops:"
 
 ROLE_CAPABILITIES: dict[str, set[str]] = {
     "operations": _BASE | {
-        "users.view", "communities.view", "communities.manage",
+        "users.view", "users.manage", "communities.view", "communities.manage",
         "transactions.view", "finops.view", "finops.retry",
     },
     "support": _BASE | {

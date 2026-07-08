@@ -19,6 +19,44 @@ logger = logging.getLogger(__name__)
 class UserService:
 
     @staticmethod
+    def deactivate_user(user, *, reason: str = "", actor_label: str = "") -> User:
+        """Platform-level deactivation (the domain's single door for it):
+        blocks login, revokes every active session and outstanding refresh
+        token, and audits. Community authority math already excludes
+        deactivated users (Communities audit M-4)."""
+        from django.utils import timezone as _tz
+        from apps.audit.services import AuditService
+        from . import sessions as session_registry
+
+        if not user.is_active:
+            raise ValidationError("This account is already deactivated.")
+        user.is_active = False
+        user.save(update_fields=["is_active"])
+        revoked = session_registry.revoke_all_for_user(user)
+        AuditService.log(
+            "user.deactivated", target_type="user", target_id=str(user.pk),
+            metadata={"reason": reason, "by": actor_label,
+                      "sessions_revoked": revoked, "at": _tz.now().isoformat()},
+        )
+        logger.warning("User %s DEACTIVATED (%s): %s",
+                       user.pk, actor_label or "system", reason or "no reason recorded")
+        return user
+
+    @staticmethod
+    def reactivate_user(user, *, reason: str = "", actor_label: str = "") -> User:
+        from apps.audit.services import AuditService
+        if user.is_active:
+            raise ValidationError("This account is already active.")
+        user.is_active = True
+        user.save(update_fields=["is_active"])
+        AuditService.log(
+            "user.reactivated", target_type="user", target_id=str(user.pk),
+            metadata={"reason": reason, "by": actor_label},
+        )
+        logger.info("User %s reactivated (%s)", user.pk, actor_label or "system")
+        return user
+
+    @staticmethod
     def get_or_create_user(phone_number: str) -> User:
         """Retrieve existing user or create a new one."""
         user, _ = User.objects.get_or_create(phone_number=phone_number)

@@ -188,16 +188,22 @@ happens inside apps (view packages, service splits), never by relocation.
    re-implement a rule that exists as a service helper.
 7. No stored aggregates for 360s; no balance-like columns anywhere, ever.
 
-## 8. Decisions needed before code
+## 8. Decisions — RULED (adopted as recommended)
 
-1. **Permissions target** — adopt the flatter hierarchy (capability → role →
-   staff + time-boxed audited grants; departments as metadata; ABAC as
-   guards)? This changes nothing today but determines what the staff-
-   management module builds.
-2. **"Wallet 360" naming** — agree to Member Financial 360 (no wallet
-   concept enters the platform)?
-3. **App identity** — confirm `apps/backoffice` remains the ops bounded
-   context (no rename to `ops/`), with package-level growth inside it.
+1. **Permissions target — DECIDED**: capability → role template → staff
+   (multiple roles), plus time-boxed audited GRANTS as the only override
+   mechanism, built when the first real delegation need appears. Departments
+   are StaffAccount metadata, never a permission layer. ABAC lands as
+   action-site guards (RequireStepUp, amount thresholds, tenant pinning),
+   not a policy engine.
+2. **"Wallet 360" — DECIDED**: the entity is **Member Financial 360**. No
+   wallet concept — name or column — enters the platform; balances remain
+   derived ledger projections only (ADR-0002/0003).
+3. **App identity — DECIDED**: `apps/backoffice` remains the ops bounded
+   context permanently. No rename; growth happens by promoting
+   `views_<workspace>.py` files to packages inside the app (ADR-0013
+   pattern). The external identity stays the API surface: `/api/ops/*` and
+   the `"ops"` staff-JWT type.
 
-Everything else in this review is enforcement of patterns already on master
-and needs no sign-off — it needs consistency.
+These rulings, together with §7's checklist, govern all Operations Platform
+implementation from this point.
