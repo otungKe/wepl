@@ -329,3 +329,74 @@ class OpsMetricsAndAuditTests(TestCase):
 
         support = make_staff("sup2@imbank.co.ke", "support")
         self.assertEqual(op_client(support).get("/api/ops/audit/").status_code, 403)
+
+
+class OpsUsersModuleTests(TestCase):
+    """Users ops module: registry, User 360 (composed read), status lever
+    through the domain service."""
+
+    def setUp(self):
+        from apps.communities.services import CommunityService
+        self.member = get_user_model().objects.create_user(
+            phone_number="254700000095", name="Akinyi O", is_phone_verified=True)
+        self.community = CommunityService.create_community(
+            self.member, {"name": "A360 Chama", "is_private": False})
+        self.manager = make_staff("umgr@imbank.co.ke", "operations")
+        self.viewer = make_staff("uview@imbank.co.ke", "auditor")
+
+    def test_registry_search(self):
+        res = op_client(self.viewer).get("/api/ops/users/", {"q": "Akinyi"})
+        self.assertEqual(res.status_code, 200)
+        row = res.data["results"][0]
+        self.assertEqual(row["phone_number"], "254700000095")
+        self.assertEqual(row["kyc_status"], "not_submitted")
+        self.assertTrue(row["is_active"])
+
+    def test_user_360_composed_blocks(self):
+        res = op_client(self.viewer).get(f"/api/ops/users/{self.member.pk}/")
+        self.assertEqual(res.status_code, 200)
+        self.assertEqual(res.data["identity"]["phone_number"], "254700000095")
+        self.assertEqual(res.data["verification"]["kyc_status"], "not_submitted")
+        self.assertEqual(res.data["communities"][0]["name"], "A360 Chama")
+        self.assertEqual(res.data["communities"][0]["role"], "admin")
+        self.assertEqual(res.data["financial"]["total_position"], "0")
+        self.assertEqual(res.data["financial"]["open_holds"], 0)
+        self.assertIn("sessions", res.data)
+
+    def test_staff_accounts_never_appear(self):
+        staff_user = get_user_model().objects.create_user(
+            phone_number="254700000096", is_staff=True)
+        res = op_client(self.viewer).get("/api/ops/users/", {"q": "254700000096"})
+        self.assertEqual(res.data["count"], 0)
+        self.assertEqual(op_client(self.viewer).get(
+            f"/api/ops/users/{staff_user.pk}/").status_code, 404)
+
+    def test_status_lever_routes_through_domain_service(self):
+        from apps.users.models import UserSession
+        UserSession.objects.create(user=self.member, device_label="test phone")
+        url = f"/api/ops/users/{self.member.pk}/status/"
+
+        # Viewer lacks users.manage.
+        self.assertEqual(op_client(self.viewer).post(
+            url, {"action": "deactivate", "reason": "x"}, format="json").status_code, 403)
+        # Reason required.
+        self.assertEqual(op_client(self.manager).post(
+            url, {"action": "deactivate"}, format="json").status_code, 400)
+
+        res = op_client(self.manager).post(
+            url, {"action": "deactivate", "reason": "fraud investigation"}, format="json")
+        self.assertEqual(res.status_code, 200)
+        self.member.refresh_from_db()
+        self.assertFalse(self.member.is_active)
+        # Sessions revoked by the domain service; both audit trails written.
+        self.assertFalse(UserSession.objects.filter(
+            user=self.member, revoked_at__isnull=True).exists())
+        from apps.audit.models import AuditEvent
+        self.assertTrue(AuditEvent.objects.filter(action="user.deactivated").exists())
+        self.assertTrue(AuditEvent.objects.filter(action="ops.user.deactivate").exists())
+
+        # Double-deactivate → 409; reactivate restores.
+        self.assertEqual(op_client(self.manager).post(
+            url, {"action": "deactivate", "reason": "again"}, format="json").status_code, 409)
+        res = op_client(self.manager).post(url, {"action": "reactivate"}, format="json")
+        self.assertTrue(res.data["is_active"])

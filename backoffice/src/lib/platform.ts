@@ -60,3 +60,46 @@ export const platform = {
   audit: (params: Record<string, string | number> = {}) =>
     api.get<{ results: AuditRow[]; count: number; has_more: boolean }>('/ops/audit/', { params }),
 }
+
+/* ── Users ops module ────────────────────────────────────────────────── */
+
+export interface UserRow {
+  id: number
+  phone_number: string
+  name: string
+  is_active: boolean
+  phone_verified: boolean
+  kyc_status: string
+  tier: 0 | 1
+  joined: string
+  last_seen: string | null
+}
+
+export interface User360 {
+  identity: UserRow & { last_seen: string | null }
+  verification: {
+    kyc_status: string
+    email_verified?: boolean
+    resubmission_requested?: string[]
+    case: { reference: string; state: string } | null
+    open_requests: number
+  }
+  communities: { id: number; name: string; role: string; community_status: string; joined: string }[]
+  financial: {
+    positions: { contribution_id: number; name: string; balance: string }[]
+    total_position: string
+    open_advances: number
+    open_holds: number
+    active_overrides: number
+  }
+  sessions: { active: number; latest_device: string | null; latest_seen: string | null }
+  audit_trail: { action: string; actor: string; metadata: Record<string, unknown>; at: string }[]
+}
+
+export const opsUsers = {
+  list: (params: { q?: string; state?: string; offset?: number } = {}) =>
+    api.get<{ results: UserRow[]; count: number; has_more: boolean }>('/ops/users/', { params }),
+  user360: (id: number | string) => api.get<User360>(`/ops/users/${id}/`),
+  status: (id: number | string, action: 'deactivate' | 'reactivate', reason: string) =>
+    api.post<{ id: number; is_active: boolean }>(`/ops/users/${id}/status/`, { action, reason }),
+}
