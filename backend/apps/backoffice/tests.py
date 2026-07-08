@@ -400,3 +400,65 @@ class OpsUsersModuleTests(TestCase):
             url, {"action": "deactivate", "reason": "again"}, format="json").status_code, 409)
         res = op_client(self.manager).post(url, {"action": "reactivate"}, format="json")
         self.assertTrue(res.data["is_active"])
+
+
+class OpsSupportModuleTests(TestCase):
+    """Support desk: queue, raise through the domain service, resolve."""
+
+    def setUp(self):
+        self.member = get_user_model().objects.create_user(
+            phone_number="254700000098", name="Baraka M")
+        self.agent = make_staff("agent@imbank.co.ke", "support")
+        self.auditor = make_staff("aud-sup@imbank.co.ke", "auditor")  # view-only
+
+    def _raise(self, client, **over):
+        body = {"phone_number": "254700000098", "kind": "address_proof",
+                "title": "Proof of address needed",
+                "detail": "Please upload a recent utility bill.", **over}
+        return client.post("/api/ops/support/requests/", body, format="json")
+
+    def test_raise_notifies_and_audits(self):
+        from apps.core.models import OutboxEvent
+        res = self._raise(op_client(self.agent))
+        self.assertEqual(res.status_code, 201)
+        self.assertEqual(res.data["status"], "open")
+        # Durable notification event + both audit trails.
+        self.assertTrue(OutboxEvent.objects.filter(
+            event_type="verification_request",
+            payload__user_id=self.member.pk).exists())
+        from apps.audit.models import AuditEvent
+        self.assertTrue(AuditEvent.objects.filter(
+            action="user.verification_request_raised").exists())
+        self.assertTrue(AuditEvent.objects.filter(
+            action="ops.support.request_raised").exists())
+
+    def test_raise_requires_act_capability_and_valid_member(self):
+        self.assertEqual(self._raise(op_client(self.auditor)).status_code, 403)
+        self.assertEqual(self._raise(op_client(self.agent),
+                                     phone_number="254700099999").status_code, 404)
+        self.assertEqual(self._raise(op_client(self.agent), kind="bogus").status_code, 400)
+
+    def test_queue_and_resolve_flow(self):
+        from apps.core.models import OutboxEvent
+        rid = self._raise(op_client(self.agent)).data["id"]
+
+        q = op_client(self.auditor).get("/api/ops/support/requests/", {"status": "open"})
+        self.assertEqual(q.data["count"], 1)
+        self.assertEqual(q.data["results"][0]["phone_number"], "254700000098")
+
+        # View-only cannot resolve.
+        self.assertEqual(op_client(self.auditor).post(
+            f"/api/ops/support/requests/{rid}/resolve/", {}, format="json").status_code, 403)
+
+        res = op_client(self.agent).post(
+            f"/api/ops/support/requests/{rid}/resolve/",
+            {"note": "Bill received — thanks."}, format="json")
+        self.assertEqual(res.status_code, 200)
+        self.assertEqual(res.data["status"], "resolved")
+        self.assertTrue(OutboxEvent.objects.filter(
+            event_type="verification_request_resolved").exists())
+        # Double resolve → 409; resolved leaves the open queue.
+        self.assertEqual(op_client(self.agent).post(
+            f"/api/ops/support/requests/{rid}/resolve/", {}, format="json").status_code, 409)
+        q = op_client(self.agent).get("/api/ops/support/requests/", {"status": "open"})
+        self.assertEqual(q.data["count"], 0)
