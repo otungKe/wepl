@@ -138,3 +138,49 @@ export const support = {
   resolve: (id: number | string, note: string) =>
     api.post<SupportDetail>(`/ops/support/requests/${id}/resolve/`, { note }),
 }
+
+/* ── Transactions (money movements) ──────────────────────────────────── */
+
+export interface TxRow {
+  id: number
+  op_type: string
+  state: string
+  amount: string
+  initiated_by_id: number | null
+  initiated_by: string
+  recipient_phone: string
+  fund: string | null
+  community_id: number | null
+  mpesa_receipt: string | null
+  created_at: string
+}
+
+export interface Tx360 {
+  movement: {
+    id: number; op_type: string; op_type_label: string; state: string
+    amount: string; idempotency_key: string; note: string
+    failure_reason: string; created_at: string; updated_at: string
+  }
+  parties: {
+    initiated_by_id: number | null; initiated_by: string
+    initiated_by_phone: string | null; recipient_phone: string
+  }
+  context: {
+    fund: string | null; community_id: number | null
+    community_name: string | null; trigger_type: string; trigger_id: number | null
+  }
+  rail: { mpesa_checkout_id: string | null; mpesa_conversation_id: string | null; mpesa_receipt: string | null }
+  controls: { decision: string; reason: string; rule: string | null; at: string }[]
+  journal?: {
+    id: number; narration: string; posted_at: string | null; reverses_id: number | null
+    lines: { account_code: string; account_name: string; direction: string; amount: string }[]
+  }[]
+}
+
+export const transactions = {
+  list: (params: { state?: string; op_type?: string; q?: string; offset?: number } = {}) =>
+    api.get<{ results: TxRow[]; count: number; has_more: boolean
+              by_state: Record<string, number>
+              op_types: { value: string; label: string }[] }>('/ops/transactions/', { params }),
+  tx360: (id: number | string) => api.get<Tx360>(`/ops/transactions/${id}/`),
+}
