@@ -57,6 +57,55 @@ class UserService:
         return user
 
     @staticmethod
+    def raise_verification_request(user, *, kind, title, detail, actor_label=""):
+        """Raise a compliance follow-up against a user (the domain's single
+        door — used by Django admin and the ops console alike). Notifies via
+        the durable event bus."""
+        from apps.audit.services import AuditService
+        from .models import VerificationRequest
+
+        if kind not in VerificationRequest.Kind.values:
+            raise ValidationError(f"Unknown request kind: {kind!r}")
+        if not title.strip() or not detail.strip():
+            raise ValidationError("Both a title and details are required.")
+        vreq = VerificationRequest.objects.create(
+            user=user, kind=kind, title=title.strip(), detail=detail.strip(),
+        )
+        AuditService.log(
+            "user.verification_request_raised", target_type="user",
+            target_id=str(user.pk),
+            metadata={"request_id": vreq.pk, "kind": kind, "title": vreq.title,
+                      "by": actor_label},
+        )
+        from .admin import _notify_verification_request
+        _notify_verification_request(vreq)
+        return vreq
+
+    @staticmethod
+    def resolve_verification_request(vreq, *, note="", actor_label=""):
+        """Resolve an open/submitted request with optional feedback shown to
+        the user. Idempotence guard: resolving twice is refused."""
+        from django.utils import timezone as _tz
+        from apps.audit.services import AuditService
+        from .models import VerificationRequest
+
+        if vreq.status == VerificationRequest.Status.RESOLVED:
+            raise ValidationError("This request is already resolved.")
+        vreq.status = VerificationRequest.Status.RESOLVED
+        vreq.review_note = note.strip()
+        vreq.resolved_at = _tz.now()
+        vreq.save(update_fields=["status", "review_note", "resolved_at"])
+        AuditService.log(
+            "user.verification_request_resolved", target_type="user",
+            target_id=str(vreq.user_id),
+            metadata={"request_id": vreq.pk, "note": vreq.review_note,
+                      "by": actor_label},
+        )
+        from .admin import _notify_verification_request
+        _notify_verification_request(vreq, resolved=True)
+        return vreq
+
+    @staticmethod
     def get_or_create_user(phone_number: str) -> User:
         """Retrieve existing user or create a new one."""
         user, _ = User.objects.get_or_create(phone_number=phone_number)

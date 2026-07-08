@@ -103,3 +103,38 @@ export const opsUsers = {
   status: (id: number | string, action: 'deactivate' | 'reactivate', reason: string) =>
     api.post<{ id: number; is_active: boolean }>(`/ops/users/${id}/status/`, { action, reason }),
 }
+
+/* ── Support desk (verification requests) ────────────────────────────── */
+
+export interface SupportRow {
+  id: number
+  user_id: number
+  user_name: string
+  phone_number: string
+  kind: string
+  title: string
+  status: string
+  has_document: boolean
+  created_at: string
+  responded_at: string | null
+}
+
+export interface SupportDetail extends SupportRow {
+  detail: string
+  response_note: string
+  document_url: string | null
+  review_note: string
+  resolved_at: string | null
+  kinds: { value: string; label: string }[]
+}
+
+export const support = {
+  list: (params: { status?: string; q?: string; offset?: number } = {}) =>
+    api.get<{ results: SupportRow[]; count: number; has_more: boolean; kinds: { value: string; label: string }[] }>(
+      '/ops/support/requests/', { params }),
+  raise: (body: { phone_number: string; kind: string; title: string; detail: string }) =>
+    api.post<SupportDetail>('/ops/support/requests/', body),
+  detail: (id: number | string) => api.get<SupportDetail>(`/ops/support/requests/${id}/`),
+  resolve: (id: number | string, note: string) =>
+    api.post<SupportDetail>(`/ops/support/requests/${id}/resolve/`, { note }),
+}

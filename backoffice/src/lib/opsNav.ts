@@ -43,7 +43,7 @@ export const NAV: NavGroup[] = [
     items: [
       { label: 'Verification Centre', slug: 'verification', cap: 'verification.view', icon: ShieldCheck },
       { label: 'Risk & Compliance', slug: 'risk', cap: 'risk.view', icon: Siren, phase: 'P4' },
-      { label: 'Support', slug: 'support', cap: 'support.view', icon: LifeBuoy, phase: 'P1' },
+      { label: 'Support', slug: 'support', cap: 'support.view', icon: LifeBuoy },
     ],
   },
   {

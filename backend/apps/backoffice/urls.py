@@ -8,6 +8,9 @@ from .views_communities import (
     OpsCommunitiesListView, OpsCommunityDetailView, OpsCommunityLifecycleView,
 )
 from .views_platform import OpsAuditLogView, OpsMetricsView
+from .views_support import (
+    SupportRequestDetailView, SupportRequestResolveView, SupportRequestsView,
+)
 from .views_users import OpsUser360View, OpsUsersListView, OpsUserStatusView
 from .views_verification import (
     EddCaseView, EddDecisionView, EddQueueView,
@@ -28,6 +31,9 @@ urlpatterns = [
     path("users/", OpsUsersListView.as_view()),
     path("users/<int:user_id>/", OpsUser360View.as_view()),
     path("users/<int:user_id>/status/", OpsUserStatusView.as_view()),
+    path("support/requests/", SupportRequestsView.as_view()),
+    path("support/requests/<int:request_id>/", SupportRequestDetailView.as_view()),
+    path("support/requests/<int:request_id>/resolve/", SupportRequestResolveView.as_view()),
     path("ping/", OpsPingView.as_view()),
     path("search/", OpsSearchView.as_view()),
     # Verification Centre (P1)
