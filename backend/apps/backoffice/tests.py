@@ -462,3 +462,71 @@ class OpsSupportModuleTests(TestCase):
             f"/api/ops/support/requests/{rid}/resolve/", {}, format="json").status_code, 409)
         q = op_client(self.agent).get("/api/ops/support/requests/", {"status": "open"})
         self.assertEqual(q.data["count"], 0)
+
+
+class OpsTransactionsModuleTests(TestCase):
+    """Transactions registry + Transaction 360, incl. the ledger.view-gated
+    journal block backed by a real posted journal."""
+
+    def setUp(self):
+        from decimal import Decimal
+        from apps.ledger.models import FinancialTransaction
+        from apps.ledger.money import Money
+        from apps.ledger.posting import post_journal
+        from apps.ledger.posting_map import contribution_lines
+
+        self.member = get_user_model().objects.create_user(
+            phone_number="254700000099", name="Chebet K")
+        self.ft = FinancialTransaction.objects.create(
+            op_type="CONTRIBUTION", amount=Decimal("1500.00"),
+            idempotency_key="ops-tx-test-1", initiated_by=self.member,
+            mpesa_receipt="QA12ZZ99XY",
+        )
+        self.ft.transition_to("PROCESSING")
+        self.ft.transition_to("SUCCESS")
+        post_journal(
+            idempotency_key="ops-tx-test-1-journal", op_type="CONTRIBUTION",
+            lines=contribution_lines(member=self.member, fund_type="contribution",
+                                     fund_id=999, gross=Money("1500.00")),
+            narration="Test contribution", financial_transaction=self.ft,
+        )
+        self.finance = make_staff("fin@imbank.co.ke", "finance")      # +ledger.view
+        self.support_agent = make_staff("sup-tx@imbank.co.ke", "support")  # tx.view only
+
+    def test_registry_filters_and_state_mix(self):
+        res = op_client(self.support_agent).get(
+            "/api/ops/transactions/", {"q": "QA12ZZ99XY"})
+        self.assertEqual(res.status_code, 200)
+        self.assertEqual(res.data["count"], 1)
+        row = res.data["results"][0]
+        self.assertEqual(row["state"], "SUCCESS")
+        self.assertEqual(row["amount"], "1500.00")
+        self.assertEqual(row["initiated_by"], "Chebet K")
+        self.assertEqual(res.data["by_state"].get("SUCCESS"), 1)
+
+        none = op_client(self.support_agent).get(
+            "/api/ops/transactions/", {"state": "FAILED"})
+        self.assertEqual(none.data["count"], 0)
+
+    def test_transaction_360_gates_journal_by_capability(self):
+        url = f"/api/ops/transactions/{self.ft.pk}/"
+        # transactions.view only → movement yes, journal absent.
+        res = op_client(self.support_agent).get(url)
+        self.assertEqual(res.status_code, 200)
+        self.assertEqual(res.data["movement"]["state"], "SUCCESS")
+        self.assertEqual(res.data["rail"]["mpesa_receipt"], "QA12ZZ99XY")
+        self.assertNotIn("journal", res.data)
+
+        # finance holds ledger.view → balanced journal lines included.
+        res = op_client(self.finance).get(url)
+        self.assertIn("journal", res.data)
+        lines = res.data["journal"][0]["lines"]
+        self.assertGreaterEqual(len(lines), 2)
+        from decimal import Decimal
+        debits = sum(Decimal(l["amount"]) for l in lines if l["direction"] == "DEBIT")
+        credits = sum(Decimal(l["amount"]) for l in lines if l["direction"] == "CREDIT")
+        self.assertEqual(debits, credits)   # the 360 shows balanced truth
+
+    def test_requires_transactions_view(self):
+        dev = make_staff("dev-tx@imbank.co.ke", "developer")   # no transactions.view
+        self.assertEqual(op_client(dev).get("/api/ops/transactions/").status_code, 403)
