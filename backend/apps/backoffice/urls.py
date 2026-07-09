@@ -8,6 +8,9 @@ from .views_communities import (
     OpsCommunitiesListView, OpsCommunityDetailView, OpsCommunityLifecycleView,
 )
 from .views_approvals import ApprovalDecideView, ApprovalDetailView, ApprovalsListView
+from .views_exports import (
+    AuditExportView, MemberStatementExportView, TransactionsExportView,
+)
 from .views_finops import FinopsActionView, FinopsQueuesView, FinopsReverseRequestView
 from .views_health import (
     HealthOverviewView, NoticeDismissView, NoticesView,
@@ -47,6 +50,9 @@ urlpatterns = [
     path("support/requests/<int:request_id>/resolve/", SupportRequestResolveView.as_view()),
     path("transactions/", TransactionsListView.as_view()),
     path("transactions/<int:tx_id>/", Transaction360View.as_view()),
+    path("exports/transactions/", TransactionsExportView.as_view()),
+    path("exports/audit/", AuditExportView.as_view()),
+    path("users/<int:user_id>/statement/", MemberStatementExportView.as_view()),
     path("finops/", FinopsQueuesView.as_view()),
     path("finops/transactions/<int:ft_id>/action/", FinopsActionView.as_view()),
     path("finops/transactions/<int:ft_id>/reverse-request/", FinopsReverseRequestView.as_view()),

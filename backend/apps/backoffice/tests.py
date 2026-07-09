@@ -947,6 +947,69 @@ class MakerCheckerTests(TestCase):
         self.assertEqual(res.status_code, 409)
 
 
+class ExportsTests(TestCase):
+    """OP-4: streamed-CSV exports — capability-gated, audited, correct content."""
+
+    def setUp(self):
+        self.member = get_user_model().objects.create_user(
+            phone_number="254700000401", name="Njeri K")
+        self.finance = make_staff("exp-fin@imbank.co.ke", "finance")     # reporting/ledger.export
+        self.auditor = make_staff("exp-aud@imbank.co.ke", "auditor")     # audit/reporting/ledger.export
+        self.support = make_staff("exp-sup@imbank.co.ke", "support")     # none of the export caps
+
+    @staticmethod
+    def _body(res):
+        return b"".join(res.streaming_content).decode()
+
+    def test_transactions_export_streams_csv_and_audits(self):
+        from decimal import Decimal
+        from apps.ledger.models import FinancialTransaction
+        FinancialTransaction.objects.create(
+            op_type="CONTRIBUTION", amount=Decimal("100.00"), idempotency_key="exp-tx-1",
+            initiated_by=self.member, mpesa_receipt="RCPTEXP1")
+        res = op_client(self.finance).get("/api/ops/exports/transactions/")
+        self.assertEqual(res.status_code, 200)
+        self.assertIn("text/csv", res["Content-Type"])
+        body = self._body(res)
+        self.assertIn("idempotency_key", body)          # header
+        self.assertIn("exp-tx-1", body)                 # the row
+        self.assertIn("RCPTEXP1", body)
+        from apps.audit.models import AuditEvent
+        self.assertTrue(AuditEvent.objects.filter(action="ops.export.transactions").exists())
+        # Support lacks reporting.export.
+        self.assertEqual(op_client(self.support).get(
+            "/api/ops/exports/transactions/").status_code, 403)
+
+    def test_audit_export_gated_and_filtered(self):
+        from apps.audit.services import AuditService
+        AuditService.log("ops.test.export", actor=None, target_type="thing", target_id="1")
+        res = op_client(self.auditor).get("/api/ops/exports/audit/", {"action": "ops.test"})
+        self.assertEqual(res.status_code, 200)
+        self.assertIn("ops.test.export", self._body(res))
+        # Finance holds no audit.export.
+        self.assertEqual(op_client(self.finance).get("/api/ops/exports/audit/").status_code, 403)
+
+    def test_member_statement_export(self):
+        from apps.ledger.money import Money
+        from apps.ledger.posting import post_journal
+        from apps.ledger.posting_map import contribution_lines
+        post_journal(
+            idempotency_key="exp-stmt-j1", op_type="CONTRIBUTION",
+            lines=contribution_lines(member=self.member, fund_type="contribution",
+                                     fund_id=111, gross=Money("100.00")),
+            narration="Statement contribution")
+        res = op_client(self.finance).get(f"/api/ops/users/{self.member.pk}/statement/")
+        self.assertEqual(res.status_code, 200)
+        body = self._body(res)
+        self.assertIn("account_code", body)             # header
+        self.assertIn("Statement contribution", body)   # the member's line narration
+        from apps.audit.models import AuditEvent
+        self.assertTrue(AuditEvent.objects.filter(action="ops.export.member_statement").exists())
+        # Support lacks ledger.export.
+        self.assertEqual(op_client(self.support).get(
+            f"/api/ops/users/{self.member.pk}/statement/").status_code, 403)
+
+
 class HealthAndAlertingTests(TestCase):
     """OP-2: outbox browser + requeue, worker heartbeats, ops_alerts → StaffNotice
     bell (raise / dedupe / auto-resolve / dismiss)."""

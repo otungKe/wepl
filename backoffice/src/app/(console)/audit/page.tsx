@@ -1,10 +1,13 @@
 'use client'
 import { useEffect, useState } from 'react'
-import { Loader2, ScrollText, ChevronDown, ChevronRight } from 'lucide-react'
+import { Loader2, ScrollText, ChevronDown, ChevronRight, Download } from 'lucide-react'
 import { platform, type AuditRow } from '@/lib/platform'
+import { downloadCsv } from '@/lib/ops'
+import { useCan } from '@/store/ops'
 import { staffFirstName } from '@/lib/staff'
 
 export default function AuditLog() {
+  const can = useCan()
   const [action, setAction] = useState('')
   const [actor, setActor] = useState('')
   const [filters, setFilters] = useState<{ action: string; actor: string }>({ action: '', actor: '' })
@@ -36,6 +39,15 @@ export default function AuditLog() {
         <ScrollText className="h-5 w-5 text-blue-600 dark:text-blue-400" />
         <h1 className="text-xl font-semibold">Audit log</h1>
         <span className="text-xs text-slate-400">{count} event{count === 1 ? '' : 's'} · append-only</span>
+        {can('audit.export') && (
+          <button
+            onClick={() => downloadCsv('/ops/exports/audit/',
+              { ...(filters.action ? { action: filters.action } : {}), ...(filters.actor ? { actor: filters.actor } : {}) })}
+            title="Export the current filter as CSV"
+            className="ml-auto inline-flex items-center gap-1.5 rounded-lg border border-slate-200 px-2.5 py-1.5 text-sm font-medium text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800">
+            <Download className="h-4 w-4" /> Export
+          </button>
+        )}
       </div>
 
       <div className="mb-4 flex flex-wrap gap-2">

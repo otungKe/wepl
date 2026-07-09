@@ -161,6 +161,17 @@ on one action.
 
 ## OP-4 · Exports & statements *(before the first regulator/partner ask)*
 
+> **Status — increment 1 shipped.** Streamed-CSV exports
+> (`apps/backoffice/views_exports.py`, `StreamingHttpResponse` + queryset
+> iterator, 100k-row cap): transaction register (`reporting.export`, mirrors the
+> registry filters), audit trail (`audit.export`, mirrors the audit filters),
+> and per-member statement (`ledger.export`, `/ops/users/<id>/statement/?from=&to=`).
+> **Every export writes an `ops.export.*` audit row** (egress is auditable).
+> Surfaced as **Export** buttons on the Transactions and Audit registries and a
+> **Statement** button on Member Financial 360 (fetched as an authed blob).
+> Remaining: journal-by-account export, and async generation into the files app
+> with expiring signed URLs for very large ranges.
+
 **How**: streamed-CSV endpoints behind the already-declared `*.export`
 capabilities — member statement (their sub-ledger lines for a period),
 transaction register (filters mirroring the registry), journal export by
