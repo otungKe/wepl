@@ -1,4 +1,4 @@
-import { api } from './ops'
+import { api, stepUpConfig } from './ops'
 
 /* ── Home dashboard metrics (capability-filtered blocks) ─────────────── */
 
@@ -55,8 +55,9 @@ export const platform = {
     api.get<{ results: CommunityRow[]; count: number; has_more: boolean }>(
       '/ops/communities/', { params }),
   community: (id: number | string) => api.get<CommunityFile>(`/ops/communities/${id}/`),
-  communityLifecycle: (id: number | string, action: 'suspend' | 'unsuspend', reason: string) =>
-    api.post<{ id: number; status: string }>(`/ops/communities/${id}/lifecycle/`, { action, reason }),
+  communityLifecycle: (id: number | string, action: 'suspend' | 'unsuspend', reason: string, stepUpToken: string) =>
+    api.post<{ id: number; status: string }>(
+      `/ops/communities/${id}/lifecycle/`, { action, reason }, stepUpConfig(stepUpToken)),
   audit: (params: Record<string, string | number> = {}) =>
     api.get<{ results: AuditRow[]; count: number; has_more: boolean }>('/ops/audit/', { params }),
 }
@@ -100,8 +101,9 @@ export const opsUsers = {
   list: (params: { q?: string; state?: string; offset?: number } = {}) =>
     api.get<{ results: UserRow[]; count: number; has_more: boolean }>('/ops/users/', { params }),
   user360: (id: number | string) => api.get<User360>(`/ops/users/${id}/`),
-  status: (id: number | string, action: 'deactivate' | 'reactivate', reason: string) =>
-    api.post<{ id: number; is_active: boolean }>(`/ops/users/${id}/status/`, { action, reason }),
+  status: (id: number | string, action: 'deactivate' | 'reactivate', reason: string, stepUpToken: string) =>
+    api.post<{ id: number; is_active: boolean }>(
+      `/ops/users/${id}/status/`, { action, reason }, stepUpConfig(stepUpToken)),
 }
 
 /* ── Support desk (verification requests) ────────────────────────────── */

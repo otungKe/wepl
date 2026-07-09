@@ -74,6 +74,14 @@ class StaffAccount(AbstractBaseUser):
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
+    # Step-up (TOTP) — a fresh code grants a short elevated window for destructive
+    # levers. See stepup.py and the Production Operations Roadmap (OP-3). The
+    # secret sits in the same trust boundary as the password hash; encrypting it
+    # at rest is a noted hardening follow-up.
+    totp_secret = models.CharField(max_length=64, blank=True, default="")
+    totp_confirmed_at = models.DateTimeField(null=True, blank=True)
+    totp_recovery_codes = models.JSONField(default=list, blank=True)
+
     objects = StaffAccountManager()
 
     USERNAME_FIELD = "email"
@@ -109,3 +117,43 @@ class StaffAccount(AbstractBaseUser):
         self.password_changed_at = None
         self.save(update_fields=["password", "must_change_password", "password_changed_at"])
         return temp
+
+    # ── Step-up (TOTP) enrolment & verification ──────────────────────────────
+    @property
+    def totp_enrolled(self) -> bool:
+        return self.totp_confirmed_at is not None
+
+    def begin_totp_enrollment(self) -> str:
+        """Generate a fresh (unconfirmed) secret and return its provisioning URI.
+        Re-enrolling replaces any prior secret, but only takes effect on confirm."""
+        from . import stepup
+        self.totp_secret = stepup.generate_secret()
+        self.totp_confirmed_at = None
+        self.save(update_fields=["totp_secret", "totp_confirmed_at", "updated_at"])
+        return stepup.provisioning_uri(self.totp_secret, self.email)
+
+    def confirm_totp_enrollment(self, code: str) -> list[str] | None:
+        """Verify the first code against the pending secret. On success, mark
+        enrolled and return one-time recovery codes (shown once); else ``None``."""
+        from . import stepup
+        if not self.totp_secret or not stepup.verify_code(self.totp_secret, code):
+            return None
+        plain, hashed = stepup.generate_recovery_codes()
+        self.totp_recovery_codes = hashed
+        self.totp_confirmed_at = timezone.now()
+        self.save(update_fields=["totp_recovery_codes", "totp_confirmed_at", "updated_at"])
+        return plain
+
+    def verify_stepup(self, code: str) -> bool:
+        """Accept a current TOTP code, or consume a single-use recovery code."""
+        from . import stepup
+        if not self.totp_enrolled:
+            return False
+        if stepup.verify_code(self.totp_secret, code):
+            return True
+        remaining = stepup.consume_recovery_code(self.totp_recovery_codes, code)
+        if remaining is not None:
+            self.totp_recovery_codes = remaining
+            self.save(update_fields=["totp_recovery_codes", "updated_at"])
+            return True
+        return False

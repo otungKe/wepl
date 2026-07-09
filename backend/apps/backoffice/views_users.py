@@ -16,7 +16,7 @@ from rest_framework import status as http
 from rest_framework.response import Response
 
 from .audit import record_action
-from .permissions import RequireCapability
+from .permissions import RequireCapability, RequireStepUp
 from .views import OpsAPIView
 
 User = get_user_model()
@@ -175,8 +175,10 @@ class OpsUser360View(OpsAPIView):
 
 class OpsUserStatusView(OpsAPIView):
     """POST /api/ops/users/<id>/status/ {action: deactivate|reactivate, reason}
-    — routes through UserService (blocks login + revokes sessions + audits)."""
-    permission_classes = [RequireCapability("users.manage")]
+    — routes through UserService (blocks login + revokes sessions + audits).
+    Blocking a member's account touches their money access, so it requires a
+    fresh step-up (OP-3)."""
+    permission_classes = [RequireCapability("users.manage"), RequireStepUp]
 
     def post(self, request, user_id):
         from django.core.exceptions import ValidationError

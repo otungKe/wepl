@@ -31,6 +31,13 @@ def op_client(staff):
     return c
 
 
+def stepped_up(staff):
+    """Extra request kwargs carrying a valid step-up elevation token, as the
+    console attaches after an operator passes step-up (see stepup.py, OP-3)."""
+    from apps.backoffice.stepup import issue_stepup_token
+    return {"HTTP_X_OPS_STEPUP": issue_stepup_token(staff)}
+
+
 class CapabilityMapTests(TestCase):
     def test_superuser_holds_all_capabilities(self):
         from apps.backoffice.capabilities import CAPABILITIES
@@ -281,23 +288,27 @@ class OpsCommunitiesModuleTests(TestCase):
 
     def test_suspend_requires_reason_and_capability(self):
         url = f"/api/ops/communities/{self.community.id}/lifecycle/"
+        step = stepped_up(self.manager)
         # Analyst (view-only) cannot manage.
         res = op_client(self.viewer).post(url, {"action": "suspend", "reason": "x"}, format="json")
         self.assertEqual(res.status_code, 403)
-        # Reason required.
-        res = op_client(self.manager).post(url, {"action": "suspend"}, format="json")
+        # Manager has the capability but no step-up → still refused.
+        res = op_client(self.manager).post(url, {"action": "suspend", "reason": "x"}, format="json")
+        self.assertEqual(res.status_code, 403)
+        # Reason required (with step-up present so it reaches the view).
+        res = op_client(self.manager).post(url, {"action": "suspend"}, format="json", **step)
         self.assertEqual(res.status_code, 400)
         # Suspend → status flips; audit rows on both trails.
-        res = op_client(self.manager).post(url, {"action": "suspend", "reason": "fraud review"}, format="json")
+        res = op_client(self.manager).post(url, {"action": "suspend", "reason": "fraud review"}, format="json", **step)
         self.assertEqual(res.status_code, 200)
         self.assertEqual(res.data["status"], "suspended")
         from apps.audit.models import AuditEvent
         self.assertTrue(AuditEvent.objects.filter(action="ops.community.suspend").exists())
         self.assertTrue(AuditEvent.objects.filter(action="community.suspended").exists())
         # Double-suspend → 409; unsuspend restores.
-        res = op_client(self.manager).post(url, {"action": "suspend", "reason": "again"}, format="json")
+        res = op_client(self.manager).post(url, {"action": "suspend", "reason": "again"}, format="json", **step)
         self.assertEqual(res.status_code, 409)
-        res = op_client(self.manager).post(url, {"action": "unsuspend"}, format="json")
+        res = op_client(self.manager).post(url, {"action": "unsuspend"}, format="json", **step)
         self.assertEqual(res.data["status"], "active")
 
 
@@ -375,16 +386,20 @@ class OpsUsersModuleTests(TestCase):
         from apps.users.models import UserSession
         UserSession.objects.create(user=self.member, device_label="test phone")
         url = f"/api/ops/users/{self.member.pk}/status/"
+        step = stepped_up(self.manager)
 
         # Viewer lacks users.manage.
         self.assertEqual(op_client(self.viewer).post(
             url, {"action": "deactivate", "reason": "x"}, format="json").status_code, 403)
-        # Reason required.
+        # Manager has the capability but no step-up → still refused.
         self.assertEqual(op_client(self.manager).post(
-            url, {"action": "deactivate"}, format="json").status_code, 400)
+            url, {"action": "deactivate", "reason": "x"}, format="json").status_code, 403)
+        # Reason required (with step-up present).
+        self.assertEqual(op_client(self.manager).post(
+            url, {"action": "deactivate"}, format="json", **step).status_code, 400)
 
         res = op_client(self.manager).post(
-            url, {"action": "deactivate", "reason": "fraud investigation"}, format="json")
+            url, {"action": "deactivate", "reason": "fraud investigation"}, format="json", **step)
         self.assertEqual(res.status_code, 200)
         self.member.refresh_from_db()
         self.assertFalse(self.member.is_active)
@@ -397,8 +412,8 @@ class OpsUsersModuleTests(TestCase):
 
         # Double-deactivate → 409; reactivate restores.
         self.assertEqual(op_client(self.manager).post(
-            url, {"action": "deactivate", "reason": "again"}, format="json").status_code, 409)
-        res = op_client(self.manager).post(url, {"action": "reactivate"}, format="json")
+            url, {"action": "deactivate", "reason": "again"}, format="json", **step).status_code, 409)
+        res = op_client(self.manager).post(url, {"action": "reactivate"}, format="json", **step)
         self.assertTrue(res.data["is_active"])
 
 
@@ -530,3 +545,78 @@ class OpsTransactionsModuleTests(TestCase):
     def test_requires_transactions_view(self):
         dev = make_staff("dev-tx@imbank.co.ke", "developer")   # no transactions.view
         self.assertEqual(op_client(dev).get("/api/ops/transactions/").status_code, 403)
+
+
+class StepUpTOTPTests(TestCase):
+    """OP-3 step-up: TOTP enrolment, elevation, recovery codes, and the
+    RequireStepUp gate on destructive levers."""
+
+    def setUp(self):
+        self.staff = make_staff("stepup@imbank.co.ke", "operations")
+
+    def _current_code(self, secret):
+        import pyotp
+        return pyotp.TOTP(secret).now()
+
+    def test_enroll_confirm_and_step_up_flow(self):
+        c = op_client(self.staff)
+        # /me/ reflects not-yet-enrolled.
+        self.assertFalse(c.get("/api/ops/me/").data["totp_enrolled"])
+
+        setup = c.post("/api/ops/auth/totp/setup/", {}, format="json")
+        self.assertEqual(setup.status_code, 200)
+        secret = setup.data["secret"]
+        self.assertTrue(setup.data["provisioning_uri"].startswith("otpauth://totp/"))
+
+        # A wrong code cannot confirm enrolment.
+        self.assertEqual(c.post("/api/ops/auth/totp/confirm/",
+                                {"code": "000000"}, format="json").status_code, 400)
+
+        confirm = c.post("/api/ops/auth/totp/confirm/",
+                         {"code": self._current_code(secret)}, format="json")
+        self.assertEqual(confirm.status_code, 200)
+        self.assertEqual(len(confirm.data["recovery_codes"]), 10)
+        self.staff.refresh_from_db()
+        self.assertTrue(self.staff.totp_enrolled)
+        self.assertTrue(c.get("/api/ops/me/").data["totp_enrolled"])
+
+        # Step-up with a live code returns an elevation token.
+        step = c.post("/api/ops/auth/step-up/",
+                      {"code": self._current_code(secret)}, format="json")
+        self.assertEqual(step.status_code, 200)
+        self.assertTrue(step.data["token"])
+        self.assertEqual(step.data["expires_in"], 300)
+
+    def test_step_up_requires_enrolment_and_rejects_bad_codes(self):
+        c = op_client(self.staff)
+        # Not enrolled → 409 with a machine-readable code.
+        res = c.post("/api/ops/auth/step-up/", {"code": "123456"}, format="json")
+        self.assertEqual(res.status_code, 409)
+        self.assertEqual(res.data["code"], "not_enrolled")
+
+        self.staff.begin_totp_enrollment()
+        self.staff.confirm_totp_enrollment(self._current_code(self.staff.totp_secret))
+        # Enrolled, but a wrong code is refused.
+        self.assertEqual(c.post("/api/ops/auth/step-up/",
+                                {"code": "000000"}, format="json").status_code, 400)
+
+    def test_recovery_code_is_single_use(self):
+        self.staff.begin_totp_enrollment()
+        codes = self.staff.confirm_totp_enrollment(self._current_code(self.staff.totp_secret))
+        recovery = codes[0]
+        # First use works; the same code cannot be replayed.
+        self.assertTrue(self.staff.verify_stepup(recovery))
+        self.staff.refresh_from_db()
+        self.assertFalse(self.staff.verify_stepup(recovery))
+        self.assertEqual(len(self.staff.totp_recovery_codes), 9)
+
+    def test_gate_rejects_foreign_and_expired_tokens(self):
+        from apps.backoffice.stepup import issue_stepup_token
+        other = make_staff("other-stepup@imbank.co.ke", "operations")
+        member = get_user_model().objects.create_user(phone_number="254700000077")
+        url = f"/api/ops/users/{member.pk}/status/"
+        # A step-up token minted for a *different* operator must not elevate me.
+        foreign = {"HTTP_X_OPS_STEPUP": issue_stepup_token(other)}
+        res = op_client(self.staff).post(
+            url, {"action": "deactivate", "reason": "x"}, format="json", **foreign)
+        self.assertEqual(res.status_code, 403)

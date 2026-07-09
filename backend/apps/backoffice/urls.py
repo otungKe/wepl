@@ -8,6 +8,7 @@ from .views_communities import (
     OpsCommunitiesListView, OpsCommunityDetailView, OpsCommunityLifecycleView,
 )
 from .views_platform import OpsAuditLogView, OpsMetricsView
+from .views_stepup import StepUpView, TotpConfirmView, TotpSetupView
 from .views_support import (
     SupportRequestDetailView, SupportRequestResolveView, SupportRequestsView,
 )
@@ -23,6 +24,9 @@ from .views_verification import (
 urlpatterns = [
     path("auth/login/", StaffLoginView.as_view()),
     path("auth/change-password/", StaffChangePasswordView.as_view()),
+    path("auth/totp/setup/", TotpSetupView.as_view()),
+    path("auth/totp/confirm/", TotpConfirmView.as_view()),
+    path("auth/step-up/", StepUpView.as_view()),
     path("me/", OpsMeView.as_view()),
     path("metrics/", OpsMetricsView.as_view()),
     path("audit/", OpsAuditLogView.as_view()),

@@ -83,11 +83,22 @@ completes.
 **Why third**: until this exists, every destructive lever is single-handed.
 Acceptable for two founders; indefensible for an ops team.
 
-**How** (this phase needs one ruling from you — the step-up mechanism):
-1. **Step-up = TOTP** (recommendation): authenticator-app enrolment on
-   `StaffAccount` (secret + recovery codes), enforced at next login;
-   `RequireStepUp` (already stubbed in permissions.py) validates a fresh TOTP
-   within a 5-minute window for flagged endpoints. TOTP over SMS because ops
+> **Status — step-up (TOTP) shipped.** Part 1 below is implemented:
+> `StaffAccount` carries a TOTP secret + hashed single-use recovery codes;
+> `/api/ops/auth/totp/setup|confirm/` and `/api/ops/auth/step-up/` handle
+> enrolment and elevation; `RequireStepUp` now enforces a fresh, per-operator
+> `X-Ops-StepUp` elevation token (5-min) and gates the destructive levers that
+> exist today — member deactivate/reactivate and community suspend/unsuspend.
+> The console prompts for a code (walking first-time operators through
+> enrolment) via `useStepUp()`. Part 2 (maker-checker / Approvals) is the
+> remaining slice and lands with the first flagged *money* action (reversals,
+> OP-1).
+
+**How** (the step-up mechanism ruling — TOTP — is adopted):
+1. **Step-up = TOTP** *(done)*: authenticator-app enrolment on
+   `StaffAccount` (secret + recovery codes); `RequireStepUp` (formerly stubbed in
+   permissions.py) validates a fresh TOTP-minted elevation token within a
+   5-minute window for flagged endpoints. TOTP over SMS because ops
    staff phones are the attack surface SMS can't defend, and it adds no
    SMS-gateway dependency to the money path.
 2. **Approvals**: an `OpsApprovalRequest` row in backoffice — action name,
@@ -104,9 +115,12 @@ Acceptable for two founders; indefensible for an ops team.
 4. **Approvals inbox** workspace: pending items with full context links,
    approve/reject with step-up prompt.
 
-**Depends on**: your TOTP ruling. **Exit test**: a reversal attempted by one
-finance operator sits pending until a second approves with a fresh TOTP; the
-audit trail shows both identities on one action.
+**Depends on**: TOTP ruling (adopted); Part 2 depends on OP-1 for its first
+money action. **Exit test (Part 1, met)**: a destructive lever refuses without a
+fresh step-up token, and a token minted for one operator cannot elevate another.
+**Exit test (Part 2)**: a reversal attempted by one finance operator sits pending
+until a second approves with a fresh TOTP; the audit trail shows both identities
+on one action.
 
 ## OP-4 · Exports & statements *(before the first regulator/partner ask)*
 
