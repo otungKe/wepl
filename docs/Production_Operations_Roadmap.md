@@ -26,10 +26,10 @@ an outage.
 > reversal path (no hand-rolled journals), idempotently. The `/finops` console
 > workspace shows stuck-payout, failed, and (informational) stuck-pay-in queues
 > with per-movement levers gated behind `finops.retry` + step-up and dual-
-> audited. Remaining for OP-1: `reverse` (arbitrary reversal of a settled
-> payout — deferred to OP-3 maker-checker Part 2) and `retry_payout`
-> (re-submission with the same idempotency key). Pay-in requery already runs
-> automatically via `poll_mpesa_stk_status`.
+> audited. `reverse` (settled-payout reversal) now also ships, two-person via
+> OP-3 maker-checker. Remaining for OP-1: `retry_payout` (re-submission with
+> the same idempotency key). Pay-in requery already runs automatically via
+> `poll_mpesa_stk_status`.
 
 **How**:
 1. **Domain door first** (the review's rule — no ops button bypasses the
@@ -102,9 +102,18 @@ Acceptable for two founders; indefensible for an ops team.
 > `X-Ops-StepUp` elevation token (5-min) and gates the destructive levers that
 > exist today — member deactivate/reactivate and community suspend/unsuspend.
 > The console prompts for a code (walking first-time operators through
-> enrolment) via `useStepUp()`. Part 2 (maker-checker / Approvals) is the
-> remaining slice and lands with the first flagged *money* action (reversals,
-> OP-1).
+> enrolment) via `useStepUp()`.
+>
+> **Status — maker-checker (Part 2) shipped.** `OpsApprovalRequest` +
+> `apps/backoffice/approvals.py` (registry + `require_approval` / `decide`)
+> implement dual control: a flagged action records a pending request instead of
+> executing; a *second* operator with `approvals.decide` + step-up approves,
+> which runs the domain call attributed to both (self-approval structurally
+> refused, 24h expiry, single-execution lock). The first flagged action is the
+> money **reversal** (OP-1's deferred lever): `PaymentOpsService.reverse`
+> registered as `finops.reverse`, requested from Transaction 360 and decided in
+> the `/approvals` inbox. LimitRule changes, override issuance, and staff role
+> changes register the same way.
 
 **How** (the step-up mechanism ruling — TOTP — is adopted):
 1. **Step-up = TOTP** *(done)*: authenticator-app enrolment on

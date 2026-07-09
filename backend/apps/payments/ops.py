@@ -68,6 +68,31 @@ class PaymentOpsService:
         return cls._result("pending", ft, "Rail still reports the payout pending.")
 
     @classmethod
+    @transaction.atomic
+    def reverse(cls, ft: FT, *, reason: str, actor_label: str = "") -> dict:
+        """Reverse a *settled* movement: post the exact inverse journal and move
+        SUCCESS → REVERSED. Destructive and irreversible, so it is only reachable
+        through maker-checker (OP-3) — never a single operator. Idempotent: the
+        reversal journal keys off the original."""
+        reason = (reason or "").strip()
+        if not reason:
+            raise ValidationError("A reason is required to reverse a movement.")
+        if ft.state != FT.State.SUCCESS:
+            raise ValidationError("Only a settled (SUCCESS) movement can be reversed.")
+
+        from apps.ledger.posting import reverse_financial_transaction
+        entry = reverse_financial_transaction(ft, note=reason)
+        try:
+            ft.transition_to(FT.State.REVERSED, failure_reason=reason)
+        except TransitionError:
+            ft.refresh_from_db()
+            return cls._result("noop", ft, "Already reversed by a concurrent update.")
+        logger.warning("FinOps: FT %s REVERSED by %s — %s", ft.id, actor_label or "ops", reason)
+        return cls._result(
+            "reversed", ft,
+            f"Reversed via JE-{entry.id}." if entry else "Reversed (no journal to invert).")
+
+    @classmethod
     def mark_failed(cls, ft: FT, *, reason: str, actor_label: str = "") -> dict:
         """Terminally fail a stuck payout the rail confirms never completed. If a
         fresh query instead shows success, it is healed as success (never

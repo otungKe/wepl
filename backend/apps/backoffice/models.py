@@ -160,3 +160,55 @@ class StaffAccount(AbstractBaseUser):
             self.save(update_fields=["totp_recovery_codes", "updated_at"])
             return True
         return False
+
+
+class OpsApprovalRequest(models.Model):
+    """A pending dual-control (maker-checker) request — OP-3 Part 2.
+
+    A *flagged* ops action (e.g. a money reversal) creates one of these instead
+    of executing. A second operator (never the requester) approves, and only
+    then does the original domain-service call run — attributed to both. See
+    ``apps/backoffice/approvals.py`` for the registry and execution service.
+    """
+
+    class Status(models.TextChoices):
+        PENDING  = "PENDING",  "Pending"
+        APPROVED = "APPROVED", "Approved"      # approved + executed
+        REJECTED = "REJECTED", "Rejected"
+        EXPIRED  = "EXPIRED",  "Expired"
+        FAILED   = "FAILED",   "Execution failed"
+
+    action  = models.CharField(max_length=64)              # registry key, e.g. "finops.reverse"
+    params  = models.JSONField(default=dict)               # JSON primitives only
+    reason  = models.TextField()                           # why the maker requested it
+    summary = models.CharField(max_length=255, blank=True, default="")
+
+    target_type = models.CharField(max_length=40, blank=True, default="")
+    target_id   = models.CharField(max_length=64, blank=True, default="")
+
+    requested_by = models.ForeignKey(
+        "backoffice.StaffAccount", on_delete=models.PROTECT,
+        related_name="approval_requests_made")
+    requested_at = models.DateTimeField(auto_now_add=True)
+    expires_at   = models.DateTimeField()
+
+    status        = models.CharField(max_length=12, choices=Status.choices,
+                                     default=Status.PENDING)
+    decided_by    = models.ForeignKey(
+        "backoffice.StaffAccount", null=True, blank=True, on_delete=models.PROTECT,
+        related_name="approval_requests_decided")
+    decided_at    = models.DateTimeField(null=True, blank=True)
+    decision_note = models.TextField(blank=True, default="")
+    result        = models.JSONField(default=dict, blank=True)   # execution outcome
+
+    class Meta:
+        ordering = ["-requested_at"]
+        indexes = [models.Index(fields=["status", "requested_at"],
+                                name="ops_appr_status_idx")]
+
+    def __str__(self):
+        return f"ApprovalRequest #{self.pk} [{self.action}/{self.status}]"
+
+    @property
+    def is_expired(self) -> bool:
+        return self.status == self.Status.PENDING and timezone.now() >= self.expires_at

@@ -52,7 +52,7 @@ export const NAV: NavGroup[] = [
       { label: 'Ledger', slug: 'ledger', cap: 'ledger.view', icon: BookOpen, phase: 'P3' },
       { label: 'Reconciliation', slug: 'reconciliation', cap: 'reconciliation.view', icon: RefreshCw, phase: 'P3' },
       { label: 'Treasury', slug: 'treasury', cap: 'treasury.view', icon: Landmark, phase: 'P3' },
-      { label: 'Approvals', slug: 'approvals', cap: 'approvals.view', icon: CheckSquare, phase: 'P2' },
+      { label: 'Approvals', slug: 'approvals', cap: 'approvals.view', icon: CheckSquare },
     ],
   },
   {

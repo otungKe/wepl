@@ -212,4 +212,37 @@ export const finops = {
   action: (ftId: number | string, action: 'requery' | 'mark_failed', reason: string, stepUpToken: string) =>
     api.post<FinopsRow & FinopsActionResult>(
       `/ops/finops/transactions/${ftId}/action/`, { action, reason }, stepUpConfig(stepUpToken)),
+  reverseRequest: (ftId: number | string, reason: string, stepUpToken: string) =>
+    api.post<{ approval_id: number; status: string; detail: string }>(
+      `/ops/finops/transactions/${ftId}/reverse-request/`, { reason }, stepUpConfig(stepUpToken)),
+}
+
+/* ── Approvals (maker-checker inbox, OP-3 Part 2) ────────────────────────── */
+
+export interface ApprovalRow {
+  id: number
+  action: string
+  summary: string
+  reason: string
+  status: string
+  target_type: string
+  target_id: string
+  requested_by: string
+  requested_by_email: string
+  requested_at: string
+  expires_at: string
+  decided_by: string | null
+  decided_at: string | null
+  decision_note: string
+  result: Record<string, unknown>
+}
+
+export const approvals = {
+  list: (status = 'pending') =>
+    api.get<{ results: ApprovalRow[]; counts: { pending: number } }>(
+      '/ops/approvals/', { params: { status } }),
+  detail: (id: number | string) =>
+    api.get<ApprovalRow & { params: Record<string, unknown> }>(`/ops/approvals/${id}/`),
+  decide: (id: number | string, decision: 'approve' | 'reject', note: string, stepUpToken: string) =>
+    api.post<ApprovalRow>(`/ops/approvals/${id}/decide/`, { decision, note }, stepUpConfig(stepUpToken)),
 }

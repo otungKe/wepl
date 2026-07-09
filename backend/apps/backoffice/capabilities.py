@@ -31,6 +31,8 @@ CAPABILITIES: set[str] = {
     "verification.view", "verification.decide",
     # Financial operations
     "finops.view", "finops.retry", "finops.approve",
+    # Reversal is destructive → maker-checked; this capability is the *maker* side.
+    "finops.reverse",
     # Ledger (immutable; adjust = propose a maker-checked balanced entry)
     "ledger.view", "ledger.adjust", "ledger.export",
     # Transactions
@@ -74,7 +76,7 @@ ROLE_CAPABILITIES: dict[str, set[str]] = {
     },
     "finance": _BASE | {
         "ledger.view", "ledger.adjust", "ledger.export",
-        "finops.view", "finops.retry", "finops.approve",
+        "finops.view", "finops.retry", "finops.approve", "finops.reverse",
         "transactions.view", "reconciliation.view", "reconciliation.act",
         "treasury.view", "reporting.view", "reporting.export", "approvals.decide", "approvals.view",
     },
