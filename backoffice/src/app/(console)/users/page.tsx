@@ -36,7 +36,7 @@ export default function UsersRegistry() {
         <div className="ml-auto flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 dark:border-slate-700 dark:bg-slate-900">
           <Search className="h-4 w-4 text-slate-400" />
           <input value={q} onChange={(e) => setQ(e.target.value)}
-            placeholder="Phone, name or ID…"
+            placeholder="Phone, name, member no. or ID…"
             className="w-56 bg-transparent text-sm outline-none placeholder:text-slate-400" />
         </div>
       </div>
@@ -79,7 +79,9 @@ export default function UsersRegistry() {
                   <td className="px-4 py-2.5">
                     <Link href={`/users/${r.id}`} className="block">
                       <span className="font-medium text-slate-800 dark:text-slate-100">{r.name || '—'}</span>
-                      <span className="block font-mono text-xs text-slate-400">{r.phone_number}</span>
+                      <span className="block font-mono text-xs text-slate-400">
+                        {r.phone_number}{r.member_number ? ` · ${r.member_number}` : ''}
+                      </span>
                     </Link>
                   </td>
                   <td className="px-4 py-2.5"><KycChip status={r.kyc_status} /></td>

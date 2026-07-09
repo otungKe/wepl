@@ -137,6 +137,7 @@ class EmergencyAdvanceService:
             amount=advance.amount,
             transaction_type='ADVANCE',
             note=f"Emergency advance #{advance.id}",
+            financial_transaction=ft,
         )
 
         advance.transition_to('DISBURSED')
@@ -263,6 +264,7 @@ class EmergencyAdvanceService:
             amount=amount,
             transaction_type='REPAYMENT',
             note=f"Advance repayment — advance #{advance_id}",
+            financial_transaction=ft,
         )
 
         return advance

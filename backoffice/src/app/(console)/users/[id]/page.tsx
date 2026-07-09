@@ -60,6 +60,7 @@ export default function User360Page() {
       </div>
       <div className="mb-5 flex flex-wrap gap-x-5 gap-y-1 text-xs text-slate-400">
         <span className="font-mono">{i.phone_number}</span>
+        {i.member_number && <span className="font-mono text-slate-500 dark:text-slate-300">{i.member_number}</span>}
         <span>Joined {new Date(i.joined).toLocaleDateString(undefined, { dateStyle: 'medium' })}</span>
         {i.last_seen && <span>Last seen {new Date(i.last_seen).toLocaleString()}</span>}
       </div>

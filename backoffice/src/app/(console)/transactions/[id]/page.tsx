@@ -59,7 +59,7 @@ export default function Transaction360Page() {
         <span className="font-mono text-lg tabular-nums text-slate-700 dark:text-slate-200">KES {m.amount}</span>
       </div>
       <div className="mb-5 flex flex-wrap gap-x-5 gap-y-1 text-xs text-slate-400">
-        <span className="font-mono">#{m.id}</span>
+        <span className="font-mono text-slate-600 dark:text-slate-300">{m.reference}</span>
         <span>Created {new Date(m.created_at).toLocaleString()}</span>
         <span className="font-mono">key {m.idempotency_key}</span>
       </div>

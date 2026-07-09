@@ -216,6 +216,11 @@ class ContributionTransaction(models.Model):
     transaction_type = models.CharField(max_length=20, choices=TRANSACTION_TYPES)
     note             = models.CharField(max_length=255, blank=True, null=True)
     mpesa_receipt    = models.CharField(max_length=50, null=True, blank=True)
+    # Link to the ledger movement (book of record) so member and ops quote the
+    # same reference (WEPL-TXN-######). Nullable for legacy rows / mirror-only writes.
+    financial_transaction = models.ForeignKey(
+        'ledger.FinancialTransaction', null=True, blank=True,
+        on_delete=models.SET_NULL, related_name='contribution_transactions')
     created_at       = models.DateTimeField(auto_now_add=True)
 
     class Meta:

@@ -1,8 +1,19 @@
+import secrets
+
 from django.conf import settings
 from django.contrib.auth.models import AbstractUser, BaseUserManager
 from django.core.exceptions import ValidationError
 from django.db import models
 from django.contrib.auth.hashers import make_password, check_password
+
+# Unambiguous base32 (no 0/1/I/L/O/U) — member numbers get read aloud on support
+# calls, so avoid characters people confuse.
+_MEMBER_NO_ALPHABET = "23456789ABCDEFGHJKMNPQRSTVWXYZ"
+
+
+def generate_member_number() -> str:
+    """An opaque, non-PII member handle, e.g. ``WM-7F9K2``."""
+    return "WM-" + "".join(secrets.choice(_MEMBER_NO_ALPHABET) for _ in range(5))
 
 
 # ─────────────────────────────────────────────────────────────
@@ -42,10 +53,30 @@ class User(AbstractUser):
     profile_photo = models.ImageField(upload_to='profile/', blank=True, null=True)
     bio           = models.TextField(blank=True, default="")
 
+    # Stable, non-PII member handle (e.g. WM-7F9K2). Shareable in support without
+    # saying the phone aloud, survives a phone-number change, searchable in ops.
+    # Phone number remains the authentication identifier.
+    member_number = models.CharField(
+        max_length=16, unique=True, null=True, blank=True, db_index=True)
+
     USERNAME_FIELD  = 'phone_number'
     REQUIRED_FIELDS = []
 
     objects = UserManager()
+
+    def save(self, *args, **kwargs):
+        if not self.member_number:
+            self.member_number = self._unique_member_number()
+        super().save(*args, **kwargs)
+
+    @classmethod
+    def _unique_member_number(cls) -> str:
+        for _ in range(12):
+            candidate = generate_member_number()
+            if not cls.objects.filter(member_number=candidate).exists():
+                return candidate
+        # Astronomically unlikely — widen to remove any doubt.
+        return "WM-" + "".join(secrets.choice(_MEMBER_NO_ALPHABET) for _ in range(9))
 
     def set_pin(self, raw_pin: str):
         if not raw_pin.isdigit() or len(raw_pin) != 6:

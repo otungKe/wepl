@@ -300,3 +300,19 @@ What maps, and where it lives:
 
 The four "gap (small)" / stop-payment items are tracked here to fold into their
 listed phases; none reorder the go-live gate.
+
+### Identifiers (shipped)
+
+Two identity/reference improvements landed off this checklist:
+
+- **Member Number** — every user carries a stable, opaque, non-PII handle
+  (`WM-7F9K2`, unambiguous base32) generated on creation and backfilled for
+  existing users. Shareable in support without saying the phone aloud, **stable
+  across a phone-number change**, and searchable in the ops registry and ⌘K.
+  Phone number remains the authentication identifier. (CSO "Customer Selection"
+  analogue.)
+- **Unified transaction reference** — `FinancialTransaction.reference`
+  (`WEPL-TXN-######`, the book of record) is the one handle both the member (via
+  `ContributionTransaction.financial_transaction`, backfilled by receipt) and
+  ops see. The registry and ⌘K resolve it (bare id or `WEPL-TXN-…`), alongside
+  the M-Pesa receipt and phone; transactions are now a ⌘K result type.

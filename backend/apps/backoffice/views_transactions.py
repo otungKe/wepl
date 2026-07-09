@@ -12,9 +12,19 @@ the pipeline.
 """
 from __future__ import annotations
 
+import re
+
 from django.db.models import Count, Q
 from django.shortcuts import get_object_or_404
 from rest_framework.response import Response
+
+# Matches a bare id or a WEPL-TXN-000123 reference (any leading zeros) → the FT id.
+_REF_RE = re.compile(r"^\s*(?:WEPL-TXN-)?0*(\d+)\s*$", re.IGNORECASE)
+
+
+def _ref_to_pk(q: str):
+    m = _REF_RE.match(q or "")
+    return int(m.group(1)) if m else None
 
 from apps.ledger.models import FinancialTransaction
 
@@ -38,6 +48,7 @@ def _row(ft):
     fund_label, community = _fund_of(ft)
     return {
         "id": ft.pk,
+        "reference": ft.reference,
         "op_type": ft.op_type,
         "state": ft.state,
         "amount": str(ft.amount),
@@ -66,12 +77,13 @@ def filter_transactions(params):
         qs = qs.filter(op_type=params["op_type"])
     if params.get("q"):
         q = params["q"].strip()
+        pk = _ref_to_pk(q)   # bare id or WEPL-TXN-000123 → FT id
         qs = qs.filter(
             Q(initiated_by__phone_number__icontains=q)
             | Q(recipient_phone__icontains=q)
             | Q(idempotency_key__iexact=q)
             | Q(mpesa_receipt__iexact=q)
-            | (Q(pk=q) if q.isdigit() else Q()))
+            | (Q(pk=pk) if pk is not None else Q()))
     return qs.order_by("-created_at")
 
 
@@ -122,6 +134,7 @@ class Transaction360View(OpsAPIView):
         payload = {
             "movement": {
                 "id": ft.pk,
+                "reference": ft.reference,
                 "op_type": ft.op_type,
                 "op_type_label": ft.get_op_type_display(),
                 "state": ft.state,

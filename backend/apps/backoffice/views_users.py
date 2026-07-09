@@ -37,6 +37,7 @@ class OpsUsersListView(OpsAPIView):
         if p.get("q"):
             q = p["q"].strip()
             qs = qs.filter(Q(phone_number__icontains=q) | Q(name__icontains=q)
+                           | Q(member_number__icontains=q)
                            | (Q(pk=q) if q.isdigit() else Q()))
         qs = qs.order_by("-date_joined")
 
@@ -48,6 +49,7 @@ class OpsUsersListView(OpsAPIView):
         total = qs.count()
         rows = [{
             "id": u.pk,
+            "member_number": u.member_number,
             "phone_number": u.phone_number,
             "name": u.name,
             "is_active": u.is_active,
@@ -79,7 +81,8 @@ class OpsUser360View(OpsAPIView):
     @staticmethod
     def _identity(u):
         return {
-            "id": u.pk, "phone_number": u.phone_number, "name": u.name,
+            "id": u.pk, "member_number": u.member_number,
+            "phone_number": u.phone_number, "name": u.name,
             "is_active": u.is_active, "phone_verified": u.is_phone_verified,
             "tier": 1 if u.is_tier1 else 0,
             "joined": u.date_joined.isoformat(),

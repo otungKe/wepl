@@ -123,6 +123,7 @@ class StandingOrderService:
             amount=order.amount,
             transaction_type='WITHDRAWAL',
             note=f"Standing order payout to {recipient_phone}",
+            financial_transaction=ft,
         )
 
         # Advance schedule

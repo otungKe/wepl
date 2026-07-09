@@ -69,7 +69,7 @@ class ROSCAService:
         current_slot.save()
 
         # Legacy transaction record
-        ContributionTransaction.objects.create(
+        tx = ContributionTransaction.objects.create(
             contribution=contribution,
             user=current_slot.participant.user,
             amount=payout_amount,
@@ -89,6 +89,8 @@ class ROSCAService:
             context_id=current_slot.id,
             initial_state=FinancialTransaction.State.SUCCESS,
         )
+        tx.financial_transaction = ft
+        tx.save(update_fields=['financial_transaction'])
         # Double-entry posting (P0-05): payout draws the recipient's pool share.
         post_journal(
             idempotency_key=f"je-{idem_key}",

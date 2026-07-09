@@ -70,7 +70,7 @@ export function isNotEnrolled(err: unknown): boolean {
   return axios.isAxiosError(err) &&
     (err.response?.data as { code?: string } | undefined)?.code === 'not_enrolled'
 }
-export type OpsResultType = 'user' | 'community' | 'verification' | 'journal'
+export type OpsResultType = 'user' | 'transaction' | 'community' | 'verification' | 'journal'
 export interface OpsSearchResult { type: OpsResultType; id: number; label: string; sublabel: string; url: string }
 
 export const ops = {
