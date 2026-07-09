@@ -638,3 +638,133 @@ class StepUpTOTPTests(TestCase):
         res = op_client(self.staff).post(
             url, {"action": "deactivate", "reason": "x"}, format="json", **foreign)
         self.assertEqual(res.status_code, 403)
+
+
+class _StubProvider:
+    """A provider whose query_status returns a fixed state (test control)."""
+    name = "fake"
+
+    def __init__(self, state):
+        self._state = state
+
+    def query_status(self, *, provider_ref):
+        from apps.payments.providers import StatusResult
+        return StatusResult(state=self._state, raw={"provider_ref": provider_ref})
+
+
+class FinopsModuleTests(TestCase):
+    """OP-1 FinOps levers: requery / mark_failed heal a stuck payout through the
+    pipeline, keep the ledger balanced, and are capability + step-up gated."""
+
+    def setUp(self):
+        from apps.payments.providers import registry
+        self.addCleanup(registry.use_provider, None)
+        self.member = get_user_model().objects.create_user(
+            phone_number="254700000201", name="Wanjiru M")
+        self.finance = make_staff("finops@imbank.co.ke", "finance")   # +finops.retry/.view
+        self.viewer = make_staff("finops-view@imbank.co.ke", "auditor")
+
+    def _stuck_payout(self, key="op1-payout-1", conv="AG_CONV_1"):
+        """A DISBURSEMENT FT in PROCESSING with a reserved-funds journal posted."""
+        from decimal import Decimal
+        from apps.ledger.models import FinancialTransaction
+        from apps.ledger.money import Money
+        from apps.ledger.posting import post_journal
+        from apps.ledger.posting_map import disbursement_lines
+        ft = FinancialTransaction.objects.create(
+            op_type="DISBURSEMENT", amount=Decimal("2000.00"), idempotency_key=key,
+            initiated_by=self.member, recipient_phone="254700000201",
+            mpesa_conversation_id=conv,
+        )
+        ft.transition_to("PROCESSING")
+        post_journal(
+            idempotency_key=f"{key}-journal", op_type="DISBURSEMENT",
+            lines=disbursement_lines(member=self.member, fund_type="contribution",
+                                     fund_id=555, amount=Money("2000.00")),
+            narration="Test disbursement", financial_transaction=ft,
+        )
+        return ft
+
+    def _stepup(self):
+        return stepped_up(self.finance)
+
+    def test_requery_heals_success_through_pipeline(self):
+        from apps.payments.providers import registry
+        registry.use_provider(_StubProvider("success"))
+        ft = self._stuck_payout()
+        res = op_client(self.finance).post(
+            f"/api/ops/finops/transactions/{ft.pk}/action/",
+            {"action": "requery"}, format="json", **self._stepup())
+        self.assertEqual(res.status_code, 200)
+        self.assertEqual(res.data["result"]["outcome"], "healed_success")
+        ft.refresh_from_db()
+        self.assertEqual(ft.state, "SUCCESS")
+        from apps.audit.models import AuditEvent
+        self.assertTrue(AuditEvent.objects.filter(action="ops.finops.requery").exists())
+
+    def test_requery_failure_reverses_and_keeps_ledger_balanced(self):
+        from apps.payments.providers import registry
+        from apps.ledger.balances import trial_balance
+        registry.use_provider(_StubProvider("failed"))
+        ft = self._stuck_payout(key="op1-payout-2", conv="AG_CONV_2")
+        res = op_client(self.finance).post(
+            f"/api/ops/finops/transactions/{ft.pk}/action/",
+            {"action": "requery"}, format="json", **self._stepup())
+        self.assertEqual(res.status_code, 200)
+        self.assertEqual(res.data["result"]["outcome"], "healed_failed")
+        ft.refresh_from_db()
+        self.assertEqual(ft.state, "FAILED")
+        # Reserved funds restored: the reversal keeps the trial balance at zero.
+        self.assertTrue(trial_balance()["balanced"])
+
+    def test_requery_pending_is_a_noop(self):
+        from apps.payments.providers import registry
+        registry.use_provider(_StubProvider("pending"))
+        ft = self._stuck_payout(key="op1-payout-3", conv="AG_CONV_3")
+        res = op_client(self.finance).post(
+            f"/api/ops/finops/transactions/{ft.pk}/action/",
+            {"action": "requery"}, format="json", **self._stepup())
+        self.assertEqual(res.data["result"]["outcome"], "pending")
+        ft.refresh_from_db()
+        self.assertEqual(ft.state, "PROCESSING")
+
+    def test_mark_failed_refuses_when_rail_says_success(self):
+        from apps.payments.providers import registry
+        registry.use_provider(_StubProvider("success"))
+        ft = self._stuck_payout(key="op1-payout-4", conv="AG_CONV_4")
+        # Operator wants to fail it, but the rail confirms it actually succeeded →
+        # it is healed as success, never stranded.
+        res = op_client(self.finance).post(
+            f"/api/ops/finops/transactions/{ft.pk}/action/",
+            {"action": "mark_failed", "reason": "looks stuck"}, format="json", **self._stepup())
+        self.assertEqual(res.data["result"]["outcome"], "healed_success")
+        ft.refresh_from_db()
+        self.assertEqual(ft.state, "SUCCESS")
+
+    def test_mark_failed_requires_reason(self):
+        from apps.payments.providers import registry
+        registry.use_provider(_StubProvider("pending"))
+        ft = self._stuck_payout(key="op1-payout-5", conv="AG_CONV_5")
+        res = op_client(self.finance).post(
+            f"/api/ops/finops/transactions/{ft.pk}/action/",
+            {"action": "mark_failed"}, format="json", **self._stepup())
+        self.assertEqual(res.status_code, 409)
+
+    def test_action_is_capability_and_stepup_gated(self):
+        ft = self._stuck_payout(key="op1-payout-6", conv="AG_CONV_6")
+        url = f"/api/ops/finops/transactions/{ft.pk}/action/"
+        # Auditor lacks finops.retry.
+        self.assertEqual(op_client(self.viewer).post(
+            url, {"action": "requery"}, format="json").status_code, 403)
+        # Finance has the capability but no step-up → refused.
+        self.assertEqual(op_client(self.finance).post(
+            url, {"action": "requery"}, format="json").status_code, 403)
+
+    def test_queues_list_the_stuck_payout(self):
+        from apps.payments.providers import registry
+        registry.use_provider(_StubProvider("pending"))
+        self._stuck_payout(key="op1-payout-7", conv="AG_CONV_7")
+        res = op_client(self.finance).get("/api/ops/finops/", {"minutes": 0})
+        self.assertEqual(res.status_code, 200)
+        self.assertGreaterEqual(res.data["counts"]["stuck_payouts"], 1)
+        self.assertTrue(any(r["op_type"] == "DISBURSEMENT" for r in res.data["stuck_payouts"]))

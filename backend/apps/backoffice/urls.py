@@ -7,6 +7,7 @@ from .views import (
 from .views_communities import (
     OpsCommunitiesListView, OpsCommunityDetailView, OpsCommunityLifecycleView,
 )
+from .views_finops import FinopsActionView, FinopsQueuesView
 from .views_platform import OpsAuditLogView, OpsMetricsView
 from .views_stepup import StepUpView, TotpConfirmView, TotpSetupView
 from .views_support import (
@@ -41,6 +42,8 @@ urlpatterns = [
     path("support/requests/<int:request_id>/resolve/", SupportRequestResolveView.as_view()),
     path("transactions/", TransactionsListView.as_view()),
     path("transactions/<int:tx_id>/", Transaction360View.as_view()),
+    path("finops/", FinopsQueuesView.as_view()),
+    path("finops/transactions/<int:ft_id>/action/", FinopsActionView.as_view()),
     path("ping/", OpsPingView.as_view()),
     path("search/", OpsSearchView.as_view()),
     # Verification Centre (P1)

@@ -20,6 +20,17 @@ in limbo. Today ops can see it and cannot touch it; every incident becomes a
 developer page. This is the only gap that turns routine rail flakiness into
 an outage.
 
+> **Status — increment 1 (payout rail) shipped.** `PaymentOpsService`
+> (`apps/payments/ops.py`) exposes `requery` and `mark_failed` for stuck payout
+> `FinancialTransaction`s, healing them through the *same* callback finalize /
+> reversal path (no hand-rolled journals), idempotently. The `/finops` console
+> workspace shows stuck-payout, failed, and (informational) stuck-pay-in queues
+> with per-movement levers gated behind `finops.retry` + step-up and dual-
+> audited. Remaining for OP-1: `reverse` (arbitrary reversal of a settled
+> payout — deferred to OP-3 maker-checker Part 2) and `retry_payout`
+> (re-submission with the same idempotency key). Pay-in requery already runs
+> automatically via `poll_mpesa_stk_status`.
+
 **How**:
 1. **Domain door first** (the review's rule — no ops button bypasses the
    pipeline): a `PaymentOpsService` in `apps/payments` exposing exactly four

@@ -32,7 +32,7 @@ export const NAV: NavGroup[] = [
   {
     group: 'Operations',
     items: [
-      { label: 'Financial Operations', slug: 'finops', cap: 'finops.view', icon: Banknote, phase: 'P2' },
+      { label: 'Financial Operations', slug: 'finops', cap: 'finops.view', icon: Banknote },
       { label: 'Transactions', slug: 'transactions', cap: 'transactions.view', icon: ArrowLeftRight },
       { label: 'Communities', slug: 'communities', cap: 'communities.view', icon: Building2 },
       { label: 'Users', slug: 'users', cap: 'users.view', icon: Users2 },
