@@ -12,19 +12,22 @@ the pipeline.
 """
 from __future__ import annotations
 
-import re
-
 from django.db.models import Count, Q
 from django.shortcuts import get_object_or_404
 from rest_framework.response import Response
 
-# Matches a bare id or a WEPL-TXN-000123 reference (any leading zeros) → the FT id.
-_REF_RE = re.compile(r"^\s*(?:WEPL-TXN-)?0*(\d+)\s*$", re.IGNORECASE)
+_REF_PREFIX = "WEPL-TXN-"
 
 
 def _ref_to_pk(q: str):
-    m = _REF_RE.match(q or "")
-    return int(m.group(1)) if m else None
+    """A bare id or a ``WEPL-TXN-000123`` reference → the FT id (else None).
+
+    Plain string parsing (no regex) so a user-controlled search term can't drive
+    catastrophic backtracking. ``int`` handles any leading zeros."""
+    s = (q or "").strip()
+    if s[:len(_REF_PREFIX)].upper() == _REF_PREFIX:
+        s = s[len(_REF_PREFIX):]
+    return int(s) if s.isdigit() else None
 
 from apps.ledger.models import FinancialTransaction
 
