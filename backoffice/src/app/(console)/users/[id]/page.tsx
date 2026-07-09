@@ -2,8 +2,9 @@
 import { useCallback, useEffect, useState } from 'react'
 import Link from 'next/link'
 import { useParams, useRouter } from 'next/navigation'
-import { Loader2, ArrowLeft, ShieldCheck, UserX, UserCheck } from 'lucide-react'
+import { Loader2, ArrowLeft, ShieldCheck, UserX, UserCheck, Download } from 'lucide-react'
 import { opsUsers, type User360 } from '@/lib/platform'
+import { downloadCsv } from '@/lib/ops'
 import { staffFirstName } from '@/lib/staff'
 import { useCan } from '@/store/ops'
 import { useStepUp } from '@/components/StepUp'
@@ -105,9 +106,19 @@ export default function User360Page() {
                 ))}
               </div>
             )}
-            <p className="mt-2 text-[11px] text-slate-400">
-              Balances are derived ledger projections — read-only here, always.
-            </p>
+            <div className="mt-2 flex items-center justify-between">
+              <p className="text-[11px] text-slate-400">
+                Balances are derived ledger projections — read-only here, always.
+              </p>
+              {can('ledger.export') && (
+                <button
+                  onClick={() => downloadCsv(`/ops/users/${id}/statement/`, {}, `statement-u${id}.csv`)}
+                  title="Download this member's sub-ledger statement as CSV"
+                  className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 px-2.5 py-1 text-xs font-medium text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800">
+                  <Download className="h-3.5 w-3.5" /> Statement
+                </button>
+              )}
+            </div>
           </Card>
 
           <Card title={`Communities · ${data.communities.length}`}>

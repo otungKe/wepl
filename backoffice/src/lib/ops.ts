@@ -30,6 +30,23 @@ api.interceptors.response.use(
   },
 )
 
+// Download a CSV export. Exports are staff-authed, so a plain <a download> can't
+// carry the token — fetch as a blob through the api client, then save it.
+export async function downloadCsv(
+  path: string, params: Record<string, string | number> = {}, fallbackName = 'export.csv',
+): Promise<void> {
+  const res = await api.get(path, { params, responseType: 'blob' })
+  const url = URL.createObjectURL(new Blob([res.data as BlobPart], { type: 'text/csv' }))
+  const cd = res.headers['content-disposition'] as string | undefined
+  const a = document.createElement('a')
+  a.href = url
+  a.download = cd?.match(/filename="?([^"]+)"?/)?.[1] || fallbackName
+  document.body.appendChild(a)
+  a.click()
+  a.remove()
+  URL.revokeObjectURL(url)
+}
+
 export function apiError(err: unknown, fallback = 'Something went wrong.'): string {
   if (axios.isAxiosError(err)) {
     const d = err.response?.data as { detail?: string } | undefined

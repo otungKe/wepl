@@ -1,13 +1,16 @@
 'use client'
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
-import { Loader2, ArrowLeftRight, Search } from 'lucide-react'
+import { Loader2, ArrowLeftRight, Search, Download } from 'lucide-react'
 import { transactions, type TxRow } from '@/lib/platform'
+import { downloadCsv } from '@/lib/ops'
+import { useCan } from '@/store/ops'
 import { TxState } from '@/components/TxState'
 
 const STATES = ['all', 'PENDING', 'PROCESSING', 'SUCCESS', 'FAILED', 'REVERSED']
 
 export default function TransactionsRegistry() {
+  const can = useCan()
   const [state, setState] = useState('all')
   const [opType, setOpType] = useState('')
   const [q, setQ] = useState('')
@@ -48,6 +51,15 @@ export default function TransactionsRegistry() {
               placeholder="Phone, receipt, key or ID…"
               className="w-52 bg-transparent text-sm outline-none placeholder:text-slate-400" />
           </div>
+          {can('reporting.export') && (
+            <button
+              onClick={() => downloadCsv('/ops/exports/transactions/',
+                { state, ...(opType ? { op_type: opType } : {}), ...(query ? { q: query } : {}) })}
+              title="Export the current filter as CSV"
+              className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 px-2.5 py-1.5 text-sm font-medium text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800">
+              <Download className="h-4 w-4" /> Export
+            </button>
+          )}
         </div>
       </div>
 

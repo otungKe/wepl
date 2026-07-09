@@ -56,6 +56,25 @@ _SELECT = ("initiated_by", "contribution__community",
            "welfare_fund__community", "shares_fund__community")
 
 
+def filter_transactions(params):
+    """Shared registry filter (state / op_type / q) — used by the list view and
+    the CSV export so both honour the same query semantics."""
+    qs = FinancialTransaction.objects.select_related(*_SELECT)
+    if params.get("state") and params["state"] != "all":
+        qs = qs.filter(state=params["state"])
+    if params.get("op_type"):
+        qs = qs.filter(op_type=params["op_type"])
+    if params.get("q"):
+        q = params["q"].strip()
+        qs = qs.filter(
+            Q(initiated_by__phone_number__icontains=q)
+            | Q(recipient_phone__icontains=q)
+            | Q(idempotency_key__iexact=q)
+            | Q(mpesa_receipt__iexact=q)
+            | (Q(pk=q) if q.isdigit() else Q()))
+    return qs.order_by("-created_at")
+
+
 class TransactionsListView(OpsAPIView):
     """GET /api/ops/transactions/?state=&op_type=&q=&limit=&offset= — the
     registry, newest first, with state counts for the current filter set."""
@@ -63,20 +82,7 @@ class TransactionsListView(OpsAPIView):
 
     def get(self, request):
         p = request.query_params
-        qs = FinancialTransaction.objects.select_related(*_SELECT)
-        if p.get("state") and p["state"] != "all":
-            qs = qs.filter(state=p["state"])
-        if p.get("op_type"):
-            qs = qs.filter(op_type=p["op_type"])
-        if p.get("q"):
-            q = p["q"].strip()
-            qs = qs.filter(
-                Q(initiated_by__phone_number__icontains=q)
-                | Q(recipient_phone__icontains=q)
-                | Q(idempotency_key__iexact=q)
-                | Q(mpesa_receipt__iexact=q)
-                | (Q(pk=q) if q.isdigit() else Q()))
-        qs = qs.order_by("-created_at")
+        qs = filter_transactions(p)
 
         try:
             limit = min(max(int(p.get("limit", 50)), 1), 100)
