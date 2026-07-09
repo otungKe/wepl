@@ -41,7 +41,17 @@ export function apiError(err: unknown, fallback = 'Something went wrong.'): stri
 
 export interface OpsMe {
   id: number; email: string; name: string; is_superuser: boolean
-  must_change_password: boolean; roles: string[]; capabilities: string[]
+  must_change_password: boolean; totp_enrolled: boolean; roles: string[]; capabilities: string[]
+}
+
+// Step-up elevation token (X-Ops-StepUp). Spread into an axios call config to
+// authorise a single flagged action (see stepup.py, OP-3).
+export const stepUpConfig = (token: string) => ({ headers: { 'X-Ops-StepUp': token } })
+
+// True when a request failed only because the operator hasn't enrolled TOTP yet.
+export function isNotEnrolled(err: unknown): boolean {
+  return axios.isAxiosError(err) &&
+    (err.response?.data as { code?: string } | undefined)?.code === 'not_enrolled'
 }
 export type OpsResultType = 'user' | 'community' | 'verification' | 'journal'
 export interface OpsSearchResult { type: OpsResultType; id: number; label: string; sublabel: string; url: string }
@@ -55,4 +65,12 @@ export const ops = {
   me: () => api.get<OpsMe>('/ops/me/'),
   search: (q: string) => api.get<{ query: string; results: OpsSearchResult[]; counts: Record<string, number> }>(
     '/ops/search/', { params: { q } }),
+  // Step-up (TOTP): enrol an authenticator, then exchange a live code for a
+  // short-lived elevation token used on the very next flagged action.
+  totpSetup: () => api.post<{ provisioning_uri: string; secret: string; issuer: string; account: string }>(
+    '/ops/auth/totp/setup/', {}),
+  totpConfirm: (code: string) => api.post<{ recovery_codes: string[] }>(
+    '/ops/auth/totp/confirm/', { code }),
+  stepUp: (code: string) => api.post<{ token: string; expires_in: number }>(
+    '/ops/auth/step-up/', { code }),
 }

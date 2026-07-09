@@ -6,11 +6,13 @@ import { Loader2, ArrowLeft, ShieldCheck, UserX, UserCheck } from 'lucide-react'
 import { opsUsers, type User360 } from '@/lib/platform'
 import { staffFirstName } from '@/lib/staff'
 import { useCan } from '@/store/ops'
+import { useStepUp } from '@/components/StepUp'
 
 export default function User360Page() {
   const params = useParams()
   const router = useRouter()
   const can = useCan()
+  const stepUp = useStepUp()
   const id = String(params.id)
   const [data, setData] = useState<User360 | null>(null)
   const [status, setStatus] = useState<'loading' | 'ready' | 'error'>('loading')
@@ -25,8 +27,12 @@ export default function User360Page() {
   useEffect(() => { load() }, [load])
 
   const setAccount = async (action: 'deactivate' | 'reactivate') => {
-    setErr(''); setBusy(true)
-    try { await opsUsers.status(id, action, reason.trim()); setReason(''); load() }
+    setErr('')
+    let token: string
+    try { token = await stepUp.request() }
+    catch { return }   // operator cancelled the step-up prompt
+    setBusy(true)
+    try { await opsUsers.status(id, action, reason.trim(), token); setReason(''); load() }
     catch (e) { setErr((e as { response?: { data?: { detail?: string } } })?.response?.data?.detail || 'Action failed.') }
     finally { setBusy(false) }
   }
@@ -39,6 +45,7 @@ export default function User360Page() {
 
   return (
     <div className="mx-auto max-w-6xl">
+      {stepUp.modal}
       <button onClick={() => router.push('/users')} className="mb-4 flex items-center gap-1.5 text-sm text-slate-500 hover:text-slate-700 dark:hover:text-slate-300">
         <ArrowLeft className="h-4 w-4" /> Members
       </button>

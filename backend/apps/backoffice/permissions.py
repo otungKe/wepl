@@ -32,17 +32,28 @@ def RequireCapability(capability: str):
 
 
 class RequireStepUp(BasePermission):
-    """Placeholder for step-up (re-auth) on sensitive ops actions.
+    """Require a fresh step-up (TOTP) proof on sensitive ops actions.
 
-    P0 wires the hook; the enforced re-auth flow lands with the first sensitive
-    action module. A request is considered stepped-up if the middleware/session
-    marked it within the recent window. Until that ships, this is permissive for
-    superusers only so it can be attached to endpoints without blocking P0.
-    """
+    The operator's shift JWT proves identity for the whole shift; this
+    additionally requires an ``X-Ops-StepUp`` elevation token — minted by
+    ``/api/ops/auth/step-up/`` only after a live TOTP/recovery code is verified,
+    and valid for a few minutes (see ``stepup.py``, OP-3). Superusers are *not*
+    exempt: the break-glass account is the highest-value credential and must step
+    up too. Compose after ``RequireCapability`` so a missing capability surfaces
+    its own message first."""
     message = "This action requires step-up authentication."
 
     def has_permission(self, request, view):
         if getattr(request, "ops_stepped_up", False):
             return True
-        # Conservative default until the step-up flow ships.
-        return bool(request.user and request.user.is_superuser)
+        from .models import StaffAccount
+        from .stepup import STEPUP_HEADER, stepup_token_valid
+
+        user = getattr(request, "user", None)
+        if not isinstance(user, StaffAccount):
+            return False
+        token = request.META.get(STEPUP_HEADER, "")
+        if stepup_token_valid(token, user):
+            request.ops_stepped_up = True
+            return True
+        return False

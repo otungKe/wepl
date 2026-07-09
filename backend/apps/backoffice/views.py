@@ -98,6 +98,7 @@ class OpsMeView(OpsAPIView):
             "name": u.full_name,
             "is_superuser": u.is_superuser,
             "must_change_password": u.must_change_password,
+            "totp_enrolled": u.totp_enrolled,
             "roles": roles_for(u),
             "capabilities": sorted(capabilities_for(u)),
         })

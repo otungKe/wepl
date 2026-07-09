@@ -16,7 +16,7 @@ from rest_framework.response import Response
 from apps.communities.models import Community
 
 from .audit import record_action
-from .permissions import RequireCapability
+from .permissions import RequireCapability, RequireStepUp
 from .views import OpsAPIView
 
 
@@ -116,8 +116,9 @@ class OpsCommunityLifecycleView(OpsAPIView):
     """POST /api/ops/communities/<id>/lifecycle/ {action: suspend|unsuspend,
     reason} — the ops freeze lever (fraud investigation / compliance / court
     order). Suspension requires a reason; both directions are audited on the
-    community trail AND the ops action log."""
-    permission_classes = [RequireCapability("communities.manage")]
+    community trail AND the ops action log. Freezing a community touches its
+    members' funds, so the lever requires a fresh step-up (OP-3)."""
+    permission_classes = [RequireCapability("communities.manage"), RequireStepUp]
 
     def post(self, request, community_id):
         from apps.communities.services import CommunityService

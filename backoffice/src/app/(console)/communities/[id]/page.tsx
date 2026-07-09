@@ -5,11 +5,13 @@ import { Loader2, ArrowLeft, Lock, PauseCircle, PlayCircle, ShieldAlert } from '
 import { platform, type CommunityFile } from '@/lib/platform'
 import { staffFirstName } from '@/lib/staff'
 import { useCan } from '@/store/ops'
+import { useStepUp } from '@/components/StepUp'
 
 export default function CommunityFilePage() {
   const params = useParams()
   const router = useRouter()
   const can = useCan()
+  const stepUp = useStepUp()
   const id = String(params.id)
   const [data, setData] = useState<CommunityFile | null>(null)
   const [status, setStatus] = useState<'loading' | 'ready' | 'error'>('loading')
@@ -24,8 +26,12 @@ export default function CommunityFilePage() {
   useEffect(() => { load() }, [load])
 
   const lifecycle = async (action: 'suspend' | 'unsuspend') => {
-    setErr(''); setBusy(true)
-    try { await platform.communityLifecycle(id, action, reason.trim()); setReason(''); load() }
+    setErr('')
+    let token: string
+    try { token = await stepUp.request() }
+    catch { return }   // operator cancelled the step-up prompt
+    setBusy(true)
+    try { await platform.communityLifecycle(id, action, reason.trim(), token); setReason(''); load() }
     catch (e) { setErr((e as { response?: { data?: { detail?: string } } })?.response?.data?.detail || 'Action failed.') }
     finally { setBusy(false) }
   }
@@ -37,6 +43,7 @@ export default function CommunityFilePage() {
 
   return (
     <div className="mx-auto max-w-6xl">
+      {stepUp.modal}
       <button onClick={() => router.push('/communities')} className="mb-4 flex items-center gap-1.5 text-sm text-slate-500 hover:text-slate-700 dark:hover:text-slate-300">
         <ArrowLeft className="h-4 w-4" /> Communities
       </button>
