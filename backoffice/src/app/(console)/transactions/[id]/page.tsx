@@ -110,6 +110,7 @@ export default function Transaction360Page() {
                 ? <Link href={`/users/${data.parties.initiated_by_id}`} className="text-blue-600 hover:underline dark:text-blue-400">{data.parties.initiated_by}</Link>
                 : data.parties.initiated_by} />
             {data.parties.initiated_by_phone && <Row k="Phone" v={<span className="font-mono text-xs">{data.parties.initiated_by_phone}</span>} />}
+            {data.parties.initiated_by_member_no && <Row k="Member no." v={<span className="font-mono text-xs">{data.parties.initiated_by_member_no}</span>} />}
             {data.parties.recipient_phone && <Row k="Recipient" v={<span className="font-mono text-xs">{data.parties.recipient_phone}</span>} />}
           </dl>
         </Card>

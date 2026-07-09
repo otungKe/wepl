@@ -167,7 +167,8 @@ export interface Tx360 {
   }
   parties: {
     initiated_by_id: number | null; initiated_by: string
-    initiated_by_phone: string | null; recipient_phone: string
+    initiated_by_phone: string | null; initiated_by_member_no: string | null
+    recipient_phone: string
   }
   context: {
     fund: string | null; community_id: number | null
