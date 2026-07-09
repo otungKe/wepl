@@ -246,3 +246,41 @@ export const approvals = {
   decide: (id: number | string, decision: 'approve' | 'reject', note: string, stepUpToken: string) =>
     api.post<ApprovalRow>(`/ops/approvals/${id}/decide/`, { decision, note }, stepUpConfig(stepUpToken)),
 }
+
+/* ── System Health + alert bell (OP-2) ───────────────────────────────────── */
+
+export interface Heartbeat {
+  task: string; last_seen: string | null; age_seconds: number | null
+  window_seconds: number; stale: boolean; never_seen: boolean
+}
+
+export interface HealthOverview {
+  outbox: { pending: number; dead: number; oldest_pending_seconds: number | null }
+  heartbeats: Heartbeat[]
+  queues: Record<string, number | null>
+}
+
+export interface OutboxRow {
+  id: number; event_type: string; status: string; attempts: number
+  last_error: string; payload: Record<string, unknown>
+  created_at: string; processed_at: string | null
+}
+
+export interface Notice {
+  id: number; key: string; level: string; title: string; message: string; created_at: string
+}
+
+export const health = {
+  overview: () => api.get<HealthOverview>('/ops/health/'),
+  outbox: (status = 'DEAD', offset = 0) =>
+    api.get<{ results: OutboxRow[]; count: number; has_more: boolean }>(
+      '/ops/health/outbox/', { params: { status, offset } }),
+  requeue: (id: number | string) =>
+    api.post<{ id: number; status: string }>(`/ops/health/outbox/${id}/requeue/`),
+}
+
+export const notices = {
+  list: () => api.get<{ results: Notice[]; count: number; critical: number }>('/ops/notices/'),
+  dismiss: (id: number | string) =>
+    api.post<{ id: number; dismissed: boolean }>(`/ops/notices/${id}/dismiss/`),
+}

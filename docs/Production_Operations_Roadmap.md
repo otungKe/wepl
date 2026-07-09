@@ -68,6 +68,18 @@ two minutes, and the journal stays balanced.
 nervous system; today its failure modes are numbers on a dashboard nobody is
 forced to look at.
 
+> **Status — shipped.** `/health` workspace: outbox summary + dead-letter
+> browser with **requeue** (via the `apps.core.events.requeue_outbox_event`
+> service door, `health.act`, audited), **worker heartbeats** (DB-backed
+> `WorkerHeartbeat` stamped by a Celery `task_postrun` signal — DB rather than
+> cache because web/worker are separate processes and no shared Django cache is
+> configured), and **queue depths** (Redis `llen`, best-effort). Alerting:
+> `ops_alerts` beat task (every 5 min) evaluates trial-balance ≠ 0, dead
+> letters, outbox backlog, stuck payouts, and stale heartbeats → Sentry +
+> `StaffNotice`, de-duplicated by condition key and auto-resolved when it
+> clears; surfaced as a **bell** in the console shell (any operator; critical
+> pulses red).
+
 **How**:
 1. **Outbox browser** (`/health`): PENDING and DEAD queues with payload
    inspection; *requeue* (DEAD → PENDING, attempts reset) via a
@@ -240,3 +252,36 @@ OP-1, OP-2 and OP-4 are weeks-scale builds on existing patterns. OP-3 needs
 one ruling (TOTP) then follows the same shape. OP-6/8/9 are projects that
 earn design docs first. The architecture requires none of them to be
 retrofitted — that bill was paid already.
+
+---
+
+## Appendix · CSO/Support-operator coverage (reference)
+
+A core-banking (Finacle) CSO menu was used as a *completeness checklist* for the
+Support/CSO operator persona — not a spec. Most of it is branch/cash/paper/
+deposit-product machinery a ledger-first mobile-money OS doesn't have (cash
+deposit/withdrawal, cheque books, demand drafts, lockers, term deposits/TDS,
+salary upload, cheque-stock inventory, PesaLink, merchant registration). The
+instructive signal: inquiries outnumber actions ~3:1 — which validates our
+read-first, 360-as-composed-read design.
+
+What maps, and where it lives:
+
+| CSO capability | WEPL equivalent | Status |
+|---|---|---|
+| Customer/Balance/Ledger inquiry | User 360 / Member Financial 360 | done |
+| Transaction inquiry | Transactions registry + Transaction 360 | done |
+| Audit file inquiry | Audit log workspace | done |
+| Account freeze | Deactivate member / suspend community (step-up) | done |
+| Reversal of charges | Reversal lever (maker-checker) | done (OP-1/OP-3) |
+| Referral inbox | Approvals inbox / Support desk | done |
+| Reports / statements / advices | Exports & member statements | OP-4 |
+| Abnormal transactions inquiry | `ControlDecision` / velocity | OP-7 |
+| Lien inquiry + maintenance | `HeldMovement` holds — surface + release (maker-checked) | gap → OP-7 |
+| Customer charges inquiry | Fees view off COA `4000` on Member 360 | gap (small) |
+| Standing instructions inquiry | Standing orders on Member 360 | gap (small) |
+| Memo maintenance | Member-level note | gap (small) |
+| Stop payment | Cancel a pending payout — sibling of `mark_failed` | fits OP-1 |
+
+The four "gap (small)" / stop-payment items are tracked here to fold into their
+listed phases; none reorder the go-live gate.

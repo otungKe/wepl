@@ -69,3 +69,24 @@ def emit(event_type: str, *, user_id: int, title: str, message: str,
             'join_request_id': join_request_id,
         },
     )
+
+
+def requeue_outbox_event(event_id: int):
+    """Return a dead-lettered event to the delivery queue — the one sanctioned
+    way to retry a DEAD outbox event (OP-2 health workspace). Resets attempts and
+    clears the last error so the relay picks it up fresh. Raises if the event is
+    not dead-lettered (PENDING/PROCESSED must not be disturbed)."""
+    from django.core.exceptions import ValidationError
+
+    from .models import OutboxEvent
+
+    with transaction.atomic():
+        event = OutboxEvent.objects.select_for_update().get(pk=event_id)
+        if event.status != OutboxEvent.Status.DEAD:
+            raise ValidationError("Only dead-lettered events can be requeued.")
+        event.status = OutboxEvent.Status.PENDING
+        event.attempts = 0
+        event.last_error = ""
+        event.processed_at = None
+        event.save(update_fields=["status", "attempts", "last_error", "processed_at"])
+    return event

@@ -33,3 +33,19 @@ class OutboxEvent(models.Model):
 
     def __str__(self):
         return f"Outbox-{self.id} [{self.event_type}] {self.status}"
+
+
+class WorkerHeartbeat(models.Model):
+    """Liveness stamp for a scheduled (beat) task — OP-2 System Health.
+
+    Each watched task upserts ``last_seen`` on completion (via a Celery
+    ``task_postrun`` signal, see ``apps/core/health.py``). The health workspace
+    flags a task whose stamp has gone stale — the signal that a worker/beat has
+    silently died. DB-backed rather than cache-backed because web and worker are
+    separate processes and no shared Django cache is configured.
+    """
+    task_name = models.CharField(max_length=128, primary_key=True)
+    last_seen = models.DateTimeField()
+
+    def __str__(self):
+        return f"Heartbeat[{self.task_name}] @ {self.last_seen:%Y-%m-%d %H:%M:%S}"

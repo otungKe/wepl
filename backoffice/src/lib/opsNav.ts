@@ -65,7 +65,7 @@ export const NAV: NavGroup[] = [
   {
     group: 'Platform',
     items: [
-      { label: 'System Health', slug: 'health', cap: 'health.view', icon: HeartPulse, phase: 'P4' },
+      { label: 'System Health', slug: 'health', cap: 'health.view', icon: HeartPulse },
       { label: 'Configuration', slug: 'config', cap: 'config.view', icon: SlidersHorizontal, phase: 'P4' },
       { label: 'Developer Tools', slug: 'devtools', cap: 'devtools.view', icon: TerminalSquare, phase: 'P4' },
     ],

@@ -212,3 +212,43 @@ class OpsApprovalRequest(models.Model):
     @property
     def is_expired(self) -> bool:
         return self.status == self.Status.PENDING and timezone.now() >= self.expires_at
+
+
+class StaffNotice(models.Model):
+    """An operational alert surfaced as a bell in the console shell — OP-2.
+
+    Raised by the ``ops_alerts`` beat task when a system-health condition breaches
+    (trial balance ≠ 0, dead-lettered events, outbox backlog, stuck payouts,
+    stale worker). ``key`` identifies the condition so the task de-duplicates
+    (one open notice per condition) and auto-resolves it when the condition
+    clears. Operators can also dismiss a notice by hand.
+    """
+
+    class Level(models.TextChoices):
+        INFO     = "INFO",     "Info"
+        WARNING  = "WARNING",  "Warning"
+        CRITICAL = "CRITICAL", "Critical"
+
+    key     = models.CharField(max_length=64, db_index=True)
+    level   = models.CharField(max_length=10, choices=Level.choices, default=Level.WARNING)
+    title   = models.CharField(max_length=160)
+    message = models.TextField(blank=True, default="")
+
+    created_at   = models.DateTimeField(auto_now_add=True)
+    resolved_at  = models.DateTimeField(null=True, blank=True)   # condition cleared
+    dismissed_at = models.DateTimeField(null=True, blank=True)   # operator acknowledged
+    dismissed_by = models.ForeignKey(
+        "backoffice.StaffAccount", null=True, blank=True, on_delete=models.SET_NULL,
+        related_name="dismissed_notices")
+
+    class Meta:
+        ordering = ["-created_at"]
+        indexes = [models.Index(fields=["key", "resolved_at", "dismissed_at"],
+                                name="ops_notice_open_idx")]
+
+    def __str__(self):
+        return f"StaffNotice[{self.level}] {self.title}"
+
+    @property
+    def is_open(self) -> bool:
+        return self.resolved_at is None and self.dismissed_at is None
