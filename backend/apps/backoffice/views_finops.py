@@ -99,6 +99,40 @@ class FinopsActionView(OpsAPIView):
         return Response({**_finops_row(ft), "result": result})
 
 
+class FinopsReverseRequestView(OpsAPIView):
+    """POST /api/ops/finops/transactions/<ft_id>/reverse-request/ {reason}
+    — raise a maker-checker request to reverse a settled movement. Reversal is
+    never single-handed (OP-3): this records a pending approval; a second
+    operator executes it from the Approvals inbox. finops.reverse + step-up."""
+    permission_classes = [RequireCapability("finops.reverse"), RequireStepUp]
+
+    def post(self, request, ft_id):
+        from . import approvals
+        from .flagged_actions import ACTION_REVERSAL
+
+        ft = get_object_or_404(FT, pk=ft_id)
+        reason = (request.data.get("reason") or "").strip()
+        if ft.state != FT.State.SUCCESS:
+            return Response({"detail": "Only a settled (SUCCESS) movement can be reversed."},
+                            status=http.HTTP_409_CONFLICT)
+        try:
+            appr = approvals.require_approval(
+                ACTION_REVERSAL,
+                params={"ft_id": ft.pk, "amount": str(ft.amount), "reason": reason},
+                actor=request.user, reason=reason, target_id=str(ft.pk))
+        except ValidationError as exc:
+            detail = "; ".join(exc.messages) if hasattr(exc, "messages") else str(exc)
+            return Response({"detail": detail}, status=http.HTTP_409_CONFLICT)
+
+        record_action(
+            action="ops.finops.reverse_requested", actor=request.user, request=request,
+            target_type="financial_transaction", target_id=ft.pk,
+            metadata={"approval_id": appr.pk, "reason": reason})
+        return Response({"approval_id": appr.pk, "status": appr.status,
+                         "detail": "Reversal requested — awaiting a second operator's approval."},
+                        status=http.HTTP_201_CREATED)
+
+
 def _finops_row(ft) -> dict:
     """A transactions row plus the fields the desk triages on."""
     return {

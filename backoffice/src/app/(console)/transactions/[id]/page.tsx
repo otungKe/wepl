@@ -2,16 +2,25 @@
 import { useCallback, useEffect, useState } from 'react'
 import Link from 'next/link'
 import { useParams, useRouter } from 'next/navigation'
-import { Loader2, ArrowLeft, BookOpen, ShieldAlert } from 'lucide-react'
-import { transactions, type Tx360 } from '@/lib/platform'
+import { Loader2, ArrowLeft, BookOpen, ShieldAlert, Undo2 } from 'lucide-react'
+import { transactions, finops, type Tx360 } from '@/lib/platform'
+import { apiError } from '@/lib/ops'
+import { useCan } from '@/store/ops'
+import { useStepUp } from '@/components/StepUp'
 import { TxState } from '@/components/TxState'
 
 export default function Transaction360Page() {
   const params = useParams()
   const router = useRouter()
+  const can = useCan()
+  const stepUp = useStepUp()
   const id = String(params.id)
   const [data, setData] = useState<Tx360 | null>(null)
   const [status, setStatus] = useState<'loading' | 'ready' | 'error'>('loading')
+  const [revOpen, setRevOpen] = useState(false)
+  const [reason, setReason] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [msg, setMsg] = useState('')
 
   const load = useCallback(() => {
     setStatus('loading')
@@ -19,13 +28,27 @@ export default function Transaction360Page() {
   }, [id])
   useEffect(() => { load() }, [load])
 
+  const requestReversal = async () => {
+    setMsg('')
+    let token: string
+    try { token = await stepUp.request() } catch { return }
+    setBusy(true)
+    try {
+      const r = await finops.reverseRequest(id, reason.trim(), token)
+      setMsg(r.data.detail); setRevOpen(false); setReason('')
+    } catch (e) { setMsg(apiError(e, 'Could not raise the reversal.')) }
+    finally { setBusy(false) }
+  }
+
   if (status === 'loading') return <div className="flex justify-center py-20"><Loader2 className="h-6 w-6 animate-spin text-slate-400" /></div>
   if (status === 'error' || !data) return <p className="py-20 text-center text-sm text-slate-500">Couldn&apos;t load this transaction.</p>
 
   const m = data.movement
+  const canReverse = can('finops.reverse') && m.state === 'SUCCESS'
 
   return (
     <div className="mx-auto max-w-5xl">
+      {stepUp.modal}
       <button onClick={() => router.push('/transactions')} className="mb-4 flex items-center gap-1.5 text-sm text-slate-500 hover:text-slate-700 dark:hover:text-slate-300">
         <ArrowLeft className="h-4 w-4" /> Transactions
       </button>
@@ -45,6 +68,38 @@ export default function Transaction360Page() {
         <p className="mb-5 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700 dark:bg-red-500/10 dark:text-red-400">
           Failure: {m.failure_reason}
         </p>
+      )}
+
+      {msg && <p className="mb-5 rounded-lg bg-blue-50 px-3 py-2 text-sm text-blue-700 dark:bg-blue-500/10 dark:text-blue-300">{msg}</p>}
+
+      {canReverse && (
+        <div className="mb-5 rounded-xl border border-amber-200 bg-amber-50/50 p-4 dark:border-amber-500/30 dark:bg-amber-500/5">
+          {!revOpen ? (
+            <div className="flex flex-wrap items-center gap-3">
+              <Undo2 className="h-4 w-4 text-amber-600 dark:text-amber-400" />
+              <span className="text-sm text-slate-600 dark:text-slate-300">Reverse this settled movement (requires a second operator&apos;s approval).</span>
+              <button onClick={() => setRevOpen(true)}
+                className="ml-auto rounded-lg border border-amber-300 px-3 py-1.5 text-sm font-medium text-amber-700 hover:bg-amber-100 dark:border-amber-500/40 dark:text-amber-400 dark:hover:bg-amber-500/10">
+                Request reversal
+              </button>
+            </div>
+          ) : (
+            <div>
+              <p className="mb-2 text-sm font-medium text-slate-700 dark:text-slate-200">Reason for reversal</p>
+              <textarea value={reason} onChange={(e) => setReason(e.target.value)} rows={2}
+                placeholder="e.g. Duplicate payout — member already received these funds."
+                className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm outline-none focus:border-amber-500 dark:border-slate-700 dark:bg-slate-950" />
+              <div className="mt-2 flex justify-end gap-2">
+                <button onClick={() => { setRevOpen(false); setReason('') }} disabled={busy}
+                  className="rounded-lg px-3 py-1.5 text-sm font-medium text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800">Cancel</button>
+                <button onClick={requestReversal} disabled={busy || reason.trim().length < 4}
+                  className="inline-flex items-center gap-1.5 rounded-lg bg-amber-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-amber-700 disabled:opacity-50">
+                  {busy && <Loader2 className="h-4 w-4 animate-spin" />} Submit for approval
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
       )}
 
       <div className="grid gap-5 lg:grid-cols-2">

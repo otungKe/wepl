@@ -768,3 +768,132 @@ class FinopsModuleTests(TestCase):
         self.assertEqual(res.status_code, 200)
         self.assertGreaterEqual(res.data["counts"]["stuck_payouts"], 1)
         self.assertTrue(any(r["op_type"] == "DISBURSEMENT" for r in res.data["stuck_payouts"]))
+
+
+class MakerCheckerTests(TestCase):
+    """OP-3 Part 2: reversals are two-person. A maker requests; a *different*
+    operator approves, which executes the reversal attributed to both."""
+
+    def setUp(self):
+        self.maker = make_staff("maker@imbank.co.ke", "finance")    # finops.reverse + approvals.decide
+        self.checker = make_staff("checker@imbank.co.ke", "finance")
+        self.auditor = make_staff("appr-view@imbank.co.ke", "auditor")  # approvals.view only
+        self.member = get_user_model().objects.create_user(
+            phone_number="254700000301", name="Otieno P")
+
+    def _settled_payout(self, key="mc-payout-1"):
+        from decimal import Decimal
+        from apps.ledger.models import FinancialTransaction
+        from apps.ledger.money import Money
+        from apps.ledger.posting import post_journal
+        from apps.ledger.posting_map import disbursement_lines
+        ft = FinancialTransaction.objects.create(
+            op_type="DISBURSEMENT", amount=Decimal("3000.00"), idempotency_key=key,
+            initiated_by=self.member, recipient_phone="254700000301",
+            mpesa_conversation_id=f"{key}-conv", mpesa_receipt=f"{key}-rcpt",
+        )
+        ft.transition_to("PROCESSING")
+        ft.transition_to("SUCCESS")
+        post_journal(
+            idempotency_key=f"{key}-journal", op_type="DISBURSEMENT",
+            lines=disbursement_lines(member=self.member, fund_type="contribution",
+                                     fund_id=777, amount=Money("3000.00")),
+            narration="Settled disbursement", financial_transaction=ft,
+        )
+        return ft
+
+    def test_full_maker_checker_reversal_flow(self):
+        from apps.ledger.balances import trial_balance
+        from apps.ledger.models import FinancialTransaction
+        ft = self._settled_payout()
+
+        # 1. Maker raises the reversal request (step-up gated). Nothing executes.
+        req = op_client(self.maker).post(
+            f"/api/ops/finops/transactions/{ft.pk}/reverse-request/",
+            {"reason": "Duplicate payout — member already received funds."},
+            format="json", **stepped_up(self.maker))
+        self.assertEqual(req.status_code, 201)
+        appr_id = req.data["approval_id"]
+        ft.refresh_from_db()
+        self.assertEqual(ft.state, "SUCCESS")   # not touched yet
+
+        # 2. Maker cannot approve their own request.
+        deny = op_client(self.maker).post(
+            f"/api/ops/approvals/{appr_id}/decide/",
+            {"decision": "approve"}, format="json", **stepped_up(self.maker))
+        self.assertEqual(deny.status_code, 409)
+        ft.refresh_from_db()
+        self.assertEqual(ft.state, "SUCCESS")
+
+        # 3. A second operator approves → the reversal executes, attributed to both.
+        ok = op_client(self.checker).post(
+            f"/api/ops/approvals/{appr_id}/decide/",
+            {"decision": "approve", "note": "Confirmed with treasury."},
+            format="json", **stepped_up(self.checker))
+        self.assertEqual(ok.status_code, 200)
+        self.assertEqual(ok.data["status"], "APPROVED")
+        ft.refresh_from_db()
+        self.assertEqual(ft.state, FinancialTransaction.State.REVERSED)
+        self.assertTrue(trial_balance()["balanced"])   # reversal keeps books at zero
+        from apps.audit.models import AuditEvent
+        self.assertTrue(AuditEvent.objects.filter(action="ops.approval.approve").exists())
+
+    def test_reject_leaves_movement_untouched(self):
+        ft = self._settled_payout(key="mc-payout-2")
+        req = op_client(self.maker).post(
+            f"/api/ops/finops/transactions/{ft.pk}/reverse-request/",
+            {"reason": "possibly wrong"}, format="json", **stepped_up(self.maker))
+        appr_id = req.data["approval_id"]
+        res = op_client(self.checker).post(
+            f"/api/ops/approvals/{appr_id}/decide/",
+            {"decision": "reject", "note": "Payout was correct."},
+            format="json", **stepped_up(self.checker))
+        self.assertEqual(res.data["status"], "REJECTED")
+        ft.refresh_from_db()
+        self.assertEqual(ft.state, "SUCCESS")
+
+    def test_expired_request_cannot_be_approved(self):
+        from django.utils import timezone
+        from datetime import timedelta
+        from apps.backoffice import approvals
+        from apps.backoffice.flagged_actions import ACTION_REVERSAL
+        from apps.backoffice.models import OpsApprovalRequest
+        ft = self._settled_payout(key="mc-payout-3")
+        appr = approvals.require_approval(
+            ACTION_REVERSAL, params={"ft_id": ft.pk, "reason": "x"},
+            actor=self.maker, reason="x", target_id=str(ft.pk))
+        OpsApprovalRequest.objects.filter(pk=appr.pk).update(
+            expires_at=timezone.now() - timedelta(minutes=1))
+        res = op_client(self.checker).post(
+            f"/api/ops/approvals/{appr.pk}/decide/",
+            {"decision": "approve"}, format="json", **stepped_up(self.checker))
+        self.assertEqual(res.status_code, 409)
+        ft.refresh_from_db()
+        self.assertEqual(ft.state, "SUCCESS")
+
+    def test_decide_is_capability_and_stepup_gated(self):
+        from apps.backoffice import approvals
+        from apps.backoffice.flagged_actions import ACTION_REVERSAL
+        ft = self._settled_payout(key="mc-payout-4")
+        appr = approvals.require_approval(
+            ACTION_REVERSAL, params={"ft_id": ft.pk, "reason": "x"},
+            actor=self.maker, reason="x", target_id=str(ft.pk))
+        url = f"/api/ops/approvals/{appr.pk}/decide/"
+        # Auditor lacks approvals.decide.
+        self.assertEqual(op_client(self.auditor).post(
+            url, {"decision": "approve"}, format="json").status_code, 403)
+        # Checker holds it but without step-up → refused.
+        self.assertEqual(op_client(self.checker).post(
+            url, {"decision": "approve"}, format="json").status_code, 403)
+
+    def test_reverse_request_rejects_unsettled_movement(self):
+        # A PENDING movement is not reversible (only settled ones).
+        from decimal import Decimal
+        from apps.ledger.models import FinancialTransaction
+        ft = FinancialTransaction.objects.create(
+            op_type="DISBURSEMENT", amount=Decimal("10.00"), idempotency_key="mc-pending",
+            initiated_by=self.member)
+        res = op_client(self.maker).post(
+            f"/api/ops/finops/transactions/{ft.pk}/reverse-request/",
+            {"reason": "x"}, format="json", **stepped_up(self.maker))
+        self.assertEqual(res.status_code, 409)
