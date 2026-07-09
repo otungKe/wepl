@@ -79,6 +79,8 @@ class FinopsActionView(OpsAPIView):
         try:
             if action == "requery":
                 result = PaymentOpsService.requery(ft, actor_label=actor_label)
+            elif action == "retry_payout":
+                result = PaymentOpsService.retry_payout(ft, actor_label=actor_label)
             elif action == "mark_failed":
                 result = PaymentOpsService.mark_failed(ft, reason=reason, actor_label=actor_label)
             else:

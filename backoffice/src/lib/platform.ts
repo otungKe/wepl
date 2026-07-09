@@ -209,7 +209,7 @@ export interface FinopsActionResult {
 export const finops = {
   queues: (minutes = 30) =>
     api.get<FinopsQueues>('/ops/finops/', { params: { minutes } }),
-  action: (ftId: number | string, action: 'requery' | 'mark_failed', reason: string, stepUpToken: string) =>
+  action: (ftId: number | string, action: 'requery' | 'mark_failed' | 'retry_payout', reason: string, stepUpToken: string) =>
     api.post<FinopsRow & FinopsActionResult>(
       `/ops/finops/transactions/${ftId}/action/`, { action, reason }, stepUpConfig(stepUpToken)),
   reverseRequest: (ftId: number | string, reason: string, stepUpToken: string) =>

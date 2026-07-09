@@ -26,10 +26,14 @@ an outage.
 > reversal path (no hand-rolled journals), idempotently. The `/finops` console
 > workspace shows stuck-payout, failed, and (informational) stuck-pay-in queues
 > with per-movement levers gated behind `finops.retry` + step-up and dual-
-> audited. `reverse` (settled-payout reversal) now also ships, two-person via
-> OP-3 maker-checker. Remaining for OP-1: `retry_payout` (re-submission with
-> the same idempotency key). Pay-in requery already runs automatically via
-> `poll_mpesa_stk_status`.
+> audited. `reverse` (settled-payout reversal) ships two-person via OP-3
+> maker-checker. `retry_payout` re-dispatches a payout that stalled before ever
+> reaching the rail (no `conversation_id`) through the canonical
+> `execute_b2c_payout` door — surfaced as **Re-send** on never-dispatched rows
+> (vs **Requery** once dispatched); the door's guards prevent a double-send. A
+> failed payout's funds are already restored, so re-issuing is a fresh
+> disbursement, not a re-send. Pay-in requery already runs automatically via
+> `poll_mpesa_stk_status`. **OP-1 complete.**
 
 **How**:
 1. **Domain door first** (the review's rule — no ops button bypasses the
