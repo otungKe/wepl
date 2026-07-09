@@ -186,3 +186,30 @@ export const transactions = {
               op_types: { value: string; label: string }[] }>('/ops/transactions/', { params }),
   tx360: (id: number | string) => api.get<Tx360>(`/ops/transactions/${id}/`),
 }
+
+/* ── FinOps (payment recovery levers, OP-1) ──────────────────────────────── */
+
+export interface FinopsRow extends TxRow {
+  updated_at: string
+  failure_reason: string
+  conversation_id: string | null
+}
+
+export interface FinopsQueues {
+  threshold_minutes: number
+  counts: { stuck_payouts: number; failed_payouts: number; stuck_payins: number }
+  stuck_payouts: FinopsRow[]
+  failed_payouts: FinopsRow[]
+}
+
+export interface FinopsActionResult {
+  result: { outcome: string; state: string; detail: string }
+}
+
+export const finops = {
+  queues: (minutes = 30) =>
+    api.get<FinopsQueues>('/ops/finops/', { params: { minutes } }),
+  action: (ftId: number | string, action: 'requery' | 'mark_failed', reason: string, stepUpToken: string) =>
+    api.post<FinopsRow & FinopsActionResult>(
+      `/ops/finops/transactions/${ftId}/action/`, { action, reason }, stepUpConfig(stepUpToken)),
+}
