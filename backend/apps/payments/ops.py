@@ -68,6 +68,39 @@ class PaymentOpsService:
         return cls._result("pending", ft, "Rail still reports the payout pending.")
 
     @classmethod
+    def retry_payout(cls, ft: FT, *, actor_label: str = "") -> dict:
+        """Re-dispatch a payout that stalled before ever reaching the rail (stuck
+        PENDING/PROCESSING with no rail reference). Re-drives the canonical B2C
+        door (``execute_b2c_payout``), whose own guards prevent a double-send.
+
+        Not for: a settled payout (nothing to do), a failed one (its funds were
+        already restored — re-issuing is a fresh disbursement, not a re-send), or
+        one already dispatched (use ``requery`` to fetch its result)."""
+        cls._guard_payout(ft)
+        if ft.state == FT.State.SUCCESS:
+            raise ValidationError("This payout already succeeded.")
+        if ft.state == FT.State.FAILED:
+            raise ValidationError(
+                "A failed payout can't be re-sent — its funds were restored. "
+                "Re-initiate the disbursement from the source flow.")
+        if ft.mpesa_conversation_id:
+            raise ValidationError(
+                "This payout was already dispatched to the rail — use Requery to fetch its result.")
+
+        from apps.ledger.tasks import execute_b2c_payout
+        # Synchronous: run the canonical door in-process so the operator sees the
+        # outcome now. It is idempotent — the conversation-id guard blocks any
+        # double-send if a callback lands mid-flight.
+        execute_b2c_payout.apply(args=[ft.id])
+        ft.refresh_from_db()
+        if ft.mpesa_conversation_id:
+            logger.info("FinOps: payout FT %s re-dispatched by %s", ft.id, actor_label or "ops")
+            return cls._result("resent", ft, "Re-dispatched to the rail; awaiting confirmation.")
+        if ft.state == FT.State.FAILED:
+            return cls._result("failed", ft, ft.failure_reason or "Re-dispatch failed.")
+        return cls._result("attempted", ft, "Re-dispatch attempted; no rail reference yet.")
+
+    @classmethod
     @transaction.atomic
     def reverse(cls, ft: FT, *, reason: str, actor_label: str = "") -> dict:
         """Reverse a *settled* movement: post the exact inverse journal and move

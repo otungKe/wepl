@@ -783,6 +783,40 @@ class FinopsModuleTests(TestCase):
         self.assertGreaterEqual(res.data["counts"]["stuck_payouts"], 1)
         self.assertTrue(any(r["op_type"] == "DISBURSEMENT" for r in res.data["stuck_payouts"]))
 
+    def _never_dispatched_payout(self, key="op1-retry-1"):
+        """A payout stuck PENDING with no rail reference (never actually sent)."""
+        from decimal import Decimal
+        from apps.ledger.models import FinancialTransaction
+        return FinancialTransaction.objects.create(
+            op_type="DISBURSEMENT", amount=Decimal("500.00"), idempotency_key=key,
+            initiated_by=self.member, recipient_phone="254700000201")
+
+    def test_retry_payout_redispatches_never_sent_payout(self):
+        from apps.payments.providers import registry
+        from apps.payments.providers.fake import FakeProvider
+        registry.use_provider(FakeProvider())   # implements initiate_payout
+        ft = self._never_dispatched_payout()
+        res = op_client(self.finance).post(
+            f"/api/ops/finops/transactions/{ft.pk}/action/",
+            {"action": "retry_payout"}, format="json", **self._stepup())
+        self.assertEqual(res.status_code, 200)
+        self.assertEqual(res.data["result"]["outcome"], "resent")
+        ft.refresh_from_db()
+        self.assertTrue(ft.mpesa_conversation_id)         # dispatched to the rail
+        self.assertEqual(ft.state, "PROCESSING")
+
+    def test_retry_payout_guards(self):
+        from apps.payments.providers import registry
+        registry.use_provider(_StubProvider("pending"))
+        # Already dispatched (has a conversation id) → must Requery, not re-send.
+        dispatched = self._stuck_payout(key="op1-retry-2", conv="AG_CONV_R2")
+        res = op_client(self.finance).post(
+            f"/api/ops/finops/transactions/{dispatched.pk}/action/",
+            {"action": "retry_payout"}, format="json", **self._stepup())
+        self.assertEqual(res.status_code, 409)
+        dispatched.refresh_from_db()
+        self.assertEqual(dispatched.state, "PROCESSING")
+
 
 class MakerCheckerTests(TestCase):
     """OP-3 Part 2: reversals are two-person. A maker requests; a *different*
