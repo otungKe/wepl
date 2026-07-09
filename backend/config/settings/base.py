@@ -320,6 +320,12 @@ CELERY_BEAT_SCHEDULE = {
         'task': 'apps.contributions.tasks.notify_overdue_advances',
         'schedule': crontab(minute=0, hour=9),
     },
+    # Ops health alerting (OP-2): evaluate alert conditions and raise/clear
+    # StaffNotice bell items — every 5 minutes.
+    'ops-alerts': {
+        'task': 'apps.backoffice.tasks.ops_alerts',
+        'schedule': crontab(minute='*/5'),
+    },
 }
 
 # ─── Payment rail selection (apps.payments.providers.registry) ────────────────

@@ -9,6 +9,10 @@ from .views_communities import (
 )
 from .views_approvals import ApprovalDecideView, ApprovalDetailView, ApprovalsListView
 from .views_finops import FinopsActionView, FinopsQueuesView, FinopsReverseRequestView
+from .views_health import (
+    HealthOverviewView, NoticeDismissView, NoticesView,
+    OutboxListView, OutboxRequeueView,
+)
 from .views_platform import OpsAuditLogView, OpsMetricsView
 from .views_stepup import StepUpView, TotpConfirmView, TotpSetupView
 from .views_support import (
@@ -49,6 +53,11 @@ urlpatterns = [
     path("approvals/", ApprovalsListView.as_view()),
     path("approvals/<int:request_id>/", ApprovalDetailView.as_view()),
     path("approvals/<int:request_id>/decide/", ApprovalDecideView.as_view()),
+    path("health/", HealthOverviewView.as_view()),
+    path("health/outbox/", OutboxListView.as_view()),
+    path("health/outbox/<int:event_id>/requeue/", OutboxRequeueView.as_view()),
+    path("notices/", NoticesView.as_view()),
+    path("notices/<int:notice_id>/dismiss/", NoticeDismissView.as_view()),
     path("ping/", OpsPingView.as_view()),
     path("search/", OpsSearchView.as_view()),
     # Verification Centre (P1)

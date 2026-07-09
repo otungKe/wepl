@@ -9,6 +9,7 @@ import { usePaletteStore } from '@/store/palette'
 import { NAV, roleLabel } from '@/lib/opsNav'
 import { staffFirstName } from '@/lib/staff'
 import { CommandPalette } from '@/components/CommandPalette'
+import { NoticeBell } from '@/components/NoticeBell'
 
 export default function ConsoleLayout({ children }: { children: React.ReactNode }) {
   const router = useRouter()
@@ -117,6 +118,7 @@ function TopBar({ dark, toggleTheme, me, onSignOut }: {
         <span className="flex-1 text-left">Search or jump to…</span>
         <kbd className="hidden rounded border border-slate-300 px-1.5 text-[10px] font-medium sm:inline dark:border-slate-600">⌘K</kbd>
       </button>
+      <NoticeBell />
       <button onClick={toggleTheme} title="Toggle theme" className="rounded-md p-2 text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800">
         {dark ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
       </button>

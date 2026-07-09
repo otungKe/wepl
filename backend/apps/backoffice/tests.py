@@ -897,3 +897,96 @@ class MakerCheckerTests(TestCase):
             f"/api/ops/finops/transactions/{ft.pk}/reverse-request/",
             {"reason": "x"}, format="json", **stepped_up(self.maker))
         self.assertEqual(res.status_code, 409)
+
+
+class HealthAndAlertingTests(TestCase):
+    """OP-2: outbox browser + requeue, worker heartbeats, ops_alerts → StaffNotice
+    bell (raise / dedupe / auto-resolve / dismiss)."""
+
+    def setUp(self):
+        self.dev = make_staff("dev-health@imbank.co.ke", "developer")     # health.view + act
+        self.auditor = make_staff("aud-health@imbank.co.ke", "auditor")   # health.view only
+        self.support = make_staff("sup-health@imbank.co.ke", "support")   # no health.view
+
+    def _dead_event(self, etype="advance_approved"):
+        from apps.core.models import OutboxEvent
+        return OutboxEvent.objects.create(
+            event_type=etype, payload={"user_id": 1}, status=OutboxEvent.Status.DEAD,
+            attempts=5, last_error="boom")
+
+    def test_outbox_browser_and_requeue(self):
+        ev = self._dead_event()
+        res = op_client(self.dev).get("/api/ops/health/outbox/", {"status": "DEAD"})
+        self.assertEqual(res.status_code, 200)
+        self.assertEqual(res.data["count"], 1)
+        self.assertEqual(res.data["results"][0]["last_error"], "boom")
+        # Support lacks health.view.
+        self.assertEqual(op_client(self.support).get("/api/ops/health/outbox/").status_code, 403)
+        # Requeue (health.act) resets the event to PENDING with a fresh attempt count.
+        res = op_client(self.dev).post(f"/api/ops/health/outbox/{ev.id}/requeue/")
+        self.assertEqual(res.status_code, 200)
+        ev.refresh_from_db()
+        self.assertEqual(ev.status, "PENDING")
+        self.assertEqual(ev.attempts, 0)
+        from apps.audit.models import AuditEvent
+        self.assertTrue(AuditEvent.objects.filter(action="ops.health.outbox_requeued").exists())
+
+    def test_requeue_guards(self):
+        from apps.core.models import OutboxEvent
+        pending = OutboxEvent.objects.create(event_type="x", payload={}, status="PENDING")
+        # Only DEAD events can be requeued.
+        self.assertEqual(op_client(self.dev).post(
+            f"/api/ops/health/outbox/{pending.id}/requeue/").status_code, 409)
+        # Auditor has health.view but not health.act.
+        dead = self._dead_event()
+        self.assertEqual(op_client(self.auditor).post(
+            f"/api/ops/health/outbox/{dead.id}/requeue/").status_code, 403)
+
+    def test_heartbeat_staleness(self):
+        from datetime import timedelta
+        from django.utils import timezone
+        from apps.core import health
+        from apps.core.models import WorkerHeartbeat
+        task = "apps.core.tasks.process_outbox"
+        health.stamp(task)
+        rows = {r["task"]: r for r in health.heartbeats()}
+        self.assertFalse(rows[task]["stale"])
+        self.assertFalse(rows[task]["never_seen"])
+        # Age it past its window → stale.
+        WorkerHeartbeat.objects.filter(task_name=task).update(
+            last_seen=timezone.now() - timedelta(seconds=10_000))
+        self.assertIn(task, health.stale_tasks())
+
+    def test_ops_alerts_raises_dedupes_and_resolves(self):
+        from apps.backoffice.models import StaffNotice
+        from apps.backoffice.tasks import ops_alerts
+        from apps.core.models import OutboxEvent
+        self._dead_event()
+        r1 = ops_alerts()
+        self.assertIn("outbox_dead", r1["breaches"])
+        self.assertEqual(StaffNotice.objects.filter(
+            key="outbox_dead", resolved_at__isnull=True).count(), 1)
+        # A second run does not duplicate the open notice.
+        r2 = ops_alerts()
+        self.assertEqual(r2["raised"], 0)
+        # Clear the condition → the notice auto-resolves.
+        OutboxEvent.objects.filter(status="DEAD").update(status="PROCESSED")
+        r3 = ops_alerts()
+        self.assertEqual(r3["resolved"], 1)
+        self.assertEqual(StaffNotice.objects.filter(
+            key="outbox_dead", resolved_at__isnull=True).count(), 0)
+
+    def test_notice_bell_and_dismiss(self):
+        from apps.backoffice.models import StaffNotice
+        n = StaffNotice.objects.create(key="outbox_dead", level="CRITICAL",
+                                       title="Dead letters", message="inspect")
+        # Any operator sees the bell (no extra capability).
+        res = op_client(self.support).get("/api/ops/notices/")
+        self.assertEqual(res.status_code, 200)
+        self.assertEqual(res.data["count"], 1)
+        self.assertEqual(res.data["critical"], 1)
+        d = op_client(self.support).post(f"/api/ops/notices/{n.id}/dismiss/")
+        self.assertEqual(d.status_code, 200)
+        n.refresh_from_db()
+        self.assertIsNotNone(n.dismissed_at)
+        self.assertEqual(op_client(self.support).get("/api/ops/notices/").data["count"], 0)
