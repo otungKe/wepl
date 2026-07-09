@@ -160,7 +160,7 @@ export default function Transaction360Page() {
 
       {data.journal && (
         <div className="mt-5">
-          <Card title="Journal (the money truth)">
+          <Card title="Accounting · accounts debited & credited">
             {data.journal.length === 0 ? (
               <p className="text-sm text-slate-400">No journal posted — this movement never reached the books.</p>
             ) : data.journal.map((j) => (
