@@ -179,6 +179,7 @@ class DisbursementService:
             amount=req.amount,
             transaction_type='WITHDRAWAL',
             note=f"Approved disbursement: {req.reason[:80]}",
+            financial_transaction=ft,
         )
 
         # ── Notify requester ──────────────────────────────────────────────────

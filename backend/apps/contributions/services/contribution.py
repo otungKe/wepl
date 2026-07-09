@@ -248,6 +248,8 @@ class ContributionService:
             contribution=contribution,
             initial_state=FinancialTransaction.State.SUCCESS,
         )
+        tx.financial_transaction = ft
+        tx.save(update_fields=['financial_transaction'])
 
         # ── Double-entry posting — the source of truth ────────────────────────
         post_journal(

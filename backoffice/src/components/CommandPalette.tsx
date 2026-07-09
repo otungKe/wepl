@@ -11,9 +11,10 @@ type Item =
   | { kind: 'nav'; group: string; label: string; sublabel?: string; href: string }
   | { kind: 'entity'; group: string; label: string; sublabel?: string; href: string }
 
-const GROUP_ORDER = ['Go to', 'User', 'Verification', 'Community', 'Journal']
+const GROUP_ORDER = ['Go to', 'User', 'Transaction', 'Verification', 'Community', 'Journal']
 const ENTITY_GROUP: Record<OpsSearchResult['type'], string> = {
-  user: 'User', verification: 'Verification', community: 'Community', journal: 'Journal',
+  user: 'User', transaction: 'Transaction', verification: 'Verification',
+  community: 'Community', journal: 'Journal',
 }
 
 // Backend deep-links are /admin/*; this app serves the console at the root.

@@ -66,6 +66,7 @@ export const platform = {
 
 export interface UserRow {
   id: number
+  member_number: string | null
   phone_number: string
   name: string
   is_active: boolean
@@ -145,6 +146,7 @@ export const support = {
 
 export interface TxRow {
   id: number
+  reference: string
   op_type: string
   state: string
   amount: string
@@ -159,7 +161,7 @@ export interface TxRow {
 
 export interface Tx360 {
   movement: {
-    id: number; op_type: string; op_type_label: string; state: string
+    id: number; reference: string; op_type: string; op_type_label: string; state: string
     amount: string; idempotency_key: string; note: string
     failure_reason: string; created_at: string; updated_at: string
   }

@@ -947,6 +947,78 @@ class MakerCheckerTests(TestCase):
         self.assertEqual(res.status_code, 409)
 
 
+class IdentityAndReferenceTests(TestCase):
+    """Member Number (searchable, stable) + unified transaction reference."""
+
+    def setUp(self):
+        self.member = get_user_model().objects.create_user(
+            phone_number="254700000501", name="Amina H")
+        self.viewer = make_staff("id-view@imbank.co.ke", "operations")   # users/tx view
+
+    def test_member_number_is_generated_and_opaque(self):
+        self.assertTrue(self.member.member_number)
+        self.assertTrue(self.member.member_number.startswith("WM-"))
+        # Unambiguous alphabet — no 0/1/I/L/O/U.
+        body = self.member.member_number[3:]
+        self.assertFalse(set(body) & set("01ILOU"))
+        # Stable across a phone-number change.
+        original = self.member.member_number
+        self.member.phone_number = "254711111111"
+        self.member.save()
+        self.member.refresh_from_db()
+        self.assertEqual(self.member.member_number, original)
+
+    def test_member_is_searchable_by_member_number(self):
+        mn = self.member.member_number
+        res = op_client(self.viewer).get("/api/ops/users/", {"q": mn})
+        self.assertEqual(res.status_code, 200)
+        self.assertEqual(res.data["results"][0]["id"], self.member.pk)
+        self.assertEqual(res.data["results"][0]["member_number"], mn)
+        # ⌘K federated search finds them too.
+        gs = op_client(self.viewer).get("/api/ops/search/", {"q": mn})
+        self.assertTrue(any(r["type"] == "user" and r["id"] == self.member.pk
+                            for r in gs.data["results"]))
+
+    def test_transaction_reference_unified_and_searchable(self):
+        from decimal import Decimal
+        from apps.ledger.models import FinancialTransaction
+        ft = FinancialTransaction.objects.create(
+            op_type="CONTRIBUTION", amount=Decimal("10.00"), idempotency_key="idref-1",
+            initiated_by=self.member, mpesa_receipt="UG98TARRBR")
+        expected = f"WEPL-TXN-{ft.pk:06d}"
+        self.assertEqual(ft.reference, expected)
+
+        # Registry search by the member-facing reference resolves to the FT.
+        for term in (expected, str(ft.pk), f"wepl-txn-{ft.pk}"):
+            res = op_client(self.viewer).get("/api/ops/transactions/", {"q": term})
+            self.assertEqual(res.data["count"], 1, term)
+            self.assertEqual(res.data["results"][0]["reference"], expected)
+
+        # …and by the M-Pesa receipt (the other handle the member sees).
+        res = op_client(self.viewer).get("/api/ops/transactions/", {"q": "UG98TARRBR"})
+        self.assertEqual(res.data["count"], 1)
+
+        # ⌘K global search now includes transactions.
+        gs = op_client(self.viewer).get("/api/ops/search/", {"q": expected})
+        self.assertTrue(any(r["type"] == "transaction" and r["id"] == ft.pk
+                            for r in gs.data["results"]))
+
+    def test_contribution_transaction_links_ft_and_mobile_ref_matches(self):
+        # The mobile serializer's platform_ref must equal the FT reference (both
+        # sides quote the same handle).
+        from apps.contributions.serializers import ContributionTransactionSerializer
+        from apps.contributions.services import ContributionService
+        from apps.contributions.tests import approve_kyc
+        approve_kyc(self.member)   # contribute() requires Tier-1
+        contrib = ContributionService.create_contribution(self.member, {"title": "Ref Pool"})
+        tx = ContributionService.contribute(
+            self.member, contrib.id, 10, mpesa_receipt="RCPTUNIFY")
+        tx.refresh_from_db()
+        self.assertIsNotNone(tx.financial_transaction_id)
+        ref = ContributionTransactionSerializer(tx).data["platform_ref"]
+        self.assertEqual(ref, f"WEPL-TXN-{tx.financial_transaction_id:06d}")
+
+
 class ExportsTests(TestCase):
     """OP-4: streamed-CSV exports — capability-gated, audited, correct content."""
 

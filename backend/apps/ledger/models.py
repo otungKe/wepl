@@ -135,6 +135,13 @@ class FinancialTransaction(models.Model):
     def __str__(self):
         return f"FT-{self.id} [{self.op_type}/{self.state}] KES {self.amount}"
 
+    @property
+    def reference(self) -> str:
+        """Canonical platform reference (the book of record), e.g.
+        ``WEPL-TXN-000001``. Shown to members and searchable in ops so both sides
+        quote the same handle."""
+        return f"WEPL-TXN-{self.id:06d}"
+
     def save(self, *args, **kwargs):
         """
         Block direct `.state = '...'` assignments on existing records.

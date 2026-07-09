@@ -217,6 +217,10 @@ class ContributionTransactionSerializer(serializers.ModelSerializer):
         return obj.user.name or None
 
     def get_platform_ref(self, obj):
+        # Prefer the ledger movement's reference (the book of record) so members
+        # and ops quote the same handle. The FK id is on the row — no extra query.
+        if obj.financial_transaction_id:
+            return f"WEPL-TXN-{obj.financial_transaction_id:06d}"
         return f"WEPL-TXN-{obj.id:06d}"
 
 

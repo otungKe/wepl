@@ -48,7 +48,7 @@ export default function TransactionsRegistry() {
           <div className="flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 dark:border-slate-700 dark:bg-slate-900">
             <Search className="h-4 w-4 text-slate-400" />
             <input value={q} onChange={(e) => setQ(e.target.value)}
-              placeholder="Phone, receipt, key or ID…"
+              placeholder="Phone, receipt, WEPL-TXN ref…"
               className="w-52 bg-transparent text-sm outline-none placeholder:text-slate-400" />
           </div>
           {can('reporting.export') && (
@@ -107,7 +107,7 @@ export default function TransactionsRegistry() {
                       <span className="font-medium text-slate-800 dark:text-slate-100">
                         {r.op_type.replace(/_/g, ' ').toLowerCase()}
                       </span>
-                      <span className="block font-mono text-[10px] text-slate-400">#{r.id}</span>
+                      <span className="block font-mono text-[10px] text-slate-400">{r.reference}</span>
                     </Link>
                   </td>
                   <td className="px-4 py-2.5 text-right font-mono text-xs tabular-nums">{r.amount}</td>

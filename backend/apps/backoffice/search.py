@@ -33,14 +33,36 @@ def _users(q: str, limit: int) -> list[dict]:
     from django.db.models import Q
     from apps.users.models import User
     qs = (User.objects
-          .filter(Q(phone_number__icontains=q) | Q(name__icontains=q))
+          .filter(Q(phone_number__icontains=q) | Q(name__icontains=q)
+                  | Q(member_number__icontains=q))
           .order_by("-date_joined")[:limit])
     return [{
         "type": "user", "id": u.id,
         "label": u.name or u.phone_number,
-        "sublabel": u.phone_number,
+        "sublabel": " · ".join(x for x in (u.member_number, u.phone_number) if x),
         "url": f"/admin/users/{u.id}",
     } for u in qs]
+
+
+def _transactions(q: str, limit: int) -> list[dict]:
+    from django.db.models import Q
+    from apps.ledger.models import FinancialTransaction
+    from .views_transactions import _ref_to_pk
+    cond = (Q(mpesa_receipt__iexact=q)
+            | Q(initiated_by__phone_number__icontains=q)
+            | Q(idempotency_key__iexact=q))
+    pk = _ref_to_pk(q)   # bare id or WEPL-TXN-000123
+    if pk is not None:
+        cond |= Q(pk=pk)
+    qs = (FinancialTransaction.objects.filter(cond)
+          .select_related("initiated_by").order_by("-id")[:limit])
+    return [{
+        "type": "transaction", "id": ft.id,
+        "label": f"{ft.reference} · {ft.get_op_type_display()}",
+        "sublabel": f"KES {ft.amount} · {ft.state.lower()}"
+                    + (f" · {ft.mpesa_receipt}" if ft.mpesa_receipt else ""),
+        "url": f"/admin/transactions/{ft.id}",
+    } for ft in qs]
 
 
 def _communities(q: str, limit: int) -> list[dict]:
@@ -86,6 +108,7 @@ def _journals(q: str, limit: int) -> list[dict]:
 
 SEARCHERS: list[Searcher] = [
     Searcher("user",         "users.view",         _users),
+    Searcher("transaction",  "transactions.view",  _transactions),
     Searcher("verification", "verification.view",  _verification),
     Searcher("community",    "communities.view",   _communities),
     Searcher("journal",      "ledger.view",        _journals),

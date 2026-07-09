@@ -16,6 +16,19 @@ from django.db.models import Count, Q
 from django.shortcuts import get_object_or_404
 from rest_framework.response import Response
 
+_REF_PREFIX = "WEPL-TXN-"
+
+
+def _ref_to_pk(q: str):
+    """A bare id or a ``WEPL-TXN-000123`` reference → the FT id (else None).
+
+    Plain string parsing (no regex) so a user-controlled search term can't drive
+    catastrophic backtracking. ``int`` handles any leading zeros."""
+    s = (q or "").strip()
+    if s[:len(_REF_PREFIX)].upper() == _REF_PREFIX:
+        s = s[len(_REF_PREFIX):]
+    return int(s) if s.isdigit() else None
+
 from apps.ledger.models import FinancialTransaction
 
 from .capabilities import has_capability
@@ -38,6 +51,7 @@ def _row(ft):
     fund_label, community = _fund_of(ft)
     return {
         "id": ft.pk,
+        "reference": ft.reference,
         "op_type": ft.op_type,
         "state": ft.state,
         "amount": str(ft.amount),
@@ -66,12 +80,13 @@ def filter_transactions(params):
         qs = qs.filter(op_type=params["op_type"])
     if params.get("q"):
         q = params["q"].strip()
+        pk = _ref_to_pk(q)   # bare id or WEPL-TXN-000123 → FT id
         qs = qs.filter(
             Q(initiated_by__phone_number__icontains=q)
             | Q(recipient_phone__icontains=q)
             | Q(idempotency_key__iexact=q)
             | Q(mpesa_receipt__iexact=q)
-            | (Q(pk=q) if q.isdigit() else Q()))
+            | (Q(pk=pk) if pk is not None else Q()))
     return qs.order_by("-created_at")
 
 
@@ -122,6 +137,7 @@ class Transaction360View(OpsAPIView):
         payload = {
             "movement": {
                 "id": ft.pk,
+                "reference": ft.reference,
                 "op_type": ft.op_type,
                 "op_type_label": ft.get_op_type_display(),
                 "state": ft.state,
