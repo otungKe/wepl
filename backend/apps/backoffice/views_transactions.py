@@ -154,6 +154,8 @@ class Transaction360View(OpsAPIView):
                                  if ft.initiated_by_id else "system"),
                 "initiated_by_phone": (ft.initiated_by.phone_number
                                        if ft.initiated_by_id else None),
+                "initiated_by_member_no": (ft.initiated_by.member_number
+                                           if ft.initiated_by_id else None),
                 "recipient_phone": ft.recipient_phone,
             },
             "context": {
