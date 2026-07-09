@@ -31,7 +31,6 @@ def _ref_to_pk(q: str):
 
 from apps.ledger.models import FinancialTransaction
 
-from .capabilities import has_capability
 from .permissions import RequireCapability
 from .views import OpsAPIView
 
@@ -126,7 +125,8 @@ class TransactionsListView(OpsAPIView):
 class Transaction360View(OpsAPIView):
     """GET /api/ops/transactions/<id>/ — the Transaction 360: the movement,
     its parties and fund context, the control decisions that examined it, and
-    the journal truth behind it (ledger.view holders only)."""
+    the double-entry journal behind it — which accounts were debited and
+    credited (shown to any transactions.view holder)."""
     permission_classes = [RequireCapability("transactions.view")]
 
     def get(self, request, tx_id):
@@ -169,11 +169,12 @@ class Transaction360View(OpsAPIView):
                 "mpesa_receipt": ft.mpesa_receipt,
             },
             "controls": self._controls(ft),
+            # The accounting truth of THIS movement — which accounts were debited
+            # and credited. Shown to anyone who may view the transaction: a
+            # movement without its double-entry is only half the story. (Browsing
+            # the whole ledger / trial balance stays gated behind ledger.view.)
+            "journal": self._journal(ft),
         }
-        # The money truth — gated separately: seeing movements is
-        # transactions.view; reading the books is ledger.view.
-        if has_capability(request.user, "ledger.view"):
-            payload["journal"] = self._journal(ft)
         return Response(payload)
 
     @staticmethod

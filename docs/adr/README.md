@@ -16,6 +16,7 @@ add a new ADR that supersedes the old one (note it in both).
 | [0006](0006-transactional-outbox.md) | Transactional outbox for durable domain events | Proposed |
 | [0007](0007-controls-at-posting-chokepoint.md) | Limits & risk controls live at the posting chokepoint | Proposed |
 | [0023](0023-identity-verification-provider.md) | Identity-verification provider port/adapter | Accepted |
+| [0024](0024-fee-and-tax-postings.md) | Fee, excise-duty and withholding postings | Proposed |
 
 ## Template
 

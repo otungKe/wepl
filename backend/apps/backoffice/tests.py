@@ -537,24 +537,22 @@ class OpsTransactionsModuleTests(TestCase):
             "/api/ops/transactions/", {"state": "FAILED"})
         self.assertEqual(none.data["count"], 0)
 
-    def test_transaction_360_gates_journal_by_capability(self):
-        url = f"/api/ops/transactions/{self.ft.pk}/"
-        # transactions.view only → movement yes, journal absent.
-        res = op_client(self.support_agent).get(url)
-        self.assertEqual(res.status_code, 200)
-        self.assertEqual(res.data["movement"]["state"], "SUCCESS")
-        self.assertEqual(res.data["rail"]["mpesa_receipt"], "QA12ZZ99XY")
-        self.assertNotIn("journal", res.data)
-
-        # finance holds ledger.view → balanced journal lines included.
-        res = op_client(self.finance).get(url)
-        self.assertIn("journal", res.data)
-        lines = res.data["journal"][0]["lines"]
-        self.assertGreaterEqual(len(lines), 2)
+    def test_transaction_360_shows_debits_and_credits_to_any_viewer(self):
         from decimal import Decimal
-        debits = sum(Decimal(l["amount"]) for l in lines if l["direction"] == "DEBIT")
-        credits = sum(Decimal(l["amount"]) for l in lines if l["direction"] == "CREDIT")
-        self.assertEqual(debits, credits)   # the 360 shows balanced truth
+        url = f"/api/ops/transactions/{self.ft.pk}/"
+        # Every transaction viewer sees which accounts were debited/credited —
+        # a movement without its double-entry is only half the story.
+        for staff in (self.support_agent, self.finance):
+            res = op_client(staff).get(url)
+            self.assertEqual(res.status_code, 200)
+            self.assertIn("journal", res.data)
+            lines = res.data["journal"][0]["lines"]
+            self.assertGreaterEqual(len(lines), 2)
+            debits = sum(Decimal(l["amount"]) for l in lines if l["direction"] == "DEBIT")
+            credits = sum(Decimal(l["amount"]) for l in lines if l["direction"] == "CREDIT")
+            self.assertEqual(debits, credits)   # balanced truth
+            # Each line names the account it touched.
+            self.assertTrue(all(l["account_code"] and l["account_name"] for l in lines))
 
     def test_requires_transactions_view(self):
         dev = make_staff("dev-tx@imbank.co.ke", "developer")   # no transactions.view
