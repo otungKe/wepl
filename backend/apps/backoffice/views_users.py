@@ -124,7 +124,7 @@ class OpsUser360View(OpsAPIView):
         from apps.contributions.models import ContributionParticipant, EmergencyAdvance
         from apps.controls.models import ControlOverride, HeldMovement
         from apps.ledger.balances import account_balance
-        from apps.ledger.coa import member_fund_account
+        from apps.ledger.models import Account
 
         positions = []
         total = Decimal("0")
@@ -132,12 +132,15 @@ class OpsUser360View(OpsAPIView):
                  .filter(user=u, is_active=True)
                  .select_related("contribution")[:20])
         for part in parts:
-            acct = member_fund_account(user=u, fund_type="contribution",
-                                       fund_id=part.contribution_id)
-            bal = account_balance(acct)
+            # Read-only: resolve the member's sub-ledger account if it exists (a
+            # participant who never funded has none → zero). Never get-or-create
+            # on a 360 view — a read must not mint chart-of-accounts rows.
+            acct = Account.objects.filter(
+                owner=u, fund_type="contribution", fund_id=part.contribution_id).first()
+            bal = account_balance(acct) if acct else Decimal("0")
             total += bal
             positions.append({"contribution_id": part.contribution_id,
-                              "name": part.contribution.name,
+                              "name": part.contribution.title,
                               "balance": str(bal)})
         from django.utils import timezone
         return {

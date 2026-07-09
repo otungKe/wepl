@@ -374,6 +374,20 @@ class OpsUsersModuleTests(TestCase):
         self.assertEqual(res.data["financial"]["open_holds"], 0)
         self.assertIn("sessions", res.data)
 
+    def test_user_360_with_contribution_does_not_error(self):
+        # Regression: a member with an active contribution must not 500 the 360.
+        # The financial block read Contribution.name, which doesn't exist (it's
+        # .title) — so any funded member's 360 failed to load.
+        from apps.contributions.services import ContributionService
+        ContributionService.create_contribution(self.member, {"title": "Harambee Pool"})
+        res = op_client(self.viewer).get(f"/api/ops/users/{self.member.pk}/")
+        self.assertEqual(res.status_code, 200)
+        positions = res.data["financial"]["positions"]
+        self.assertTrue(any(p["name"] == "Harambee Pool" for p in positions))
+        # A 360 read must not have minted a sub-ledger account as a side effect.
+        from apps.ledger.models import Account
+        self.assertFalse(Account.objects.filter(owner=self.member).exists())
+
     def test_staff_accounts_never_appear(self):
         staff_user = get_user_model().objects.create_user(
             phone_number="254700000096", is_staff=True)
