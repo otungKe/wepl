@@ -12,9 +12,10 @@ TOTP is time-based (RFC 6238): a secret shared once at enrolment plus the curren
 verification needs no network round-trip and adds no SMS dependency to the money
 path. See the Production Operations Roadmap (OP-3).
 
-Hardening follow-up: ``totp_secret`` is stored as issued. It sits in the same
-trust boundary as the operator password hash; encrypting it at rest (a
-field-level KMS/Fernet layer) is a deliberate later step, noted on the model.
+The seed is a *recoverable* secret (the server decrypts it to compute the
+expected code), so ``StaffAccount.totp_secret`` is encrypted at rest via
+``apps.core.encryption.EncryptedTextField`` (Fernet). Recovery codes only need
+equality checks, so they stay one-way hashed like passwords.
 """
 from __future__ import annotations
 

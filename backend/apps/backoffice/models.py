@@ -21,6 +21,8 @@ from django.contrib.auth.models import Group
 from django.db import models
 from django.utils import timezone
 
+from apps.core.encryption import EncryptedTextField
+
 
 class StaffAccountManager(BaseUserManager):
     use_in_migrations = True
@@ -75,10 +77,11 @@ class StaffAccount(AbstractBaseUser):
     updated_at = models.DateTimeField(auto_now=True)
 
     # Step-up (TOTP) — a fresh code grants a short elevated window for destructive
-    # levers. See stepup.py and the Production Operations Roadmap (OP-3). The
-    # secret sits in the same trust boundary as the password hash; encrypting it
-    # at rest is a noted hardening follow-up.
-    totp_secret = models.CharField(max_length=64, blank=True, default="")
+    # levers. See stepup.py and the Production Operations Roadmap (OP-3). The seed
+    # is a recoverable secret (the server decrypts it to compute the expected
+    # code), so it is encrypted at rest via EncryptedTextField; recovery codes
+    # below stay one-way hashed.
+    totp_secret = EncryptedTextField(blank=True, default="")
     totp_confirmed_at = models.DateTimeField(null=True, blank=True)
     totp_recovery_codes = models.JSONField(default=list, blank=True)
 

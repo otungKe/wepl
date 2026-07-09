@@ -8,6 +8,12 @@ BASE_DIR = Path(__file__).resolve().parent.parent.parent
 
 SECRET_KEY = config('SECRET_KEY')
 
+# Field-level encryption keys (urlsafe-base64 Fernet keys) for secrets stored at
+# rest, e.g. operator TOTP seeds. The first key encrypts; all can decrypt, so
+# rotation = prepend a new key. When empty, a key is derived from SECRET_KEY so
+# dev/test need no config; production sets explicit keys. See apps/core/encryption.
+FIELD_ENCRYPTION_KEYS = config('FIELD_ENCRYPTION_KEYS', default='', cast=Csv())
+
 # Staging only — allows OTP "000000" to pass without a real SMS gateway.
 # Set STAGING_OTP_BYPASS=true in env. Must never be true in production.
 STAGING_OTP_BYPASS = config('STAGING_OTP_BYPASS', default=False, cast=bool)

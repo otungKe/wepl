@@ -610,6 +610,24 @@ class StepUpTOTPTests(TestCase):
         self.assertFalse(self.staff.verify_stepup(recovery))
         self.assertEqual(len(self.staff.totp_recovery_codes), 9)
 
+    def test_totp_secret_is_encrypted_at_rest(self):
+        from django.db import connection
+        self.staff.begin_totp_enrollment()
+        secret = self.staff.totp_secret
+        self.staff.confirm_totp_enrollment(self._current_code(secret))
+        self.assertTrue(secret)
+        table = StaffAccount._meta.db_table
+        with connection.cursor() as cur:
+            cur.execute(f"SELECT totp_secret FROM {table} WHERE id = %s", [self.staff.id])
+            raw = cur.fetchone()[0]
+        # Stored ciphertext must not be (or contain) the plaintext seed.
+        self.assertNotEqual(raw, secret)
+        self.assertNotIn(secret, raw)
+        # The ORM decrypts transparently on reload, so the seed still works.
+        fresh = StaffAccount.objects.get(pk=self.staff.pk)
+        self.assertEqual(fresh.totp_secret, secret)
+        self.assertTrue(fresh.verify_stepup(self._current_code(secret)))
+
     def test_gate_rejects_foreign_and_expired_tokens(self):
         from apps.backoffice.stepup import issue_stepup_token
         other = make_staff("other-stepup@imbank.co.ke", "operations")

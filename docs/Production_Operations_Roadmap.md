@@ -84,7 +84,8 @@ completes.
 Acceptable for two founders; indefensible for an ops team.
 
 > **Status — step-up (TOTP) shipped.** Part 1 below is implemented:
-> `StaffAccount` carries a TOTP secret + hashed single-use recovery codes;
+> `StaffAccount` carries an **encrypted-at-rest** TOTP secret (Fernet via
+> `apps/core/encryption.EncryptedTextField`) + hashed single-use recovery codes;
 > `/api/ops/auth/totp/setup|confirm/` and `/api/ops/auth/step-up/` handle
 > enrolment and elevation; `RequireStepUp` now enforces a fresh, per-operator
 > `X-Ops-StepUp` elevation token (5-min) and gates the destructive levers that
