@@ -147,9 +147,11 @@ REST_FRAMEWORK = {
         'apps.tenants.auth.TenantJWTAuthentication',
     ),
     'EXCEPTION_HANDLER': 'apps.core.exceptions.custom_exception_handler',
+    # Fail-open throttles: a Redis outage degrades rate limiting instead of
+    # 500-ing every endpoint (the throttle runs in initial(), before the view).
     'DEFAULT_THROTTLE_CLASSES': [
-        'rest_framework.throttling.AnonRateThrottle',
-        'rest_framework.throttling.UserRateThrottle',
+        'apps.core.throttling.ResilientAnonRateThrottle',
+        'apps.core.throttling.ResilientUserRateThrottle',
     ],
     'DEFAULT_THROTTLE_RATES': {
         'anon': '60/minute',

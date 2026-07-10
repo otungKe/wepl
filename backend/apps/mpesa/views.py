@@ -27,8 +27,9 @@ from django.utils import timezone
 from rest_framework import status
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
-from rest_framework.throttling import UserRateThrottle
 from rest_framework.views import APIView
+
+from apps.core.throttling import ResilientUserRateThrottle
 
 from apps.contributions.models import Contribution, WelfareFund, SharesFund
 from apps.core.exceptions import TransitionError
@@ -43,9 +44,10 @@ logger = logging.getLogger(__name__)
 _KE_MSISDN = re.compile(r"^254(7|1)\d{8}$")
 
 
-class STKPushThrottle(UserRateThrottle):
+class STKPushThrottle(ResilientUserRateThrottle):
     """Per-user rate limit on STK pushes (rate: settings 'stk_push'). Curbs
-    prompt-spam now that a push may target a number other than the caller's."""
+    prompt-spam now that a push may target a number other than the caller's.
+    Fails open on a cache outage (see apps.core.throttling)."""
     scope = 'stk_push'
 
 
