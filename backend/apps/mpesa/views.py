@@ -299,6 +299,10 @@ class C2BCallbackView(APIView):
         amount        = data.get("TransAmount") or data.get("Amount", 0)
         bill_ref      = data.get("BillRefNumber") or data.get("AccountReference", "")
         trans_time    = data.get("TransTime") or data.get("TransactionDate", "")
+        # Payer's registered M-Pesa name — Daraja sends these on C2B confirmation.
+        first_name    = (data.get("FirstName") or "").strip()
+        middle_name   = (data.get("MiddleName") or "").strip()
+        last_name     = (data.get("LastName") or "").strip()
 
         if not mpesa_receipt:
             return Response({"ResultCode": 0, "ResultDesc": "Accepted"})
@@ -319,6 +323,9 @@ class C2BCallbackView(APIView):
             mpesa_receipt=mpesa_receipt,
             transaction_date=tx_date,
             bill_ref_number=bill_ref,
+            first_name=first_name,
+            middle_name=middle_name,
+            last_name=last_name,
         )
 
         try:
@@ -383,6 +390,11 @@ class B2CResultView(APIView):
                     ft.id, conversation_id,
                 )
                 return Response({"ResultCode": 0, "ResultDesc": "Accepted"})
+
+            # Capture the recipient's registered M-Pesa name if Daraja disclosed it.
+            if event.counterparty_name and not ft.counterparty_name:
+                ft.counterparty_name = event.counterparty_name
+                ft.save(update_fields=["counterparty_name"])
 
             _on_b2c_success(ft, receipt)
 

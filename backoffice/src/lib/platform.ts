@@ -153,6 +153,7 @@ export interface TxRow {
   initiated_by_id: number | null
   initiated_by: string
   recipient_phone: string
+  counterparty_name: string
   fund: string | null
   community_id: number | null
   mpesa_receipt: string | null
@@ -168,7 +169,7 @@ export interface Tx360 {
   parties: {
     initiated_by_id: number | null; initiated_by: string
     initiated_by_phone: string | null; initiated_by_member_no: string | null
-    recipient_phone: string
+    recipient_phone: string; counterparty_name: string | null
   }
   context: {
     fund: string | null; community_id: number | null

@@ -112,6 +112,7 @@ export default function Transaction360Page() {
             {data.parties.initiated_by_phone && <Row k="Phone" v={<span className="font-mono text-xs">{data.parties.initiated_by_phone}</span>} />}
             {data.parties.initiated_by_member_no && <Row k="Member no." v={<span className="font-mono text-xs">{data.parties.initiated_by_member_no}</span>} />}
             {data.parties.recipient_phone && <Row k="Recipient" v={<span className="font-mono text-xs">{data.parties.recipient_phone}</span>} />}
+            {data.parties.counterparty_name && <Row k="M-Pesa name" v={data.parties.counterparty_name} />}
           </dl>
         </Card>
 

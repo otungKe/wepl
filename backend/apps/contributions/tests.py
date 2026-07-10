@@ -70,6 +70,22 @@ def make_contribution(creator, community=None, ctype="POOL", cycle_amount=None):
     return ContributionService.create_contribution(creator, data)
 
 
+class DisbursementRecipientMaskingTests(TestCase):
+    """The member-facing serializer masks the payout recipient's phone (a
+    counterparty number shown to the whole group). Operators see it in full via
+    the ops console; members see only enough to recognise it."""
+
+    def test_recipient_phone_is_masked_in_serializer(self):
+        from types import SimpleNamespace
+        from apps.contributions.serializers import DisbursementRequestSerializer
+        masked = DisbursementRequestSerializer().get_recipient_phone(
+            SimpleNamespace(recipient_phone="254712345678"))
+        self.assertIn("*", masked)
+        self.assertNotEqual(masked, "254712345678")
+        self.assertTrue(masked.endswith("678"))     # still recognisable
+        self.assertTrue(masked.startswith("254712"))
+
+
 # ---------------------------------------------------------------------------
 # Core contribution flow
 # ---------------------------------------------------------------------------

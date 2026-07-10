@@ -25,6 +25,16 @@ def _to_int_amount(amount: Money) -> int:
     return int(amount.quantized(0))
 
 
+def _public_name(public: str | None) -> str | None:
+    """Extract the name from a Daraja "PublicName" field, e.g.
+    ``"254708374149 - JOHN DOE"`` → ``"JOHN DOE"``. Returns None when absent or
+    when only the number (no name) is present."""
+    if not public:
+        return None
+    name = public.split(' - ', 1)[-1].strip() if ' - ' in public else ''
+    return name or None
+
+
 class MpesaProvider(PaymentProvider):
     name = 'mpesa'
 
@@ -101,11 +111,13 @@ class MpesaProvider(PaymentProvider):
         result = (payload.get('Result', {}) or {})
         result_code = result.get('ResultCode')
         success = str(result_code) == '0'
-        receipt = None
+        receipt = name = None
         if success:
             params = (result.get('ResultParameters', {}) or {}).get('ResultParameter', []) or []
             meta = {p.get('Key'): p.get('Value') for p in params}
             receipt = meta.get('TransactionReceipt') or meta.get('TransactionID')
+            # Daraja returns the recipient as "2547… - JOHN DOE"; keep the name.
+            name = _public_name(meta.get('ReceiverPartyPublicName'))
         return CallbackEvent(
             kind='payout',
             success=success,
@@ -113,5 +125,6 @@ class MpesaProvider(PaymentProvider):
             result_desc=result.get('ResultDesc', ''),
             code='' if result_code is None else str(result_code),
             receipt=receipt,
+            counterparty_name=name,
             raw=payload,
         )

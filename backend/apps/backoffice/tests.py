@@ -570,6 +570,24 @@ class OpsTransactionsModuleTests(TestCase):
         dev = make_staff("dev-tx@imbank.co.ke", "developer")   # no transactions.view
         self.assertEqual(op_client(dev).get("/api/ops/transactions/").status_code, 403)
 
+    def test_counterparty_name_shown_in_full_to_ops(self):
+        # A payout whose recipient M-Pesa name was captured from the B2C callback.
+        from decimal import Decimal
+        from apps.ledger.models import FinancialTransaction
+        ft = FinancialTransaction.objects.create(
+            op_type="DISBURSEMENT", amount=Decimal("2000.00"),
+            idempotency_key="cp-name-1", initiated_by=self.member,
+            recipient_phone="254712345678", counterparty_name="JOHN DOE",
+            mpesa_receipt="CPNAME01")
+        c = op_client(self.support_agent)
+        # Registry row carries it.
+        row = c.get("/api/ops/transactions/", {"q": "CPNAME01"}).data["results"][0]
+        self.assertEqual(row["counterparty_name"], "JOHN DOE")
+        # Transaction 360 parties block shows it, and the phone is unmasked for ops.
+        d = c.get(f"/api/ops/transactions/{ft.pk}/").data
+        self.assertEqual(d["parties"]["counterparty_name"], "JOHN DOE")
+        self.assertEqual(d["parties"]["recipient_phone"], "254712345678")
+
     def test_pool_linked_transaction_renders_in_registry_and_360(self):
         # Regression: a transaction tied to a contribution pool must not 500 the
         # registry or the 360. _fund_of read Contribution.name — the field is

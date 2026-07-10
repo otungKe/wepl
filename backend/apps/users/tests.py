@@ -244,6 +244,26 @@ class PhoneNormalizationTests(SimpleTestCase):
             self.assertEqual(normalize_phone(raw), expected, f"{raw!r}")
 
 
+class PhoneMaskingTests(SimpleTestCase):
+    """mask_phone reveals a leading prefix + last 3 digits, hides the middle —
+    the client-facing view of a counterparty number (ops see it in full)."""
+
+    def test_masks_middle_keeps_prefix_and_last_three(self):
+        from apps.users.phone import mask_phone
+        masked = mask_phone("254712345678")
+        self.assertTrue(masked.startswith("254712"))
+        self.assertTrue(masked.endswith("678"))
+        self.assertIn("*", masked)
+        self.assertNotIn("345", masked)          # middle digits hidden
+        self.assertEqual(len(masked), len("254712345678"))
+
+    def test_short_or_empty_inputs(self):
+        from apps.users.phone import mask_phone
+        self.assertEqual(mask_phone(""), "")
+        self.assertEqual(mask_phone(None), "")
+        self.assertNotIn("2345", mask_phone("12345"))   # too short → fully hidden
+
+
 class CrossFormatLoginTests(TestCase):
     """An account is reachable from any client regardless of the phone shape
     the caller types — the regression behind 'correct phone & PIN rejected'."""

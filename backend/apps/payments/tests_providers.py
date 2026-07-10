@@ -116,12 +116,25 @@ class MpesaProviderTests(SimpleTestCase):
             "ConversationID": "AG_1", "ResultCode": 0, "ResultDesc": "done",
             "ResultParameters": {"ResultParameter": [
                 {"Key": "TransactionReceipt", "Value": "NLJ7RT61SV"},
+                {"Key": "ReceiverPartyPublicName", "Value": "254708374149 - JOHN DOE"},
             ]},
         }}
         ev = self.p.parse_callback(payload, kind="payout")
         self.assertTrue(ev.success)
         self.assertEqual(ev.provider_ref, "AG_1")
         self.assertEqual(ev.receipt, "NLJ7RT61SV")
+        # The recipient's registered M-Pesa name is captured (number stripped).
+        self.assertEqual(ev.counterparty_name, "JOHN DOE")
+
+    def test_parse_b2c_without_public_name(self):
+        payload = {"Result": {
+            "ConversationID": "AG_2", "ResultCode": 0, "ResultDesc": "done",
+            "ResultParameters": {"ResultParameter": [
+                {"Key": "TransactionReceipt", "Value": "NLJ7RT61SW"},
+            ]},
+        }}
+        ev = self.p.parse_callback(payload, kind="payout")
+        self.assertIsNone(ev.counterparty_name)
 
 
 class RegistryTests(SimpleTestCase):

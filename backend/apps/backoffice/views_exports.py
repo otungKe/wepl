@@ -73,8 +73,8 @@ class TransactionsExportView(OpsAPIView):
             metadata={"filters": {k: p.get(k) for k in ("state", "op_type", "q") if p.get(k)}})
 
         header = ["id", "created_at", "op_type", "state", "amount",
-                  "initiated_by_phone", "recipient_phone", "fund", "mpesa_receipt",
-                  "idempotency_key"]
+                  "initiated_by_phone", "recipient_phone", "counterparty_name",
+                  "fund", "mpesa_receipt", "idempotency_key"]
 
         def rows():
             for ft in qs.iterator():
@@ -82,7 +82,8 @@ class TransactionsExportView(OpsAPIView):
                 yield [
                     ft.id, ft.created_at.isoformat(), ft.op_type, ft.state, ft.amount,
                     ft.initiated_by.phone_number if ft.initiated_by_id else "",
-                    ft.recipient_phone, fund_label or "", ft.mpesa_receipt or "",
+                    ft.recipient_phone, ft.counterparty_name,
+                    fund_label or "", ft.mpesa_receipt or "",
                     ft.idempotency_key,
                 ]
 
