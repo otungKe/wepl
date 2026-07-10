@@ -122,6 +122,8 @@ class FinancialTransaction(models.Model):
             models.Index(fields=['state', 'op_type'],            name='ledger_ft_state_op_idx'),
             models.Index(fields=['state', 'updated_at'],         name='ledger_ft_state_updated_idx'),
             models.Index(fields=['context_type', 'context_id'],  name='ledger_ft_context_idx'),
+            # Registry default ordering + date-range filtering at scale.
+            models.Index(fields=['-created_at'],                 name='ledger_ft_created_idx'),
         ]
 
     def __init__(self, *args, **kwargs):

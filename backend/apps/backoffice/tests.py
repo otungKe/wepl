@@ -578,6 +578,47 @@ class OpsTransactionsModuleTests(TestCase):
         self.assertEqual(res.status_code, 200)
         self.assertEqual(res.data["context"]["fund"], "Pool · Test Pool")
 
+    def test_registry_filters_by_account_amount_and_date(self):
+        from datetime import timedelta
+        from django.utils import timezone
+        base = "/api/ops/transactions/"
+        c = op_client(self.support_agent)   # self.ft: 1500, journal touches float 1000
+
+        # By ledger account touched — the M-Pesa float (code 1000).
+        res = c.get(base, {"account": "1000"})
+        self.assertEqual(res.status_code, 200)
+        self.assertTrue(any(r["id"] == self.ft.pk for r in res.data["results"]))
+        # An account the movement never touched returns nothing.
+        self.assertEqual(c.get(base, {"account": "SL-NOPE-0-U0"}).data["count"], 0)
+
+        # Amount range.
+        self.assertFalse(any(r["id"] == self.ft.pk
+                             for r in c.get(base, {"max": "1000"}).data["results"]))
+        self.assertTrue(any(r["id"] == self.ft.pk
+                            for r in c.get(base, {"min": "1000"}).data["results"]))
+
+        # Date range — tomorrow onward excludes today's movement.
+        tomorrow = (timezone.now() + timedelta(days=1)).date().isoformat()
+        self.assertEqual(c.get(base, {"date_from": tomorrow}).data["count"], 0)
+        today = timezone.now().date().isoformat()
+        self.assertTrue(any(r["id"] == self.ft.pk
+                            for r in c.get(base, {"date_from": today}).data["results"]))
+
+    def test_registry_filters_by_fund(self):
+        from decimal import Decimal
+        from apps.contributions.services import ContributionService
+        from apps.ledger.models import FinancialTransaction
+        pool = ContributionService.create_contribution(self.member, {"title": "Filter Pool"})
+        ft = FinancialTransaction.objects.create(
+            op_type="CONTRIBUTION", amount=Decimal("20.00"), idempotency_key="fund-filter-1",
+            initiated_by=self.member, contribution=pool)
+        res = op_client(self.support_agent).get(
+            "/api/ops/transactions/", {"fund_type": "contribution", "fund_id": pool.id})
+        self.assertEqual(res.status_code, 200)
+        ids = [r["id"] for r in res.data["results"]]
+        self.assertIn(ft.pk, ids)
+        self.assertNotIn(self.ft.pk, ids)   # different pool / no fund FK
+
 
 class StepUpTOTPTests(TestCase):
     """OP-3 step-up: TOTP enrolment, elevation, recovery codes, and the

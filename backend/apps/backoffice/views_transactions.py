@@ -12,11 +12,23 @@ the pipeline.
 """
 from __future__ import annotations
 
+from datetime import datetime, time
+from decimal import Decimal, InvalidOperation
+
 from django.db.models import Count, Q
 from django.shortcuts import get_object_or_404
+from django.utils import timezone
 from rest_framework.response import Response
 
+from apps.ledger.models import FinancialTransaction
+
+from .permissions import RequireCapability
+from .views import OpsAPIView
+
 _REF_PREFIX = "WEPL-TXN-"
+_FUND_FK = {"contribution": "contribution_id",
+            "welfare": "welfare_fund_id",
+            "shares": "shares_fund_id"}
 
 
 def _ref_to_pk(q: str):
@@ -29,10 +41,24 @@ def _ref_to_pk(q: str):
         s = s[len(_REF_PREFIX):]
     return int(s) if s.isdigit() else None
 
-from apps.ledger.models import FinancialTransaction
 
-from .permissions import RequireCapability
-from .views import OpsAPIView
+def _parse_date(value: str, *, end: bool):
+    """YYYY-MM-DD → aware datetime (end-of-day for the upper bound); None if blank
+    or unparseable, so a bad date is ignored rather than 500-ing the registry."""
+    if not value:
+        return None
+    try:
+        d = datetime.strptime(value.strip(), "%Y-%m-%d").date()
+    except (ValueError, AttributeError):
+        return None
+    return timezone.make_aware(datetime.combine(d, time.max if end else time.min))
+
+
+def _parse_amount(value: str):
+    try:
+        return Decimal(value.strip()) if value else None
+    except (InvalidOperation, AttributeError):
+        return None
 
 
 def _fund_of(ft):
@@ -70,8 +96,11 @@ _SELECT = ("initiated_by", "contribution__community",
 
 
 def filter_transactions(params):
-    """Shared registry filter (state / op_type / q) — used by the list view and
-    the CSV export so both honour the same query semantics."""
+    """Shared registry filter — used by the list view and the CSV export so both
+    honour the same query semantics. Every filter is optional and composable:
+    state, op_type, free-text q, date range, amount range, fund/pool, and the
+    ledger account a movement touched. The registry only ever returns what the
+    filters ask for (paginated), never the whole table."""
     qs = FinancialTransaction.objects.select_related(*_SELECT)
     if params.get("state") and params["state"] != "all":
         qs = qs.filter(state=params["state"])
@@ -86,6 +115,35 @@ def filter_transactions(params):
             | Q(idempotency_key__iexact=q)
             | Q(mpesa_receipt__iexact=q)
             | (Q(pk=pk) if pk is not None else Q()))
+
+    # Date range (on created_at), inclusive.
+    d_from = _parse_date(params.get("date_from"), end=False)
+    d_to = _parse_date(params.get("date_to"), end=True)
+    if d_from:
+        qs = qs.filter(created_at__gte=d_from)
+    if d_to:
+        qs = qs.filter(created_at__lte=d_to)
+
+    # Amount range.
+    a_min = _parse_amount(params.get("min"))
+    a_max = _parse_amount(params.get("max"))
+    if a_min is not None:
+        qs = qs.filter(amount__gte=a_min)
+    if a_max is not None:
+        qs = qs.filter(amount__lte=a_max)
+
+    # Fund / pool: transactions belonging to one pool (by its FK).
+    fk = _FUND_FK.get((params.get("fund_type") or "").strip())
+    fund_id = params.get("fund_id")
+    if fk and fund_id and str(fund_id).isdigit():
+        qs = qs.filter(**{fk: int(fund_id)})
+
+    # Ledger account: every movement whose journal touched this account (by code)
+    # — e.g. a member sub-ledger, a pool, Suspense, Fee Revenue, the float.
+    account = (params.get("account") or "").strip()
+    if account:
+        qs = qs.filter(journals__lines__account__code=account).distinct()
+
     return qs.order_by("-created_at")
 
 
