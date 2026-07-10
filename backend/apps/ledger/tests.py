@@ -192,8 +192,42 @@ class DoubleEntryTests(TestCase):
         a = coa.member_fund_account(user=self.user, fund_type='contribution', fund_id=1)
         b = coa.member_fund_account(user=self.user, fund_type='contribution', fund_id=1)
         self.assertEqual(a.pk, b.pk)
-        self.assertEqual(a.parent.code, coa.MEMBER_CONTRIB_PAYABLE)
         self.assertEqual(a.type, Account.Type.LIABILITY)
+        # Member sub-ledger now hangs off the pool control account, which hangs
+        # off the GL head (ADR-0025 Part B): member → pool → GL.
+        self.assertEqual(a.parent.owner_id, None)               # the pool account
+        self.assertEqual(a.parent.fund_id, 1)
+        self.assertEqual(a.parent.parent.code, coa.MEMBER_CONTRIB_PAYABLE)
+
+    def test_migration_reparents_members_under_pool(self):
+        # Mirror the data migration: members parented directly at the GL are
+        # re-parented under the new pool control account. (parent is structural —
+        # consumed nowhere — so this rewrites no journal.)
+        u2 = get_user_model().objects.create_user(phone_number='254799000042')
+        gl = coa.gl_account(coa.MEMBER_CONTRIB_PAYABLE)
+        m1 = Account.objects.create(code='OLDX-1', name='m', type=Account.Type.LIABILITY,
+                                    owner=self.user, fund_type='contribution', fund_id=42, parent=gl)
+        m2 = Account.objects.create(code='OLDX-2', name='m', type=Account.Type.LIABILITY,
+                                    owner=u2, fund_type='contribution', fund_id=42, parent=gl)
+        pool = coa.pool_account(fund_type='contribution', fund_id=42)
+        Account.objects.filter(owner__isnull=False, fund_type='contribution', fund_id=42
+                               ).exclude(pk=pool.pk).update(parent=pool)
+        m1.refresh_from_db(); m2.refresh_from_db()
+        self.assertEqual(m1.parent_id, pool.pk)
+        self.assertEqual(m2.parent_id, pool.pk)
+        self.assertEqual(pool.parent_id, gl.pk)
+
+    def test_pool_account_is_first_class(self):
+        pool = coa.pool_account(fund_type='contribution', fund_id=350000)
+        self.assertEqual(pool.code, '2000-0350000')
+        self.assertIsNone(pool.owner_id)
+        self.assertEqual(pool.parent.code, coa.MEMBER_CONTRIB_PAYABLE)
+        # Idempotent + race-safe on (fund_type, fund_id).
+        self.assertEqual(coa.pool_account(fund_type='contribution', fund_id=350000).pk, pool.pk)
+        from django.db import IntegrityError
+        with self.assertRaises(IntegrityError):
+            Account.objects.create(code='dup-pool', name='dup', type=Account.Type.LIABILITY,
+                                   owner=None, fund_type='contribution', fund_id=350000)
 
     def test_resolution_keys_on_structured_identity_not_code(self):
         # ADR-0025: identity is (owner, fund_type, fund_id), not the code string.
