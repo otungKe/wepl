@@ -94,7 +94,11 @@ def _send_kyc_verification_email(kyc, request):
     # Build verification URL — works for both dev (console email) and production
     verify_url = request.build_absolute_uri(f"/api/users/kyc/verify-email/?token={token}")
 
-    send_kyc_verification_email.delay(
+    # Best-effort: a broker outage must not 500 the KYC request — the token is
+    # persisted, so the member can re-request the email once the broker recovers.
+    from apps.core.dispatch import safe_enqueue
+    safe_enqueue(
+        send_kyc_verification_email,
         email=kyc.email,
         given_names=kyc.given_names,
         verify_url=verify_url,

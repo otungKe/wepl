@@ -2,8 +2,7 @@ import logging
 
 from django.shortcuts import get_object_or_404
 
-from asgiref.sync import async_to_sync
-from channels.layers import get_channel_layer
+from apps.core.dispatch import safe_group_send
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
@@ -161,8 +160,7 @@ class ConversationMessagesView(APIView):
                     'message_type': 'text', 'attachment': None,
                 }
 
-        channel_layer = get_channel_layer()
-        async_to_sync(channel_layer.group_send)(
+        safe_group_send(
             group_for_conversation_id(conversation_id),
             {
                 "type":         "chat_message",
@@ -235,8 +233,7 @@ class MessageDeleteView(APIView):
             "MessageDeleteView: user %s deleted message %s in conversation %s",
             request.user.id, message_id, message.conversation_id,
         )
-        channel_layer = get_channel_layer()
-        async_to_sync(channel_layer.group_send)(
+        safe_group_send(
             group_for_conversation_id(message.conversation_id),
             {"type": "message_delete", "id": message.id}
         )
@@ -280,9 +277,8 @@ class MessageBulkDeleteView(APIView):
             request.user.id, len(deleted_ids), conversation_id,
         )
 
-        channel_layer = get_channel_layer()
         for mid in deleted_ids:
-            async_to_sync(channel_layer.group_send)(
+            safe_group_send(
                 group_for_conversation_id(conversation_id),
                 {"type": "message_delete", "id": mid}
             )
@@ -314,8 +310,7 @@ class MessageEditView(APIView):
             "MessageEditView: user %s edited message %s in conversation %s",
             request.user.id, message_id, message.conversation_id,
         )
-        channel_layer = get_channel_layer()
-        async_to_sync(channel_layer.group_send)(
+        safe_group_send(
             group_for_conversation_id(message.conversation_id),
             {"type": "message_edit", "id": message.id, "content": message.content}
         )
@@ -349,8 +344,7 @@ class MessageReactView(APIView):
             request.user.id, action, emoji, message_id,
         )
 
-        channel_layer = get_channel_layer()
-        async_to_sync(channel_layer.group_send)(
+        safe_group_send(
             group_for_conversation_id(message.conversation_id),
             {
                 "type":         "reaction_event",

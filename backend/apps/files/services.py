@@ -72,12 +72,11 @@ class FileService:
         stored.file = uploaded_file
         stored.save()
 
+        # Best-effort enqueue — a broker outage leaves scan_status PENDING (the
+        # scan can be re-driven), it never fails the upload.
         from .tasks import scan_file
-        try:
-            scan_file.delay(str(stored.id))
-        except Exception:
-            # Broker down — leave scan_status PENDING; the scan can be re-driven.
-            pass
+        from apps.core.dispatch import safe_enqueue
+        safe_enqueue(scan_file, str(stored.id))
         return stored
 
     @staticmethod
