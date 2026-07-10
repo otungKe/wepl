@@ -445,9 +445,14 @@ class PendingSTKStatusView(APIView):
 # ---------------------------------------------------------------------------
 
 def _enqueue_stk_processing(stk_id: int) -> None:
-    """Called via on_commit — safe to import tasks here (no circular import at module load)."""
+    """Called via on_commit — safe to import tasks here (no circular import at module load).
+
+    Best-effort: a broker outage must not 500 the callback handler. The STK
+    request is committed, so the stuck-transaction sweep / ops retry lever pick it
+    up; Safaricom also re-delivers the callback if we don't 200 promptly."""
     from .tasks import process_stk_payment
-    process_stk_payment.apply_async(args=[stk_id], queue='payments')
+    from apps.core.dispatch import safe_enqueue
+    safe_enqueue(process_stk_payment, stk_id, critical=True, options={'queue': 'payments'})
 
 
 def _process_stk_sync_with_fallback(stk_id: int) -> None:
