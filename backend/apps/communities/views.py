@@ -7,8 +7,9 @@ from django.shortcuts import get_object_or_404
 from rest_framework import status
 from rest_framework.exceptions import PermissionDenied, ValidationError
 from rest_framework.response import Response
-from rest_framework.throttling import ScopedRateThrottle
 from rest_framework.views import APIView
+
+from apps.core.throttling import ResilientScopedRateThrottle
 
 from apps.audit.services import AuditService
 from apps.core.policy import can, require
@@ -428,7 +429,7 @@ class TransferOwnershipView(APIView):
 class CommunityByInviteView(APIView):
     permission_classes = [IsActiveSession]
     throttle_scope = 'invite_lookup'
-    throttle_classes = [ScopedRateThrottle]
+    throttle_classes = [ResilientScopedRateThrottle]
 
     def get(self, request, code):
         community = CommunityService.get_community_by_invite(code)
@@ -443,7 +444,7 @@ class JoinRequestCreateView(APIView):
     """POST /communities/invite/<code>/request/ — submit a join request."""
     permission_classes = [IsActiveSession]
     throttle_scope = 'join_request'
-    throttle_classes = [ScopedRateThrottle]
+    throttle_classes = [ResilientScopedRateThrottle]
 
     def post(self, request, code):
         community = CommunityService.get_community_by_invite(code)
@@ -486,7 +487,7 @@ class JoinRequestCreateByIdView(APIView):
     """
     permission_classes = [IsActiveSession]
     throttle_scope = 'join_request'
-    throttle_classes = [ScopedRateThrottle]
+    throttle_classes = [ResilientScopedRateThrottle]
 
     def post(self, request, community_id):
         community = get_object_or_404(Community, id=community_id)

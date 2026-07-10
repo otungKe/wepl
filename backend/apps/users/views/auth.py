@@ -1,13 +1,17 @@
 from ._common import *  # shared imports/helpers (ADR-0013 view split)
 
+from apps.core.throttling import ResilientAnonRateThrottle
 
-class PINLoginThrottle(AnonRateThrottle):
-    """Per-IP rate limit for PIN login — uses the 'pin_login' scope from settings."""
+
+class PINLoginThrottle(ResilientAnonRateThrottle):
+    """Per-IP rate limit for PIN login — uses the 'pin_login' scope from settings.
+    Fails open on a cache outage (see apps.core.throttling)."""
     scope = 'pin_login'
 
 
-class OTPRequestThrottle(AnonRateThrottle):
-    """Per-IP rate limit for OTP requests — uses the 'otp_request' scope from settings."""
+class OTPRequestThrottle(ResilientAnonRateThrottle):
+    """Per-IP rate limit for OTP requests — uses the 'otp_request' scope from settings.
+    Fails open on a cache outage (see apps.core.throttling)."""
     scope = 'otp_request'
 
 

@@ -71,6 +71,19 @@ CACHES = {
     "default": {
         "BACKEND": "django.core.cache.backends.redis.RedisCache",
         "LOCATION": config('REDIS_CACHE_URL', default=config('REDIS_URL')),
+        # Bound the per-process client pool so web + worker + beat can't collectively
+        # exhaust Redis's `maxclients`, and keep socket timeouts short so a slow or
+        # saturated Redis fails fast instead of pinning request threads (which then
+        # hold connections open and make the exhaustion worse). Pair with the
+        # fail-open throttles (apps.core.throttling) so a cache blip degrades rather
+        # than 500s the API.
+        "OPTIONS": {
+            "pool_class": "redis.BlockingConnectionPool",
+            "max_connections": config('REDIS_CACHE_MAX_CONNECTIONS', default=32, cast=int),
+            "timeout": 5,                  # wait up to 5s for a free pooled connection
+            "socket_connect_timeout": 2,
+            "socket_timeout": 2,
+        },
     }
 }
 
