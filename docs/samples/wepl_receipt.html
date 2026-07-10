@@ -1,0 +1,180 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<style>
+  @page { size: 380px 760px; margin: 0; }
+  * { margin: 0; padding: 0; box-sizing: border-box; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  html, body { width: 380px; }
+  body {
+    font-family: "Helvetica Neue", Helvetica, Arial, sans-serif;
+    background: #eeeeee;
+    color: #1a1a1a;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* ---------- Header ---------- */
+  .header {
+    position: relative;
+    background: linear-gradient(120deg, #ff5a00 0%, #ff7a00 55%, #ff9d1e 100%);
+    color: #ffffff;
+    padding: 20px 22px 46px;
+  }
+  .header .topbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    font-size: 15px;
+    font-weight: 600;
+  }
+  .header .topbar .back { font-size: 22px; line-height: 1; }
+  .header .topbar .title { font-weight: 600; }
+  .header .topbar .doc { font-size: 18px; opacity: .95; }
+  .header .amount {
+    text-align: center;
+    font-size: 30px;
+    font-weight: 700;
+    margin-top: 20px;
+    letter-spacing: .3px;
+  }
+
+  /* WEPL wordmark */
+  .brand {
+    text-align: center;
+    margin-top: 6px;
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 3px;
+    opacity: .92;
+  }
+
+  /* ---------- Date card ---------- */
+  .datecard {
+    background: #ffffff;
+    margin: -26px 22px 0;
+    border-radius: 6px;
+    box-shadow: 0 4px 14px rgba(0,0,0,.10);
+    padding: 16px 18px;
+    text-align: center;
+  }
+  .datecard .sub {
+    font-size: 12px;
+    color: #8a8a8a;
+    margin-bottom: 4px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .datecard .date {
+    font-size: 15px;
+    color: #6f6f6f;
+  }
+
+  /* ---------- Body sections ---------- */
+  .body { padding: 26px 22px 30px; }
+  .section { margin-bottom: 26px; }
+  .section h2 {
+    font-size: 19px;
+    font-weight: 700;
+    color: #1a1a1a;
+    margin-bottom: 16px;
+  }
+  .field { margin-bottom: 16px; }
+  .field .label {
+    font-size: 15px;
+    font-weight: 700;
+    color: #1a1a1a;
+    margin-bottom: 3px;
+  }
+  .field .value {
+    font-size: 15px;
+    color: #3a3a3a;
+  }
+  .note {
+    font-size: 14px;
+    color: #6f6f6f;
+    line-height: 1.4;
+    margin: 4px 0 16px;
+  }
+  .footer {
+    text-align: center;
+    font-size: 11px;
+    color: #9a9a9a;
+    padding: 8px 22px 22px;
+  }
+</style>
+</head>
+<body>
+
+  <div class="header">
+    <div class="topbar">
+      <span class="back">&#8592;</span>
+      <span class="title">Transaction ID: 458704175</span>
+      <span class="doc">&#128462;</span>
+    </div>
+    <div class="amount">-119.82 USD</div>
+    <div class="brand">W E P L</div>
+  </div>
+
+  <div class="datecard">
+    <div class="sub">Withdrawal &middot; Equity Bank Limited (2379)</div>
+    <div class="date">19 Oct 2022</div>
+  </div>
+
+  <div class="body">
+
+    <div class="section">
+      <h2>Transaction details</h2>
+      <div class="field">
+        <div class="label">Transaction ID</div>
+        <div class="value">458704175</div>
+      </div>
+      <div class="field">
+        <div class="label">To</div>
+        <div class="value">Equity Bank Limited (2379)</div>
+      </div>
+    </div>
+
+    <div class="section">
+      <h2>Transfer details</h2>
+      <div class="field">
+        <div class="label">Transfer ID</div>
+        <div class="value">4366183542746525</div>
+      </div>
+      <div class="field">
+        <div class="label">Transfer amount</div>
+        <div class="value">14,219.56 KES</div>
+      </div>
+      <div class="note">A transfer might include multiple transactions to the same bank account</div>
+      <div class="field">
+        <div class="label">Exchange rate</div>
+        <div class="value">1.00 USD = 118.67 KES</div>
+      </div>
+    </div>
+
+    <div class="section">
+      <h2>Transaction timeline</h2>
+      <div class="field">
+        <div class="label">Estimated deposit date</div>
+        <div class="value">20 Oct 2022*</div>
+      </div>
+      <div class="field">
+        <div class="label">Sent to bank</div>
+        <div class="value">19 Oct 2022</div>
+      </div>
+      <div class="field">
+        <div class="label">Approved</div>
+        <div class="value">19 Oct 2022</div>
+      </div>
+      <div class="field">
+        <div class="label">Under review</div>
+        <div class="value">19 Oct 2022</div>
+      </div>
+    </div>
+
+  </div>
+
+  <div class="footer">WEPL &middot; Community Finance &middot; This is a sample receipt</div>
+
+</body>
+</html>

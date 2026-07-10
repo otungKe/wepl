@@ -51,3 +51,5 @@ coverage.xml
 
 # Redis snapshot (created when running redis locally)
 dump.rdb
+# Claude Code session scratchpad
+scratchpad/
