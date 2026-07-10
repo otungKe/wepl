@@ -27,6 +27,7 @@ Response shapes:
     404  {"error": "Not found."}        — Http404
     409  {"error": "<message>"}         — TransitionError (state machine conflict)
     429  {"error": "<message>"}         — RateLimitError
+    503  {"error": "<message>"}         — ServiceUnavailable (dependency outage)
     All other exceptions fall through to Django's 500 handler (and Sentry).
 """
 from django.core.exceptions import PermissionDenied, ValidationError
@@ -78,6 +79,18 @@ class RateLimitError(Exception):
 
     Maps to HTTP 429 Too Many Requests via the custom exception handler,
     so services remain free of HTTP concerns and views need no try/except.
+    """
+
+
+class ServiceUnavailable(Exception):
+    """
+    Raised when a hard infrastructure dependency is transiently unavailable and
+    the request cannot proceed — e.g. the OTP store (cache/Redis) is down, so an
+    OTP can neither be issued nor verified.
+
+    Maps to HTTP 503 Service Unavailable (with a Retry-After hint) so the client
+    shows a clean "try again shortly" rather than a raw 500. Reserved for genuine
+    dependency outages, not validation or rate limiting.
     """
 
 
@@ -161,6 +174,15 @@ def custom_exception_handler(exc, context):
     # RateLimitError → 429 Too Many Requests
     if isinstance(exc, RateLimitError):
         return Response({'error': str(exc)}, status=status.HTTP_429_TOO_MANY_REQUESTS)
+
+    # ServiceUnavailable → 503 (transient dependency outage, e.g. OTP store down)
+    if isinstance(exc, ServiceUnavailable):
+        resp = Response(
+            {'error': str(exc) or 'Service temporarily unavailable. Please try again shortly.'},
+            status=status.HTTP_503_SERVICE_UNAVAILABLE,
+        )
+        resp['Retry-After'] = '30'
+        return resp
 
     # Controls (Phase 3): durably record the blocked movement to the review queue.
     # This runs AFTER the service's @transaction.atomic has rolled back, so the

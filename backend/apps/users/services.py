@@ -4,12 +4,27 @@ import secrets
 from django.core.cache import cache
 from django.core.exceptions import ValidationError
 
-from apps.core.exceptions import RateLimitError
+from apps.core.exceptions import RateLimitError, ServiceUnavailable
 
 from .models import User
 from .sms import get_sms_gateway
 
 logger = logging.getLogger(__name__)
+
+# OTP is *stored* in the cache (Redis), so the cache is a hard dependency for the
+# OTP flow: if it is down we can neither issue nor verify a code. Convert raw
+# cache-backend errors into a clean 503 (ServiceUnavailable) instead of a 500, and
+# never send an SMS for a code we failed to persist. RateLimitError passes through.
+_OTP_UNAVAILABLE = "Verification service is temporarily unavailable. Please try again shortly."
+
+
+def _otp_cache(fn, *args, **kwargs):
+    """Run a cache op for the OTP flow; a backend outage becomes a clean 503."""
+    try:
+        return fn(*args, **kwargs)
+    except Exception as exc:  # cache/Redis unreachable
+        logger.error("OTP cache backend unavailable: %s", exc)
+        raise ServiceUnavailable(_OTP_UNAVAILABLE) from exc
 
 
 # ─────────────────────────────────────────────────────────────
@@ -156,7 +171,7 @@ class OTPService:
     @classmethod
     def _is_rate_limited(cls, phone: str) -> bool:
         """Returns True when the phone has exceeded MAX_PER_HOUR requests."""
-        return cache.get(cls._rate_key(phone), 0) >= cls.MAX_PER_HOUR
+        return _otp_cache(cache.get, cls._rate_key(phone), 0) >= cls.MAX_PER_HOUR
 
     # ── Send ───────────────────────────────────────────────────
 
@@ -171,16 +186,19 @@ class OTPService:
         # Use secrets for cryptographically secure OTP generation.
         otp = str(secrets.randbelow(900_000) + 100_000)  # 100000–999999
 
-        # Store hashed OTP; plain text never persists.
-        cache.set(cls._otp_key(phone), make_password(otp), timeout=cls.OTP_EXPIRY_SECONDS)
+        # Store hashed OTP; plain text never persists. If the store is down this
+        # raises ServiceUnavailable (503) BEFORE the SMS is sent — we never text a
+        # code the user could not verify.
+        _otp_cache(cache.set, cls._otp_key(phone), make_password(otp),
+                   timeout=cls.OTP_EXPIRY_SECONDS)
 
         # Atomic rate-counter increment.
         # cache.add only sets the key when it does NOT exist, so two concurrent
         # callers cannot both "win" the ValueError race that the old incr+except
         # pattern had — one will add(1), the other will incr to 2.
         rate_key = cls._rate_key(phone)
-        if not cache.add(rate_key, 1, timeout=cls.RATE_WINDOW_SECONDS):
-            cache.incr(rate_key)
+        if not _otp_cache(cache.add, rate_key, 1, timeout=cls.RATE_WINDOW_SECONDS):
+            _otp_cache(cache.incr, rate_key)
 
         message = f"Your WEPL OTP is {otp}. It expires in 5 minutes. Do not share it."
 
@@ -207,30 +225,32 @@ class OTPService:
         # Staging bypass: fixed OTP for testing — never active in production.
         if getattr(settings, 'STAGING_OTP_BYPASS', False) and otp == '000000':
             logger.info("Staging OTP bypass used for %s", phone)
-            cache.delete(cls._otp_key(phone))
+            _otp_cache(cache.delete, cls._otp_key(phone))
             return True
 
         verify_key = cls._verify_key(phone)
-        attempts   = cache.get(verify_key, 0)
+        attempts   = _otp_cache(cache.get, verify_key, 0)
 
         if attempts >= cls.MAX_VERIFICATION_ATTEMPTS:
             logger.warning(f"OTP verification attempts exceeded for {phone}")
             raise RateLimitError("Too many verification attempts. Please request a new OTP.")
 
-        cached_hash = cache.get(cls._otp_key(phone))
+        # The stored hash lives in the cache — a backend outage becomes a 503,
+        # not a false "wrong OTP".
+        cached_hash = _otp_cache(cache.get, cls._otp_key(phone))
         if not cached_hash:
             logger.info(f"No active OTP found for {phone}")
             return False
 
         if check_password(otp, cached_hash):
-            cache.delete(cls._otp_key(phone))
-            cache.delete(verify_key)
+            _otp_cache(cache.delete, cls._otp_key(phone))
+            _otp_cache(cache.delete, verify_key)
             logger.info(f"OTP verified for {phone}")
             return True
 
         # Wrong OTP — atomic failure counter increment (same add-then-incr pattern).
-        if not cache.add(verify_key, 1, timeout=cls.RATE_WINDOW_SECONDS):
-            cache.incr(verify_key)
+        if not _otp_cache(cache.add, verify_key, 1, timeout=cls.RATE_WINDOW_SECONDS):
+            _otp_cache(cache.incr, verify_key)
 
         logger.info("OTP mismatch for %s (attempt %d)", phone, attempts + 1)
         return False
@@ -254,10 +274,24 @@ class PINService:
     def _lock_key(user_id: int) -> str:
         return f"pin_lock_{user_id}"
 
+    # The PIN lockout counter lives in the cache (Redis). Unlike OTP, the cache is
+    # NOT a hard dependency here: the PIN itself is verified against the DB hash, so
+    # these methods FAIL OPEN on a cache outage — a Redis blip must not lock every
+    # member out of login (and OTP is also cache-dependent, so failing closed here
+    # would make a blip a total login outage). Trade-off: brute-force lockout is
+    # degraded during the outage; the login-endpoint throttle is the other guard.
+    # (Flip to fail-closed here if a stricter posture is preferred.)
+
     @classmethod
     def is_locked(cls, user) -> bool:
-        """Check if user is locked out (accepts a User instance)."""
-        return cache.get(cls._lock_key(user.id)) is not None
+        """Check if user is locked out (accepts a User instance). Fails OPEN
+        (not locked) if the cache is unreachable — see class note."""
+        try:
+            return cache.get(cls._lock_key(user.id)) is not None
+        except Exception as exc:
+            logger.warning("PIN lockout check unavailable for user %s (%s) — allowing.",
+                           user.id, exc)
+            return False
 
     @classmethod
     def record_failure(cls, user):
@@ -265,20 +299,29 @@ class PINService:
         lock_key = cls._lock_key(user.id)
 
         try:
-            attempts = cache.incr(fail_key)
-        except ValueError:
-            cache.set(fail_key, 1, timeout=cls.LOCKOUT_SECONDS)
-            attempts = 1
+            try:
+                attempts = cache.incr(fail_key)
+            except ValueError:
+                cache.set(fail_key, 1, timeout=cls.LOCKOUT_SECONDS)
+                attempts = 1
 
-        if attempts >= cls.MAX_ATTEMPTS:
-            cache.set(lock_key, True, timeout=cls.LOCKOUT_SECONDS)
-            cache.delete(fail_key)
-            logger.warning(f"User {user.id} locked out after {attempts} failed PIN attempts.")
+            if attempts >= cls.MAX_ATTEMPTS:
+                cache.set(lock_key, True, timeout=cls.LOCKOUT_SECONDS)
+                cache.delete(fail_key)
+                logger.warning(f"User {user.id} locked out after {attempts} failed PIN attempts.")
+        except Exception as exc:
+            # Cache down — can't accrue the lockout counter. Best-effort: log and
+            # continue (the failed login itself is unaffected).
+            logger.warning("PIN failure not recorded for user %s (%s) — cache unavailable.",
+                           user.id, exc)
 
     @classmethod
     def clear_failures(cls, user):
-        cache.delete(cls._fail_key(user.id))
-        cache.delete(cls._lock_key(user.id))
+        try:
+            cache.delete(cls._fail_key(user.id))
+            cache.delete(cls._lock_key(user.id))
+        except Exception as exc:
+            logger.warning("PIN failure counters not cleared for user %s (%s).", user.id, exc)
 
     @staticmethod
     def set_pin(user, raw_pin: str) -> User:

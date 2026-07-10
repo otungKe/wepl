@@ -264,6 +264,55 @@ class PhoneMaskingTests(SimpleTestCase):
         self.assertNotIn("2345", mask_phone("12345"))   # too short → fully hidden
 
 
+class AuthCacheOutageTests(TestCase):
+    """A cache (Redis) outage on the auth path degrades cleanly: OTP returns a
+    503 (its store is down), PIN lockout fails OPEN so a blip can't lock everyone
+    out. Neither raises a raw 500."""
+
+    def _boom(self):
+        from unittest.mock import patch
+        # Every cache op raises as if Redis were unreachable.
+        return patch("apps.users.services.cache", **{
+            "get.side_effect": ConnectionError("max number of clients reached"),
+            "set.side_effect": ConnectionError("down"),
+            "add.side_effect": ConnectionError("down"),
+            "incr.side_effect": ConnectionError("down"),
+            "delete.side_effect": ConnectionError("down"),
+        })
+
+    def test_otp_send_raises_service_unavailable_and_sends_no_sms(self):
+        from unittest.mock import patch
+        from apps.core.exceptions import ServiceUnavailable
+        from apps.users.services import OTPService
+        with self._boom(), patch("apps.users.services.get_sms_gateway") as gw:
+            with self.assertRaises(ServiceUnavailable):
+                OTPService.send_otp("254712345678")
+            gw.return_value.send.assert_not_called()   # never text an unstorable code
+
+    def test_otp_verify_raises_service_unavailable(self):
+        from apps.core.exceptions import ServiceUnavailable
+        from apps.users.services import OTPService
+        with self._boom():
+            with self.assertRaises(ServiceUnavailable):
+                OTPService.verify_otp("254712345678", "123456")
+
+    def test_service_unavailable_maps_to_503(self):
+        from rest_framework.views import APIView
+        from apps.core.exceptions import ServiceUnavailable, custom_exception_handler
+        resp = custom_exception_handler(ServiceUnavailable("nope"), {"view": APIView()})
+        self.assertEqual(resp.status_code, 503)
+        self.assertEqual(resp["Retry-After"], "30")
+
+    def test_pin_lockout_fails_open(self):
+        from apps.users.services import PINService
+        user = get_user_model().objects.create(phone_number="254700000501")
+        with self._boom():
+            # Not reported as locked (fail open) and the side-effect writers swallow.
+            self.assertFalse(PINService.is_locked(user))
+            PINService.record_failure(user)   # must not raise
+            PINService.clear_failures(user)    # must not raise
+
+
 class CrossFormatLoginTests(TestCase):
     """An account is reachable from any client regardless of the phone shape
     the caller types — the regression behind 'correct phone & PIN rejected'."""
