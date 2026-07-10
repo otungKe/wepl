@@ -195,6 +195,30 @@ class DoubleEntryTests(TestCase):
         self.assertEqual(a.parent.code, coa.MEMBER_CONTRIB_PAYABLE)
         self.assertEqual(a.type, Account.Type.LIABILITY)
 
+    def test_resolution_keys_on_structured_identity_not_code(self):
+        # ADR-0025: identity is (owner, fund_type, fund_id), not the code string.
+        # Renaming the code must NOT create a second account on next resolve.
+        a = coa.member_fund_account(user=self.user, fund_type='contribution', fund_id=7)
+        Account.objects.filter(pk=a.pk).update(code='ANYTHING-ELSE')
+        b = coa.member_fund_account(user=self.user, fund_type='contribution', fund_id=7)
+        self.assertEqual(a.pk, b.pk)
+
+    def test_every_account_gets_a_uuid7(self):
+        a = coa.member_fund_account(user=self.user, fund_type='welfare', fund_id=3)
+        self.assertIsNotNone(a.account_uid)
+        self.assertEqual(a.account_uid.version, 7)
+        gl = coa.mpesa_float_account()
+        self.assertIsNotNone(gl.account_uid)
+        # Globally unique across GL + sub-ledger.
+        self.assertNotEqual(a.account_uid, gl.account_uid)
+
+    def test_duplicate_sub_ledger_is_refused_by_constraint(self):
+        coa.member_fund_account(user=self.user, fund_type='shares', fund_id=9)
+        with self.assertRaises(IntegrityError):
+            Account.objects.create(
+                code='dup-shares', name='dup', type=Account.Type.LIABILITY,
+                owner=self.user, fund_type='shares', fund_id=9)
+
     def test_seed_is_idempotent(self):
         before = Account.objects.count()
         coa.seed_chart_of_accounts()
