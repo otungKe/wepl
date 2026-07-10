@@ -186,12 +186,12 @@ export interface TxFilters {
   state?: string; op_type?: string; q?: string; offset?: number
   date_from?: string; date_to?: string; min?: string; max?: string
   account?: string; fund_type?: string; fund_id?: string | number
+  [key: string]: string | number | undefined
 }
 
 export const transactions = {
   list: (params: TxFilters = {}) =>
-    api.get<{ results: TxRow[]; count: number; has_more: boolean
-              by_state: Record<string, number>
+    api.get<{ results: TxRow[]; count: number; has_more: boolean; prompt: boolean
               op_types: { value: string; label: string }[] }>('/ops/transactions/', { params }),
   tx360: (id: number | string) => api.get<Tx360>(`/ops/transactions/${id}/`),
 }
