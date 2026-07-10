@@ -522,19 +522,31 @@ class OpsTransactionsModuleTests(TestCase):
         self.finance = make_staff("fin@imbank.co.ke", "finance")      # +ledger.view
         self.support_agent = make_staff("sup-tx@imbank.co.ke", "support")  # tx.view only
 
-    def test_registry_filters_and_state_mix(self):
+    def test_registry_is_inquiry_first(self):
+        c = op_client(self.support_agent)
+        # No criteria → nothing listed, just a prompt (and the op-type choices).
+        idle = c.get("/api/ops/transactions/")
+        self.assertEqual(idle.status_code, 200)
+        self.assertTrue(idle.data["prompt"])
+        self.assertEqual(idle.data["results"], [])
+        self.assertTrue(idle.data["op_types"])   # dropdown still populated
+        # state='all' alone is not a query either.
+        self.assertTrue(c.get("/api/ops/transactions/", {"state": "all"}).data["prompt"])
+
+    def test_registry_returns_matches_once_a_criterion_is_given(self):
         res = op_client(self.support_agent).get(
             "/api/ops/transactions/", {"q": "QA12ZZ99XY"})
         self.assertEqual(res.status_code, 200)
+        self.assertFalse(res.data["prompt"])
         self.assertEqual(res.data["count"], 1)
         row = res.data["results"][0]
         self.assertEqual(row["state"], "SUCCESS")
         self.assertEqual(row["amount"], "1500.00")
         self.assertEqual(row["initiated_by"], "Chebet K")
-        self.assertEqual(res.data["by_state"].get("SUCCESS"), 1)
-
+        # An explicit state is a valid criterion; FAILED matches nothing here.
         none = op_client(self.support_agent).get(
             "/api/ops/transactions/", {"state": "FAILED"})
+        self.assertFalse(none.data["prompt"])
         self.assertEqual(none.data["count"], 0)
 
     def test_transaction_360_shows_debits_and_credits_to_any_viewer(self):

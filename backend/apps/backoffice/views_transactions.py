@@ -15,7 +15,7 @@ from __future__ import annotations
 from datetime import datetime, time
 from decimal import Decimal, InvalidOperation
 
-from django.db.models import Count, Q
+from django.db.models import Q
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from rest_framework.response import Response
@@ -147,15 +147,42 @@ def filter_transactions(params):
     return qs.order_by("-created_at")
 
 
+# Query params that count as "asking for something" (op_type/state below too).
+_FILTER_KEYS = ("q", "account", "date_from", "date_to", "min", "max", "fund_id")
+
+
+def _has_criteria(p) -> bool:
+    """True when the operator asked for something specific. A bare list (no
+    filter, state='all') is not a query — the registry is inquiry-first."""
+    if any((p.get(k) or "").strip() for k in _FILTER_KEYS):
+        return True
+    if (p.get("op_type") or "").strip():
+        return True
+    if (p.get("state") or "all").strip() not in ("", "all"):
+        return True
+    return False
+
+
 class TransactionsListView(OpsAPIView):
-    """GET /api/ops/transactions/?state=&op_type=&q=&limit=&offset= — the
-    registry, newest first, with state counts for the current filter set."""
+    """GET /api/ops/transactions/ — an inquiry, not a listing. Returns nothing
+    until at least one criterion is given (state / op_type / q / account / date
+    range / amount range / fund); then the matching movements, newest first,
+    paginated. This is deliberate: at scale you query for what you need, you
+    don't scroll the whole ledger."""
     permission_classes = [RequireCapability("transactions.view")]
 
     def get(self, request):
         p = request.query_params
-        qs = filter_transactions(p)
+        op_types = [{"value": v, "label": l}
+                    for v, l in FinancialTransaction.OpType.choices]
 
+        # Inquiry-first: no criteria → no results, just a prompt (and the static
+        # op-type choices so the form can populate its dropdown). No DB query.
+        if not _has_criteria(p):
+            return Response({"results": [], "count": 0, "has_more": False,
+                             "prompt": True, "op_types": op_types})
+
+        qs = filter_transactions(p)
         try:
             limit = min(max(int(p.get("limit", 50)), 1), 100)
             offset = max(int(p.get("offset", 0)), 0)
@@ -163,20 +190,10 @@ class TransactionsListView(OpsAPIView):
             limit, offset = 50, 0
         total = qs.count()
 
-        # State mix for the whole (unpaginated, state-agnostic) filter — the
-        # tabs' badge numbers.
-        base = FinancialTransaction.objects.all()
-        if p.get("op_type"):
-            base = base.filter(op_type=p["op_type"])
-        by_state = {r["state"]: r["c"] for r in
-                    base.values("state").annotate(c=Count("id"))}
-
         return Response({
             "results": [_row(ft) for ft in qs[offset:offset + limit]],
             "count": total, "has_more": offset + limit < total,
-            "by_state": by_state,
-            "op_types": [{"value": v, "label": l}
-                         for v, l in FinancialTransaction.OpType.choices],
+            "prompt": False, "op_types": op_types,
         })
 
 
