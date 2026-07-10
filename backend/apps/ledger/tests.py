@@ -219,6 +219,15 @@ class DoubleEntryTests(TestCase):
                 code='dup-shares', name='dup', type=Account.Type.LIABILITY,
                 owner=self.user, fund_type='shares', fund_id=9)
 
+    def test_canonical_gl_anchored_code_format(self):
+        # ADR-0025: GL-anchored, fixed-width, sortable codes.
+        self.assertEqual(coa.pool_code('2000', 1), '2000-0000001')
+        self.assertEqual(coa.pool_code('2000', 350000), '2000-0350000')
+        a = coa.member_fund_account(user=self.user, fund_type='contribution', fund_id=350000)
+        self.assertEqual(a.code, f"2000-0350000-{self.user.pk:09d}")
+        adv = coa.member_receivable_account(user=self.user, fund_id=14)
+        self.assertEqual(adv.code, f"1200-0000014-{self.user.pk:09d}")
+
     def test_seed_is_idempotent(self):
         before = Account.objects.count()
         coa.seed_chart_of_accounts()

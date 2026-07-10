@@ -55,6 +55,35 @@ _FUND_PAYABLE_PARENT = {
     'shares':       SHARES_PAYABLE,
 }
 
+# The GL "head" every sub-ledger fund_type hangs off — the prefix of its code.
+# Stable regardless of re-parenting (pool control accounts, ADR-0025 Part B).
+_FUND_GL = {**_FUND_PAYABLE_PARENT, 'advance': ADVANCES_RECEIVABLE}
+
+# ── Canonical, GL-anchored account codes (ADR-0025) ──────────────────────────
+# One consistent, sortable shape for every account so the whole tree is a single
+# searchable namespace. Fixed-width so codes align and sort; safe to widen later
+# because the code is display metadata, not identity (identity = id/account_uid).
+POOL_CODE_WIDTH   = 7    # up to 9,999,999 pools/funds per GL head
+MEMBER_CODE_WIDTH = 9    # up to ~1e9 members
+
+
+def pool_code(gl_code: str, fund_id: int) -> str:
+    """A pool/fund control account, e.g. ``2000-0350000`` (GL 2000, pool 350000)."""
+    return f"{gl_code}-{int(fund_id):0{POOL_CODE_WIDTH}d}"
+
+
+def sub_ledger_code(gl_code: str, fund_id: int, owner_id: int) -> str:
+    """A member sub-ledger, e.g. ``2000-0350000-000000055`` (member 55 in pool)."""
+    return f"{pool_code(gl_code, fund_id)}-{int(owner_id):0{MEMBER_CODE_WIDTH}d}"
+
+
+def code_for_fund(fund_type: str, fund_id: int, owner_id: int) -> str:
+    """Canonical sub-ledger code for a (fund_type, fund_id, owner)."""
+    gl = _FUND_GL.get(fund_type)
+    if gl is None:
+        raise ValueError(f"Unknown fund_type {fund_type!r} for code generation.")
+    return sub_ledger_code(gl, fund_id, owner_id)
+
 
 @transaction.atomic
 def seed_chart_of_accounts() -> dict[str, Account]:
@@ -122,11 +151,10 @@ def member_receivable_account(*, user, fund_id: int) -> Account:
     string (ADR-0025). The unique constraint on those fields makes this
     idempotent and race-safe.
     """
-    code = f"AR-{fund_id}-U{user.pk}"
     acct, _ = Account.objects.get_or_create(
         owner=user, fund_type='advance', fund_id=fund_id,
         defaults={
-            'code':      code,
+            'code':      code_for_fund('advance', fund_id, user.pk),
             'name':      f"{getattr(user, 'phone_number', user.pk)} · advance #{fund_id}",
             'type':      Account.Type.ASSET,
             'parent':    gl_account(ADVANCES_RECEIVABLE),
@@ -149,11 +177,10 @@ def member_fund_account(*, user, fund_type: str, fund_id: int) -> Account:
 
     # Keyed on the structured identity (owner, fund_type, fund_id) — not the code
     # string (ADR-0025); the unique constraint makes it idempotent and race-safe.
-    code = f"SL-{fund_type.upper()}-{fund_id}-U{user.pk}"
     acct, _ = Account.objects.get_or_create(
         owner=user, fund_type=fund_type, fund_id=fund_id,
         defaults={
-            'code':      code,
+            'code':      code_for_fund(fund_type, fund_id, user.pk),
             'name':      f"{getattr(user, 'phone_number', user.pk)} · {fund_type} #{fund_id}",
             'type':      Account.Type.LIABILITY,
             'parent':    gl_account(parent_code),
