@@ -163,6 +163,30 @@ def member_receivable_account(*, user, fund_id: int) -> Account:
     return acct
 
 
+def pool_account(*, fund_type: str, fund_id: int) -> Account:
+    """Resolve (get-or-create) a pool/fund **control account** (ADR-0025 Part B).
+
+    A pool is a first-class ledger entity: an owner-less account (code e.g.
+    ``2000-0350000``) that parents the pool's member sub-ledgers and can hold
+    pool-level money (escrow, unallocated pot). Keyed on (fund_type, fund_id).
+    """
+    parent_code = _FUND_PAYABLE_PARENT.get(fund_type)
+    if parent_code is None:
+        raise ValueError(f"Unknown fund_type {fund_type!r} for pool account.")
+    gl = gl_account(parent_code)
+    acct, _ = Account.objects.get_or_create(
+        owner=None, fund_type=fund_type, fund_id=fund_id,
+        defaults={
+            'code':   pool_code(parent_code, fund_id),
+            'name':   f"Pool #{fund_id} · {fund_type} payable",
+            'type':   gl.type,
+            'parent': gl,
+            'tenant': _tenant_for_fund(fund_type, fund_id),
+        },
+    )
+    return acct
+
+
 def member_fund_account(*, user, fund_type: str, fund_id: int) -> Account:
     """
     Resolve (get-or-create) the member's sub-ledger LIABILITY account for a fund.
@@ -177,13 +201,15 @@ def member_fund_account(*, user, fund_type: str, fund_id: int) -> Account:
 
     # Keyed on the structured identity (owner, fund_type, fund_id) — not the code
     # string (ADR-0025); the unique constraint makes it idempotent and race-safe.
+    # Parented under the pool control account, which nets into the GL head.
+    pool = pool_account(fund_type=fund_type, fund_id=fund_id)
     acct, _ = Account.objects.get_or_create(
         owner=user, fund_type=fund_type, fund_id=fund_id,
         defaults={
             'code':      code_for_fund(fund_type, fund_id, user.pk),
             'name':      f"{getattr(user, 'phone_number', user.pk)} · {fund_type} #{fund_id}",
             'type':      Account.Type.LIABILITY,
-            'parent':    gl_account(parent_code),
+            'parent':    pool,
             'tenant':    _tenant_for_fund(fund_type, fund_id),
         },
     )

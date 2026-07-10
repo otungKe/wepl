@@ -308,6 +308,12 @@ class Account(models.Model):
                 fields=['owner', 'fund_type', 'fund_id'],
                 condition=Q(owner__isnull=False),
                 name='ledger_acct_owner_fund_uniq'),
+            # A pool/fund control account (ADR-0025 Part B): owner-less, one per
+            # (fund_type, fund_id). Excludes GL accounts (fund_type = '').
+            models.UniqueConstraint(
+                fields=['fund_type', 'fund_id'],
+                condition=Q(owner__isnull=True) & ~Q(fund_type=''),
+                name='ledger_acct_pool_uniq'),
         ]
 
     def save(self, *args, **kwargs):
