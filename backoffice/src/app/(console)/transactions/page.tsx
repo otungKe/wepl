@@ -1,5 +1,5 @@
 'use client'
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
 import { Loader2, ArrowLeftRight, Search, Download } from 'lucide-react'
 import { transactions, type TxRow } from '@/lib/platform'
@@ -14,24 +14,49 @@ export default function TransactionsRegistry() {
   const [state, setState] = useState('all')
   const [opType, setOpType] = useState('')
   const [q, setQ] = useState('')
-  const [query, setQuery] = useState('')
+  const [account, setAccount] = useState('')
+  const [amtMin, setAmtMin] = useState('')
+  const [amtMax, setAmtMax] = useState('')
+  const [dateFrom, setDateFrom] = useState('')
+  const [dateTo, setDateTo] = useState('')
+  // Text filters are debounced together; date pickers apply immediately.
+  const [applied, setApplied] = useState({ q: '', account: '', min: '', max: '' })
   const [rows, setRows] = useState<TxRow[]>([])
   const [byState, setByState] = useState<Record<string, number>>({})
   const [opTypes, setOpTypes] = useState<{ value: string; label: string }[]>([])
   const [count, setCount] = useState(0)
   const [status, setStatus] = useState<'loading' | 'ready' | 'error'>('loading')
 
-  useEffect(() => { const t = setTimeout(() => setQuery(q), 300); return () => clearTimeout(t) }, [q])
+  useEffect(() => {
+    const t = setTimeout(() => setApplied({ q, account, min: amtMin, max: amtMax }), 300)
+    return () => clearTimeout(t)
+  }, [q, account, amtMin, amtMax])
+
+  const params = useMemo(() => ({
+    state,
+    ...(opType ? { op_type: opType } : {}),
+    ...(applied.q ? { q: applied.q } : {}),
+    ...(applied.account ? { account: applied.account } : {}),
+    ...(applied.min ? { min: applied.min } : {}),
+    ...(applied.max ? { max: applied.max } : {}),
+    ...(dateFrom ? { date_from: dateFrom } : {}),
+    ...(dateTo ? { date_to: dateTo } : {}),
+  }), [state, opType, applied, dateFrom, dateTo])
+
+  const anyFilter = opType || applied.q || applied.account || applied.min || applied.max || dateFrom || dateTo
+  const clearFilters = () => {
+    setOpType(''); setQ(''); setAccount(''); setAmtMin(''); setAmtMax(''); setDateFrom(''); setDateTo('')
+  }
 
   useEffect(() => {
     setStatus('loading')
-    transactions.list({ state, ...(opType ? { op_type: opType } : {}), ...(query ? { q: query } : {}) })
+    transactions.list(params)
       .then((r) => {
         setRows(r.data.results); setCount(r.data.count)
         setByState(r.data.by_state); setOpTypes(r.data.op_types); setStatus('ready')
       })
       .catch(() => setStatus('error'))
-  }, [state, opType, query])
+  }, [params])
 
   return (
     <div className="mx-auto max-w-6xl">
@@ -53,14 +78,32 @@ export default function TransactionsRegistry() {
           </div>
           {can('reporting.export') && (
             <button
-              onClick={() => downloadCsv('/ops/exports/transactions/',
-                { state, ...(opType ? { op_type: opType } : {}), ...(query ? { q: query } : {}) })}
+              onClick={() => downloadCsv('/ops/exports/transactions/', params)}
               title="Export the current filter as CSV"
               className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 px-2.5 py-1.5 text-sm font-medium text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800">
               <Download className="h-4 w-4" /> Export
             </button>
           )}
         </div>
+      </div>
+
+      {/* Filters — the registry returns only what these ask for (paginated). */}
+      <div className="mb-4 flex flex-wrap items-end gap-3 rounded-xl border border-slate-200 bg-slate-50/60 p-3 dark:border-slate-800 dark:bg-slate-900/40">
+        <Field label="From"><input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} className={inputCls} /></Field>
+        <Field label="To"><input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} className={inputCls} /></Field>
+        <Field label="Min (KES)"><input inputMode="decimal" value={amtMin} onChange={(e) => setAmtMin(e.target.value)} placeholder="0" className={`${inputCls} w-24`} /></Field>
+        <Field label="Max (KES)"><input inputMode="decimal" value={amtMax} onChange={(e) => setAmtMax(e.target.value)} placeholder="∞" className={`${inputCls} w-24`} /></Field>
+        <Field label="Account code">
+          <input value={account} onChange={(e) => setAccount(e.target.value)}
+            placeholder="e.g. 1000, SL-CONTRIBUTION-18-U55"
+            className={`${inputCls} w-64 font-mono`} />
+        </Field>
+        {anyFilter && (
+          <button onClick={clearFilters}
+            className="ml-auto self-center text-xs font-medium text-slate-500 hover:text-slate-700 dark:hover:text-slate-300">
+            Clear filters
+          </button>
+        )}
       </div>
 
       <div className="mb-4 flex gap-1 overflow-x-auto border-b border-slate-200 dark:border-slate-800">
@@ -125,5 +168,17 @@ export default function TransactionsRegistry() {
         </div>
       )}
     </div>
+  )
+}
+
+const inputCls =
+  'rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-sm outline-none focus:border-blue-500 dark:border-slate-700 dark:bg-slate-900'
+
+function Field({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <label className="flex flex-col gap-1">
+      <span className="text-[10px] font-semibold uppercase tracking-wide text-slate-400">{label}</span>
+      {children}
+    </label>
   )
 }
