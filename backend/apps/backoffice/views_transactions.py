@@ -38,7 +38,7 @@ from .views import OpsAPIView
 def _fund_of(ft):
     """(fund_label, community) for whichever fund FK is set."""
     if ft.contribution_id:
-        return f"Pool · {ft.contribution.name}", ft.contribution.community
+        return f"Pool · {ft.contribution.title}", ft.contribution.community
     if ft.welfare_fund_id:
         return f"Welfare · {ft.welfare_fund.name}", ft.welfare_fund.community
     if ft.shares_fund_id:
