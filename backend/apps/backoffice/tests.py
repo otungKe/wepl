@@ -558,6 +558,26 @@ class OpsTransactionsModuleTests(TestCase):
         dev = make_staff("dev-tx@imbank.co.ke", "developer")   # no transactions.view
         self.assertEqual(op_client(dev).get("/api/ops/transactions/").status_code, 403)
 
+    def test_pool_linked_transaction_renders_in_registry_and_360(self):
+        # Regression: a transaction tied to a contribution pool must not 500 the
+        # registry or the 360. _fund_of read Contribution.name — the field is
+        # .title — so any funded movement (e.g. a real deposit) broke the screen.
+        from decimal import Decimal
+        from apps.contributions.services import ContributionService
+        from apps.ledger.models import FinancialTransaction
+        pool = ContributionService.create_contribution(self.member, {"title": "Test Pool"})
+        ft = FinancialTransaction.objects.create(
+            op_type="CONTRIBUTION", amount=Decimal("10.00"), idempotency_key="pool-linked-1",
+            initiated_by=self.member, contribution=pool, mpesa_receipt="POOLRCPT1")
+
+        res = op_client(self.support_agent).get("/api/ops/transactions/", {"q": "POOLRCPT1"})
+        self.assertEqual(res.status_code, 200)
+        self.assertEqual(res.data["results"][0]["fund"], "Pool · Test Pool")
+
+        res = op_client(self.support_agent).get(f"/api/ops/transactions/{ft.pk}/")
+        self.assertEqual(res.status_code, 200)
+        self.assertEqual(res.data["context"]["fund"], "Pool · Test Pool")
+
 
 class StepUpTOTPTests(TestCase):
     """OP-3 step-up: TOTP enrolment, elevation, recovery codes, and the
