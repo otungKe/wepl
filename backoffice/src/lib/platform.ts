@@ -196,6 +196,51 @@ export const transactions = {
   tx360: (id: number | string) => api.get<Tx360>(`/ops/transactions/${id}/`),
 }
 
+/* ── Chart of Accounts browser (ADR-0025) ────────────────────────────────── */
+
+export interface AccountRow {
+  id: number
+  account_uid: string | null
+  code: string
+  name: string
+  type: string
+  role: 'gl' | 'pool' | 'member'
+  fund_type: string | null
+  fund_id: number | null
+  owner_id: number | null
+  owner: string | null
+  owner_member_no: string | null
+  parent_code: string | null
+  balance: string
+  currency: string
+  is_active: boolean
+}
+
+export interface AccountFacets {
+  types: { value: string; label: string }[]
+  gl_heads: { value: string; label: string }[]
+  roles: { value: string; label: string }[]
+}
+
+export interface Account360 extends AccountRow {
+  parent: AccountRow | null
+  children: AccountRow[]
+  child_count: number
+}
+
+export interface AccountFilters {
+  q?: string; owner?: string; fund_type?: string; fund_id?: string | number
+  type?: string; gl?: string; role?: string; limit?: number; offset?: number
+  [key: string]: string | number | undefined
+}
+
+export const accounts = {
+  list: (params: AccountFilters = {}) =>
+    api.get<{ results: AccountRow[]; count: number; has_more: boolean
+              prompt: boolean; facets: AccountFacets }>('/ops/accounts/', { params }),
+  account360: (id: number | string) => api.get<Account360>(`/ops/accounts/${id}/`),
+}
+
 /* ── FinOps (payment recovery levers, OP-1) ──────────────────────────────── */
 
 export interface FinopsRow extends TxRow {
