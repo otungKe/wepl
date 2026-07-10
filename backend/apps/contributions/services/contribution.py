@@ -169,7 +169,8 @@ class ContributionService:
 
     @staticmethod
     @transaction.atomic
-    def contribute(user, contribution_id, amount, mpesa_receipt=None, idempotency_key=None):
+    def contribute(user, contribution_id, amount, mpesa_receipt=None, idempotency_key=None,
+                   counterparty_name=''):
         """
         Record an inbound member contribution.
 
@@ -245,6 +246,7 @@ class ContributionService:
             op_type=FinancialTransaction.OpType.CONTRIBUTION,
             amount=Decimal(str(amount)),
             initiated_by=user,
+            counterparty_name=counterparty_name,
             contribution=contribution,
             initial_state=FinancialTransaction.State.SUCCESS,
         )

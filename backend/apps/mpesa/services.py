@@ -199,6 +199,7 @@ class MpesaService:
         ContributionService.contribute(
             user, contribution.id, transaction.amount,
             mpesa_receipt=transaction.mpesa_receipt,
+            counterparty_name=transaction.payer_name,
         )
 
         transaction.contribution = contribution

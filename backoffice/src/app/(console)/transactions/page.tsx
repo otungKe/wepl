@@ -175,7 +175,10 @@ export default function TransactionsInquiry() {
                     </td>
                     <td className="px-4 py-2.5 text-right font-mono text-xs tabular-nums">{r.amount}</td>
                     <td className="px-4 py-2.5"><TxState state={r.state} /></td>
-                    <td className="px-4 py-2.5 text-xs text-slate-500">{r.initiated_by}</td>
+                    <td className="px-4 py-2.5 text-xs text-slate-500">
+                      {r.initiated_by}
+                      {r.counterparty_name && <span className="block text-[10px] text-slate-400">M-Pesa: {r.counterparty_name}</span>}
+                    </td>
                     <td className="px-4 py-2.5 text-xs text-slate-500">{r.fund ?? '—'}</td>
                     <td className="px-4 py-2.5 font-mono text-[11px] text-slate-400">{r.mpesa_receipt ?? '—'}</td>
                     <td className="px-4 py-2.5 text-right font-mono text-[11px] tabular-nums text-slate-400">

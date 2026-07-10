@@ -188,6 +188,9 @@ class C2BCallbackViewTest(TestCase):
             "TransAmount":      "500.00",
             "BillRefNumber":    ref,
             "TransTime":        "20260528120000",
+            "FirstName":        "JANE",
+            "MiddleName":       "A",
+            "LastName":         "WANJIKU",
         }
 
     @patch.object(MpesaService, "reconcile_c2b", return_value=True)
@@ -195,9 +198,11 @@ class C2BCallbackViewTest(TestCase):
         resp = self.client.post(self.url, self._payload(), format="json")
 
         self.assertEqual(resp.status_code, 200)
-        self.assertTrue(
-            MpesaC2BTransaction.objects.filter(mpesa_receipt="RCTE001").exists()
-        )
+        tx = MpesaC2BTransaction.objects.get(mpesa_receipt="RCTE001")
+        # The payer's registered M-Pesa name is captured, not discarded.
+        self.assertEqual(tx.first_name, "JANE")
+        self.assertEqual(tx.last_name, "WANJIKU")
+        self.assertEqual(tx.payer_name, "JANE A WANJIKU")
         mock_reconcile.assert_called_once()
 
     @patch.object(MpesaService, "reconcile_c2b", return_value=True)

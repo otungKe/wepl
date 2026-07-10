@@ -287,6 +287,10 @@ class DisbursementRequestSerializer(serializers.ModelSerializer):
     approve_count      = serializers.IntegerField(read_only=True)
     reject_count       = serializers.IntegerField(read_only=True)
     required_approvals = serializers.SerializerMethodField()
+    # Payout target is a counterparty phone shown to the whole group — mask it for
+    # members (operators see the full number in the ops console). Writable on
+    # create via recipient_phone (below); this read-only field is the masked view.
+    recipient_phone    = serializers.SerializerMethodField()
 
     class Meta:
         model = DisbursementRequest
@@ -296,6 +300,10 @@ class DisbursementRequestSerializer(serializers.ModelSerializer):
             'required_approvals', 'votes', 'created_at', 'executed_at',
         ]
         read_only_fields = ['status', 'approve_count', 'reject_count', 'required_approvals', 'votes', 'executed_at']
+
+    def get_recipient_phone(self, obj):
+        from apps.users.phone import mask_phone
+        return mask_phone(obj.recipient_phone)
 
     def get_required_approvals(self, obj):
         return obj.contribution.required_approvals()

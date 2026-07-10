@@ -100,6 +100,11 @@ class FinancialTransaction(models.Model):
         related_name='initiated_fin_txs',
     )
     recipient_phone = models.CharField(max_length=20, blank=True)
+    # Registered M-Pesa name of the external counterparty when the rail discloses
+    # it — the payer on a C2B pay-in, the recipient on a B2C payout. Blank for
+    # STK Push (Safaricom returns no name) and internal movements. Third-party
+    # PII: shown in full to operators, masked to members.
+    counterparty_name = models.CharField(max_length=120, blank=True)
 
     # Tenant dimension (Phase 6, ADR-0008). Nullable during rollout.
     tenant = models.ForeignKey(

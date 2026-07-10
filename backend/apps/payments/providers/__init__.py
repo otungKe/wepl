@@ -57,6 +57,10 @@ class CallbackEvent:
     receipt: str | None = None  # rail receipt for a settled collection/payout
     amount: Decimal | None = None
     phone: str | None = None
+    # Counterparty's registered M-Pesa name when the rail discloses it: the payer
+    # for a C2B pay-in, the recipient for a B2C payout. STK Push does not return
+    # a name, so this stays None there.
+    counterparty_name: str | None = None
     raw: dict = field(default_factory=dict)
 
 

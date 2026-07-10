@@ -84,6 +84,9 @@ def _row(ft):
         "initiated_by": (ft.initiated_by.name or ft.initiated_by.phone_number
                          if ft.initiated_by_id else "system"),
         "recipient_phone": ft.recipient_phone,
+        # Registered M-Pesa name of the external counterparty (payer/recipient),
+        # shown in full to operators. Blank for STK Push / internal movements.
+        "counterparty_name": ft.counterparty_name,
         "fund": fund_label,
         "community_id": community.id if community else None,
         "mpesa_receipt": ft.mpesa_receipt,
@@ -232,6 +235,9 @@ class Transaction360View(OpsAPIView):
                 "initiated_by_member_no": (ft.initiated_by.member_number
                                            if ft.initiated_by_id else None),
                 "recipient_phone": ft.recipient_phone,
+                # External counterparty's registered M-Pesa name (payer on a
+                # pay-in, recipient on a payout) — full, for operators.
+                "counterparty_name": ft.counterparty_name or None,
             },
             "context": {
                 "fund": fund_label,

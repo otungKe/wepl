@@ -76,8 +76,20 @@ class MpesaC2BTransaction(models.Model):
     # account reference sent by the member (e.g. "WEPL-42" to match contribution 42)
     bill_ref_number = models.CharField(max_length=255)
     is_reconciled = models.BooleanField(default=False)
+    # Payer's registered M-Pesa name, as sent on the C2B confirmation. Kept so an
+    # unmatched Paybill deposit can still be attributed to a real person.
+    first_name  = models.CharField(max_length=60, blank=True)
+    middle_name = models.CharField(max_length=60, blank=True)
+    last_name   = models.CharField(max_length=60, blank=True)
 
     created_at = models.DateTimeField(auto_now_add=True)
+
+    @property
+    def payer_name(self) -> str:
+        """The payer's full registered M-Pesa name, if disclosed."""
+        return " ".join(
+            p for p in (self.first_name, self.middle_name, self.last_name) if p
+        ).strip()
 
     def __str__(self):
         return f"{self.phone_number} | KES {self.amount} | {self.mpesa_receipt}"

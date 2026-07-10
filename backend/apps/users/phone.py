@@ -24,3 +24,22 @@ def normalize_phone(raw: str | None) -> str:
     if digits.startswith("7") or digits.startswith("1"):
         return "254" + digits
     return digits
+
+
+def mask_phone(raw: str | None) -> str:
+    """Partially mask an MSISDN for client-facing display, keeping enough to
+    recognise it: a leading prefix and the last 3 digits, the middle hidden —
+    e.g. ``254712345678`` → ``254712***678``.
+
+    This is the *client* view; operators (ops console) always see the full
+    number. Short/non-numeric inputs are masked wholesale rather than leaked.
+    """
+    if not raw:
+        return ""
+    digits = re.sub(r"\D", "", raw)
+    # Too short to reveal any part safely — hide it all.
+    if len(digits) < 7:
+        return "*" * len(digits) if digits else ""
+    prefix = digits[:6]   # e.g. "254712" — country + operator, not identifying
+    last = digits[-3:]
+    return f"{prefix}{'*' * (len(digits) - 9)}{last}" if len(digits) > 9 else f"{prefix}***{last}"
