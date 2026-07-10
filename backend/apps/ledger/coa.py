@@ -116,20 +116,20 @@ def _tenant_for_fund(fund_type: str, fund_id: int):
 def member_receivable_account(*, user, fund_id: int) -> Account:
     """Resolve (get-or-create) the member's ASSET sub-ledger for emergency
     advances, rolling up into 1200 Advances Receivable. The member owes the
-    advance back, so this is an asset of the platform/pool."""
+    advance back, so this is an asset of the platform/pool.
+
+    Keyed on the structured identity (owner, fund_type, fund_id) — not the code
+    string (ADR-0025). The unique constraint on those fields makes this
+    idempotent and race-safe.
+    """
     code = f"AR-{fund_id}-U{user.pk}"
-    existing = Account.objects.filter(code=code).first()
-    if existing is not None:
-        return existing
     acct, _ = Account.objects.get_or_create(
-        code=code,
+        owner=user, fund_type='advance', fund_id=fund_id,
         defaults={
+            'code':      code,
             'name':      f"{getattr(user, 'phone_number', user.pk)} · advance #{fund_id}",
             'type':      Account.Type.ASSET,
             'parent':    gl_account(ADVANCES_RECEIVABLE),
-            'owner':     user,
-            'fund_type': 'advance',
-            'fund_id':   fund_id,
         },
     )
     return acct
@@ -147,19 +147,16 @@ def member_fund_account(*, user, fund_type: str, fund_id: int) -> Account:
     if parent_code is None:
         raise ValueError(f"Unknown fund_type {fund_type!r} for sub-ledger resolution.")
 
+    # Keyed on the structured identity (owner, fund_type, fund_id) — not the code
+    # string (ADR-0025); the unique constraint makes it idempotent and race-safe.
     code = f"SL-{fund_type.upper()}-{fund_id}-U{user.pk}"
-    existing = Account.objects.filter(code=code).first()
-    if existing is not None:
-        return existing
     acct, _ = Account.objects.get_or_create(
-        code=code,
+        owner=user, fund_type=fund_type, fund_id=fund_id,
         defaults={
+            'code':      code,
             'name':      f"{getattr(user, 'phone_number', user.pk)} · {fund_type} #{fund_id}",
             'type':      Account.Type.LIABILITY,
             'parent':    gl_account(parent_code),
-            'owner':     user,
-            'fund_type': fund_type,
-            'fund_id':   fund_id,
             'tenant':    _tenant_for_fund(fund_type, fund_id),
         },
     )

@@ -25,6 +25,7 @@ from django.db.models import Q
 from django.utils import timezone
 
 from apps.core.exceptions import TransitionError
+from apps.core.ids import uuid7
 from apps.ledger.exceptions import JournalImmutableError
 
 
@@ -253,9 +254,17 @@ class Account(models.Model):
     # Types whose balance increases on the DEBIT side.
     DEBIT_NORMAL_TYPES = frozenset({Type.ASSET, Type.EXPENSE})
 
+    # External / BaaS handle — opaque, stable, globally unique (ADR-0025). The
+    # account's identity for exposure and cross-system reference; distinct from
+    # the internal bigint PK (joins) and the mutable business `code` (below).
+    account_uid = models.UUIDField(unique=True, null=True, blank=True, editable=False)
+
+    # Business/Chart-of-Accounts code — human/operator-facing metadata, NOT the
+    # identity. Resolution keys on the structured (owner, fund_type, fund_id)
+    # fields, so this code is free to be restandardised without touching history.
     code = models.CharField(
         max_length=64, unique=True,
-        help_text="Stable Chart-of-Accounts code; account resolution keys on this.",
+        help_text="Human-facing Chart-of-Accounts code (mutable metadata, not identity).",
     )
     name   = models.CharField(max_length=255)
     type   = models.CharField(max_length=10, choices=Type.choices)
@@ -290,6 +299,21 @@ class Account(models.Model):
             models.Index(fields=['fund_type', 'fund_id'],        name='ledger_acct_fund_idx'),
             models.Index(fields=['owner', 'fund_type', 'fund_id'], name='ledger_acct_owner_fund_idx'),
         ]
+        constraints = [
+            # Structured identity of a sub-ledger — one account per member-fund.
+            # Resolution keys on this (not the code string), so it must be unique
+            # and is what makes get_or_create race-safe. GL accounts (owner null)
+            # are excluded.
+            models.UniqueConstraint(
+                fields=['owner', 'fund_type', 'fund_id'],
+                condition=Q(owner__isnull=False),
+                name='ledger_acct_owner_fund_uniq'),
+        ]
+
+    def save(self, *args, **kwargs):
+        if not self.account_uid:
+            self.account_uid = uuid7()
+        super().save(*args, **kwargs)
 
     @property
     def is_debit_normal(self) -> bool:
