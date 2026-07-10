@@ -632,6 +632,94 @@ class OpsTransactionsModuleTests(TestCase):
         self.assertNotIn(self.ft.pk, ids)   # different pool / no fund FK
 
 
+class OpsAccountsModuleTests(TestCase):
+    """Chart-of-Accounts browser (/api/ops/accounts/) — the ADR-0025 account
+    search surface: inquiry-first, structured filters over the whole tree
+    (GL heads, pool control accounts, member sub-ledgers), ledger.view-gated."""
+
+    def setUp(self):
+        from apps.ledger import coa
+        from apps.ledger.money import Money
+        from apps.ledger.posting import post_journal
+        from apps.ledger.posting_map import contribution_lines
+
+        coa.seed_chart_of_accounts()
+        self.member = get_user_model().objects.create_user(
+            phone_number="254700000201", name="Amina W", member_number="WM-0000201")
+        # A real contribution posting mints the pool + member sub-ledger and
+        # gives them a non-zero balance.
+        post_journal(
+            idempotency_key="acct-search-seed-1", op_type="CONTRIBUTION",
+            lines=contribution_lines(member=self.member, fund_type="contribution",
+                                     fund_id=42, gross=Money("500.00")),
+            narration="Seed", financial_transaction=None,
+        )
+        self.finance = make_staff("acct-fin@imbank.co.ke", "finance")   # +ledger.view
+        self.support = make_staff("acct-sup@imbank.co.ke", "support")   # no ledger.view
+
+    def test_requires_ledger_view(self):
+        # A support agent (transactions.view but not ledger.view) is refused.
+        self.assertEqual(
+            op_client(self.support).get("/api/ops/accounts/").status_code, 403)
+
+    def test_browser_is_inquiry_first(self):
+        c = op_client(self.finance)
+        idle = c.get("/api/ops/accounts/")
+        self.assertEqual(idle.status_code, 200)
+        self.assertTrue(idle.data["prompt"])
+        self.assertEqual(idle.data["results"], [])
+        # Static facets ride along so the form can populate without a query.
+        self.assertTrue(idle.data["facets"]["types"])
+        self.assertTrue(idle.data["facets"]["gl_heads"])
+
+    def test_search_by_code_returns_the_gl_head(self):
+        res = op_client(self.finance).get("/api/ops/accounts/", {"q": "2000"})
+        self.assertEqual(res.status_code, 200)
+        self.assertFalse(res.data["prompt"])
+        codes = {r["code"]: r for r in res.data["results"]}
+        self.assertIn("2000", codes)
+        self.assertEqual(codes["2000"]["role"], "gl")
+        # Every row carries its external handle.
+        self.assertTrue(all(r["account_uid"] for r in res.data["results"]))
+
+    def test_search_by_member_owner(self):
+        # By member number — only that member's sub-ledgers.
+        res = op_client(self.finance).get(
+            "/api/ops/accounts/", {"owner": "WM-0000201"})
+        self.assertEqual(res.status_code, 200)
+        self.assertTrue(res.data["count"] >= 1)
+        self.assertTrue(all(r["role"] == "member" for r in res.data["results"]))
+        row = res.data["results"][0]
+        self.assertEqual(row["owner_member_no"], "WM-0000201")
+        from decimal import Decimal
+        self.assertEqual(Decimal(row["balance"]), Decimal("500"))  # credit-normal liability
+        # An unresolvable member handle returns nothing, not the whole book.
+        empty = op_client(self.finance).get("/api/ops/accounts/", {"owner": "ZZ-NOBODY"})
+        self.assertEqual(empty.data["count"], 0)
+
+    def test_search_by_fund_returns_pool_and_members_under_gl(self):
+        c = op_client(self.finance)
+        res = c.get("/api/ops/accounts/",
+                    {"fund_type": "contribution", "fund_id": 42})
+        self.assertEqual(res.status_code, 200)
+        roles = {r["role"] for r in res.data["results"]}
+        self.assertIn("pool", roles)      # the fund control account
+        self.assertIn("member", roles)    # its member sub-ledger
+        # The GL-head facet narrows to that subtree too.
+        gl = c.get("/api/ops/accounts/", {"gl": "2000", "role": "member"})
+        self.assertTrue(all(r["role"] == "member" for r in gl.data["results"]))
+
+    def test_account_360_shows_tree_context(self):
+        from apps.ledger.coa import pool_account
+        pool = pool_account(fund_type="contribution", fund_id=42)
+        res = op_client(self.finance).get(f"/api/ops/accounts/{pool.pk}/")
+        self.assertEqual(res.status_code, 200)
+        self.assertEqual(res.data["role"], "pool")
+        self.assertEqual(res.data["parent"]["code"], "2000")   # rolls into the GL
+        self.assertTrue(res.data["children"])                  # its members
+        self.assertGreaterEqual(res.data["child_count"], 1)
+
+
 class StepUpTOTPTests(TestCase):
     """OP-3 step-up: TOTP enrolment, elevation, recovery codes, and the
     RequireStepUp gate on destructive levers."""
