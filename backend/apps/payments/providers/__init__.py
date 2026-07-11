@@ -97,3 +97,10 @@ class PaymentProvider(ABC):
         """Poll the rail for a transaction's status. Optional — adapters that
         do not support it may leave this unimplemented."""
         raise NotImplementedError(f"{self.name} does not support query_status()")
+
+    def request_payout_result(self, *, provider_ref: str) -> None:
+        """Best-effort: ask the rail to (re)deliver the final result of a
+        dispatched-but-unconfirmed payout. Optional and side-effect-only — the
+        definitive outcome still arrives via the payout callback, so this returns
+        nothing. Adapters that cannot re-request leave the default no-op."""
+        return None

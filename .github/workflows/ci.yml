@@ -91,6 +91,16 @@ jobs:
             exit 1
           fi
 
+      - name: Guard — the ledger imports no payment rail (Rule 1 / P-18)
+        run: |
+          # The ledger is the book of record: it depends on nothing above it and
+          # knows nothing of any rail. Rail I/O goes through the PaymentProvider
+          # port (ADR-0005, ADR-0030), never a direct adapter import.
+          if grep -rEn "from apps\.mpesa|import apps\.mpesa" apps/ledger --include=*.py; then
+            echo "::error::apps/ledger imports apps.mpesa — route rail I/O through the PaymentProvider port (ADR-0030)."
+            exit 1
+          fi
+
       - name: Check for missing migrations
         run: python manage.py makemigrations --check --dry-run
 

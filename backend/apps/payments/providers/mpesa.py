@@ -74,6 +74,42 @@ class MpesaProvider(PaymentProvider):
             state = 'failed'
         return StatusResult(state=state, raw=resp)
 
+    def request_payout_result(self, *, provider_ref: str) -> None:
+        """Fire a Daraja B2C Transaction Status Query so Safaricom re-delivers a
+        stuck payout's final result to the B2C ResultURL. Best-effort and
+        side-effect-only; the definitive outcome arrives asynchronously via the
+        callback, so this returns nothing."""
+        if not provider_ref:
+            return None
+        import requests
+        from django.conf import settings
+        try:
+            token = MpesaService._get_access_token()
+            payload = {
+                "Initiator":          settings.MPESA_B2C_INITIATOR_NAME,
+                "SecurityCredential": settings.MPESA_B2C_SECURITY_CREDENTIAL,
+                "CommandID":          "TransactionStatusQuery",
+                "TransactionID":      provider_ref,
+                "PartyA":             settings.MPESA_SHORTCODE,
+                "IdentifierType":     "4",
+                "ResultURL":          settings.MPESA_B2C_RESULT_URL,
+                "QueueTimeOutURL":    settings.MPESA_B2C_TIMEOUT_URL,
+                "Remarks":            f"Status query for {provider_ref}",
+                "Occasion":           "",
+            }
+            resp = requests.post(
+                f"{settings.MPESA_BASE_URL}/mpesa/transactionstatus/v1/query",
+                json=payload,
+                headers={"Authorization": f"Bearer {token}"},
+                timeout=15,
+            )
+            resp.raise_for_status()
+        except Exception as exc:
+            logger.warning(
+                "request_payout_result: re-query failed for %s (%s)", provider_ref, exc
+            )
+        return None
+
     def parse_callback(self, payload: dict, *, kind: str) -> CallbackEvent:
         if kind == 'collection':
             return self._parse_stk_callback(payload)

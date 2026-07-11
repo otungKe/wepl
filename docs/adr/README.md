@@ -37,6 +37,7 @@ add a new ADR that supersedes the old one (note it in both).
 | [0027](0027-baas-api-key-authentication.md) | Per-tenant API-key authentication for BaaS | Proposed |
 | [0028](0028-outbound-webhooks.md) | Outbound webhooks on the transactional outbox | Proposed |
 | [0029](0029-baas-sandbox-environment.md) | BaaS sandbox environment | Proposed |
+| [0030](0030-ledger-rail-decoupling.md) | De-couple the ledger from the M-Pesa adapter | Accepted |
 
 > Statuses reflect the ADR files as of 2026-07-11.
 > ADRs 0026–0029 are **Proposed** — the Phase 7 (BaaS) decisions, drafted ahead of
