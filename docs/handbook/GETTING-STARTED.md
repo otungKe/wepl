@@ -140,8 +140,10 @@ of "safe and high-value":
   the two real product bugs (the percentage-threshold governance crash; the
   solo-contribution creation block). This is the most valuable cleanup — it removes
   *correctness* debt.
-- **CV-23** — remove the `_legacy_b2c_result` fallback that still parses Daraja above
-  the payments port (a live **P-18** violation).
+- **CV-23** — de-couple the ledger from the M-Pesa adapter: `apps/ledger/tasks.py`
+  imports `apps.mpesa` and `FinancialTransaction` carries Daraja field names
+  (`mpesa_*`) — the ledger breaking its own cardinal rule (**Rule 1 / P-18**). Needs
+  its own ADR; the highest-signal structural cleanup.
 
 ### Infrastructure / mechanization
 - **CV-10** — split Celery from the web dyno (separate worker/beat services).

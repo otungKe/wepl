@@ -96,12 +96,13 @@ without it.
 
 ## Gaps in the record (honest notes)
 
-- Several ADRs are marked **Proposed** rather than **Accepted** in the index even
-  where the code has shipped (e.g. 0005, 0006, 0007, 0024, 0025). Promoting them to
-  *Accepted* — or writing the ADR for a decision made only in code — is ongoing
-  documentation hygiene ([Documentation Standards](../engineering/35-documentation-standards.md)),
-  and the [Charter](../00-charter.md)'s rule applies: code and record must not
-  silently diverge.
+- **(Reconciled 2026-07-11.)** The ADR index README was stale — it listed only 10 of
+  25 ADRs and marked several shipped decisions (0005/0006/0007/0025) as *Proposed*.
+  The index has been rebuilt: **every ADR is now Accepted except 0024**, whose fee
+  postings are built but whose excise-duty/withholding legs await business/compliance
+  inputs. This was the first act of Workstream A in the
+  [Convergence Plan](61-convergence-plan.md) (CV-01) — a live example of the
+  [Charter](../00-charter.md)'s rule that code and record must not silently diverge.
 - Future decisions (BaaS API shape, AML monitoring design, service-extraction
   triggers, the import-contract tool) will each earn an ADR when they harden from
   [direction](63-future-evolution.md) into plan.

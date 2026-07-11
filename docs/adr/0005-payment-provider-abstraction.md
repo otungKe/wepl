@@ -1,7 +1,7 @@
 # ADR-0005: Payment provider port/adapter abstraction
 
-- **Status:** Proposed
-- **Date:** 2026-06-19
+- **Status:** Accepted (implemented — Phase 1, epic #5; `MpesaProvider` = adapter #1, `FakeProvider` in CI)
+- **Date:** 2026-06-19 (accepted 2026-07-11)
 - **Phase:** 1
 
 ## Context

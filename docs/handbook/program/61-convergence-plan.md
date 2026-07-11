@@ -50,11 +50,15 @@ ADRs are marked **Proposed** though their code has shipped and is in production.
 
 | ID | Item | Acceptance | Principle |
 |----|------|-----------|-----------|
-| **CV-01** | Promote shipped ADRs to *Accepted*: 0005 (payments port), 0006 (outbox), 0007 (controls), 0024 (fee/tax), 0025 (account/pool identity) | ADR status updated with acceptance date; index reflects it | P-20 |
-| **CV-02** | Write ADRs for any decision made only in code (audit the money path for undocumented structural choices) | Every structural decision has an ADR | P-20 |
-| **CV-03** | Reconcile the handbook status table + any stale cross-refs against current code | Handbook README status table is honest; link-check passes | Charter |
+| **CV-01** | ✅ **Done (2026-07-11).** Rebuild the stale ADR index (it listed 10 of 25, mismarked 0005/0006/0007/0025 as *Proposed*) and promote ADR-0005 to Accepted. Reality: **all ADRs Accepted except 0024.** | ADR index complete + accurate; 0005 Accepted | P-20 |
+| **CV-02** | Resolve ADR-0024 — the only remaining *Proposed*: fee postings shipped, but excise-duty/withholding await business/compliance inputs. Decide and either accept or scope the tax legs. | 0024 status reflects a real decision, not drift | P-20 |
+| **CV-03** | Write ADRs for any decision made only in code (audit the money path for undocumented structural choices) | Every structural decision has an ADR | P-20 |
+| **CV-04** | Reconcile the handbook status table + stale cross-refs against current code | Handbook README status table is honest; link-check passes | Charter |
 
 **Exit:** an auditor reading `docs/` and the code finds no silent divergence.
+**Finding on first pass:** the record *had* drifted (stale ADR index) — now fixed.
+This validates the whole workstream: the divergence was real and invisible until
+someone read both.
 
 ---
 
@@ -83,7 +87,7 @@ work item with a date.
 | **CV-20** | **Discharge issue #14** — rewrite the quarantined legacy money-path tests against `post_journal()`, then remove the `@skip`s | No skipped money-path tests; suite green with them enabled | #14; P-7 |
 | **CV-21** | **Fix real bug #1 from #14** — `_check_governance_deadlock` crashes for percentage thresholds (`_ProxyContribution` passed where a model instance is required) | A contribution with a numeric `voting_threshold` posts without `TypeError`; regression test added | #14; [Governance](../domain/13-governance-architecture.md) |
 | **CV-22** | **Resolve real bug #2 from #14** — solo-contribution creation blocked by the disbursement quorum check (product decision: gate *disbursement*, not *creation*) | Creating a solo/open contribution succeeds; disbursement still gated | #14 |
-| **CV-23** | **Remove the `_legacy_b2c_result` Daraja leak** — the fallback still parses Daraja fields *above* the payments port | No Daraja vocabulary above the port; welfare-claim path routed through normalized `CallbackEvent` | **P-18**; epic #5 follow-up |
+| **CV-23** | **De-couple the ledger from the M-Pesa adapter** *(rescoped 2026-07-11 — the old `_legacy_b2c_result` fallback is already gone; this is the real, larger leak).* The **ledger violates its own cardinal rule**: `apps/ledger/tasks.py` imports `apps.mpesa` (`MpesaService`, `_on_b2c_success`) to orchestrate B2C payouts, and `FinancialTransaction` carries Daraja field names (`mpesa_checkout_id`, `mpesa_conversation_id`, `mpesa_receipt`). Move payout *orchestration* into `payments` (ledger only *records* confirmed movement) and rename/abstract the provider-reference fields behind the port. | `apps.ledger` imports nothing from `apps.mpesa`; no Daraja vocabulary in ledger models; CV-11 import-linter enforces it | **Rule 1 / P-18**; needs its own ADR |
 | **CV-24** | **Trim the god modules** — split `contributions/models.py` (833), `communities/services.py` (790), `mpesa/views.py` (645) along sub-domain seams | No non-test app file > ~500 lines without a documented reason; boundaries intact | R8; [ADR-0013](../../adr/0013-contributions-module-split.md) |
 | **CV-25** | **Sweep the ~40 noise markers** — resolve or convert each TODO/FIXME/HACK into a tracked issue; delete dead/experimental code additively | Marker count materially reduced; nothing dead left in tree | E-2 |
 | **CV-26** | **Prune/refresh stale docs** — reconcile `docs/*Communities_*` audits and older planning docs against current reality; archive or update | No doc contradicts current code without being marked a dated snapshot | [Documentation Standards](../engineering/35-documentation-standards.md) |
