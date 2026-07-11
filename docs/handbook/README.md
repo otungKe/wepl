@@ -42,6 +42,7 @@ most of the platform's DNA.
 ## Table of contents
 
 ### 0. Foundations
+- [Getting Started — Day 1](GETTING-STARTED.md) — **new here? start with this.** From clone to a correct first change.
 - [00 — Charter](00-charter.md) — why we begin again; what this handbook is and is not.
 - [01 — Glossary & Ubiquitous Language](01-glossary.md) — the shared vocabulary; the words mean exactly one thing.
 
@@ -89,6 +90,7 @@ most of the platform's DNA.
 
 ### 7. Program
 - [Program / 60 — Roadmap & Milestones](program/60-roadmap-and-milestones.md) — the arc from here to a Financial OS.
+- [Program / 61 — Convergence Plan](program/61-convergence-plan.md) — **where we start now:** moving the existing code onto the blueprint (evolve + clean, not rewrite).
 - [Program / 62 — Risks](program/62-risks.md) — what could break the platform, and the mitigations.
 - [Program / 63 — Future Evolution](program/63-future-evolution.md) — the ten-year view.
 - [Program / 64 — Decision Log](program/64-decision-log.md) — the ADR index, annotated.
