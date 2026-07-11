@@ -1,6 +1,6 @@
-"""Tenant resolution helpers (Phase 6).
+"""Tenant resolution helpers.
 
-Until tenants are provisioned and users mapped (P6-04), everything resolves to
+Until tenants are provisioned and users mapped, everything resolves to
 the single default tenant. These helpers centralise that logic so call sites are
 already tenant-correct and the wiring can deepen without touching them.
 """
@@ -19,8 +19,8 @@ def default_tenant() -> Tenant:
 def tenant_for_user(user) -> Tenant:
     """Resolve the tenant a user belongs to. Today: the default tenant.
 
-    P6-04 will derive this from the user's institution membership; keeping the
-    seam here means call sites do not change when that lands.
+    Per-user tenant mapping will derive this from the user's institution
+    membership; keeping the seam here means call sites do not change when it lands.
     """
     return default_tenant()
 

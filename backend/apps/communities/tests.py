@@ -1,4 +1,4 @@
-"""Community test suite (ADR-0009 reference + platform-hardening P0).
+"""Community test suite (ADR-0009).
 
 Covers what the platform-hardening review flagged as missing for this app:
   * the centralized authorization policy (unit + over-the-wire),

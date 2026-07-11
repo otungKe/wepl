@@ -1,4 +1,4 @@
-"""Phase 6 multi-tenancy foundation tests — tenant model, resolution, and
+"""Multi-tenancy foundation tests — tenant model, resolution, and
 tenant-scoped reporting isolation."""
 from decimal import Decimal
 
@@ -79,7 +79,7 @@ class CommunityGetsTenantOnCreateTests(TestCase):
 
 
 class TenantContextWiringTests(TestCase):
-    """P6-04 — JWT auth pins the RLS context for members; middleware resets it."""
+    """JWT auth pins the RLS context for members; middleware resets it."""
 
     def _guc(self):
         from django.db import connection
@@ -126,7 +126,7 @@ class TenantContextWiringTests(TestCase):
 
 
 class PerTenantChartOfAccountsTests(TestCase):
-    """P6-03 — member sub-ledgers and financial transactions inherit the fund's tenant."""
+    """member sub-ledgers and financial transactions inherit the fund's tenant."""
 
     def setUp(self):
         from django.contrib.auth import get_user_model
@@ -152,7 +152,7 @@ class PerTenantChartOfAccountsTests(TestCase):
 
 
 class PerTenantLimitsTests(TestCase):
-    """P6-03 — limit rules can be scoped to a tenant; global rules apply to all."""
+    """limit rules can be scoped to a tenant; global rules apply to all."""
 
     def setUp(self):
         from django.contrib.auth import get_user_model
@@ -183,7 +183,7 @@ class PerTenantLimitsTests(TestCase):
 
 
 class RowLevelSecurityTests(TestCase):
-    """P6-02 — prove RLS isolates tenants at the database, not just the ORM.
+    """prove RLS isolates tenants at the database, not just the ORM.
 
     The CI/dev DB role is a superuser (which bypasses RLS), so we SET ROLE to a
     freshly-created NON-superuser role — the production scenario — and verify that
@@ -225,7 +225,7 @@ class RowLevelSecurityTests(TestCase):
 
 
 class CrossTenantGuardTests(TestCase):
-    """P6-05 — guard_tenant blocks + audits cross-tenant access; allows same/unset."""
+    """guard_tenant blocks + audits cross-tenant access; allows same/unset."""
 
     def setUp(self):
         self.t1 = Tenant.objects.create(name='Guard One', slug='guard-one')

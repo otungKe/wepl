@@ -1,4 +1,4 @@
-"""Seed sensible default limit rules (Phase 3).
+"""Seed sensible default limit rules.
 
 Idempotent: creates rules by name if missing. Tune them in /admin/ afterwards.
 

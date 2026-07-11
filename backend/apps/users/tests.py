@@ -47,7 +47,7 @@ def _boot_production(extra_env):
 
 
 class ProductionOtpBypassGuardTests(SimpleTestCase):
-    """P0-01: the staging OTP bypass must never be active in production."""
+    """the staging OTP bypass must never be active in production."""
 
     def test_production_boots_with_bypass_disabled(self):
         result = _boot_production({})

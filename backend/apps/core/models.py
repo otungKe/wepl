@@ -1,5 +1,5 @@
 """
-Transactional outbox (Phase 2, ADR-0006).
+Transactional outbox (ADR-0006).
 
 `emit()` (apps/core/events.py) writes an OutboxEvent row in the same DB
 transaction as the state change. The `process_outbox` relay (apps/core/tasks.py)

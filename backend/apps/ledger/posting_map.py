@@ -3,8 +3,8 @@ Posting Map — the canonical debit/credit recipe for every money operation.
 
 Each builder returns a *balanced* ``list[Line]`` ready for ``post_journal()``.
 Amounts are ``Money``; accounts are resolved through ``coa``. This is the single
-place that encodes which accounts each business operation touches, so the P0-05
-service rewrite calls these builders instead of hand-rolling journals (and the
+place that encodes which accounts each business operation touches, so services
+call these builders instead of hand-rolling journals (and the
 recipes are proven balanced by tests_posting_map.py).
 
 Recipe summary (DR / CR):

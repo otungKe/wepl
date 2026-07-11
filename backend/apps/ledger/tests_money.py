@@ -1,4 +1,4 @@
-"""Tests for the Money value object (P0-03 / ADR-0003)."""
+"""Tests for the Money value object (ADR-0003)."""
 from decimal import Decimal
 
 from django.test import SimpleTestCase

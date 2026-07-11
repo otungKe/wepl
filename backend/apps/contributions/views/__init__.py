@@ -1,4 +1,4 @@
-"""Contribution views (ADR-0013 module split).
+"""Contribution views (ADR-0013).
 
 Split from a 1,050-line views.py into one module per sub-domain. The public
 import surface is unchanged — urls.py still does `from .views import ...` —

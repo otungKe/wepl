@@ -4,9 +4,6 @@ FinancialTransaction helper.
 `FinancialTransaction` is the orchestration / state-machine layer. Money movement
 itself lives in the double-entry ledger (`post_journal`); a JournalEntry links
 back to its FinancialTransaction via `JournalEntry.financial_transaction`.
-
-This module used to also write the legacy single-entry shadow ledger; that was
-removed in P0-07 (ADR-0002) now that journals are the single book of record.
 """
 import logging
 from decimal import Decimal
@@ -36,7 +33,7 @@ def create_fin_transaction(
     Get-or-create a FinancialTransaction by idempotency_key.
     Returns (ft, created).  Safe to call on retry.
     """
-    # Stamp the tenant from the owning fund's community (Phase 6, P6-03). Null
+    # Stamp the tenant from the owning fund's community. Null
     # when not resolvable — safe under RLS (shared) and replaced once threaded.
     tenant = None
     for fund in (contribution, welfare_fund, shares_fund):

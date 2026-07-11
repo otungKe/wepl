@@ -1,4 +1,4 @@
-"""Tenant-context hygiene for Celery workers (Phase 6, P6-04 follow-up).
+"""Tenant-context hygiene for Celery workers.
 
 REST closes the RLS tenant context with ``TenantRLSMiddleware``; background jobs
 had no equivalent, so a tenant pinned by one task could leak onto the next task

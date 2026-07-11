@@ -1,4 +1,4 @@
-"""Tests for the Posting Map (P0-04).
+"""Tests for the Posting Map.
 
 Every recipe must (a) post a balanced journal through post_journal() and (b) move
 the right accounts in the right direction. A global trial balance must remain zero

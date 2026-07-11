@@ -33,7 +33,7 @@ Status = CommunityJoinRequest.Status
 
 
 def require_active_community(community, action: str = 'do this') -> None:
-    """The lifecycle chokepoint (audit CR-2): creation of memberships, money
+    """The lifecycle chokepoint: creation of memberships, money
     objects, and conversations is only legal while a community is ACTIVE.
     Reads — and money flows that settle existing obligations (advance
     repayments, in-flight callbacks) — are deliberately NOT gated here."""
@@ -45,14 +45,14 @@ def require_active_community(community, action: str = 'do this') -> None:
 
 
 def _require_same_tenant(user, community) -> None:
-    """Cross-tenant membership guard (audit G-13/M-3). A no-op while every
-    user resolves to the default tenant; the moment P6-04 maps users to real
-    institutions, every join path inherits this refusal + audit trail."""
+    """Cross-tenant membership guard. A no-op while every user resolves to the
+    default tenant; once users map to real institutions, every join path
+    inherits this refusal + audit trail."""
     from apps.tenants.resolve import tenant_for_user
     if community.tenant_id and tenant_for_user(user).id != community.tenant_id:
         # The raise rolls back the surrounding service transaction, so a DB
         # audit row written here would vanish with it — the structured log
-        # line (request_id/tenant/actor context, ADR-0020) is the durable
+        # line (ADR-0020) is the durable
         # forensic record for refused attempts.
         logger.warning(
             "Cross-tenant join refused: user %s -> community %s (tenant %s)",
@@ -85,7 +85,7 @@ def check_cooling_off(user, community, action: str) -> None:
 
     from datetime import timedelta
     # membership_start = later of joined_at / rejoined_at, so leaving and
-    # rejoining restarts the clock (audit G-4).
+    # rejoining restarts the clock.
     joined   = membership.membership_start
     eligible = joined + timedelta(days=days)
 
@@ -111,7 +111,7 @@ def _dn(user) -> str:
 def _notify_admins(community, *, exclude_user=None, notification_type, title,
                    message, **extra):
     """Notify every active admin of *community* via the durable event bus
-    (ADR-0006, audit H-5): one outbox event per admin, written in the current
+    (ADR-0006): one outbox event per admin, written in the current
     transaction — a rollback discards them, a crash never loses them, and
     delivery (Notification row + push) happens async in the relay."""
     from apps.core.events import emit
@@ -206,7 +206,7 @@ class CommunityService:
             membership.is_active = True
             membership.role = Role.MEMBER
             membership.member_status = CommunityMembership.MemberStatus.ACTIVE
-            # Restart the cooling-off clock: this stint begins now (audit G-4).
+            # Restart the cooling-off clock: this stint begins now.
             membership.rejoined_at = timezone.now()
             membership.save(update_fields=["is_active", "role", "member_status", "rejoined_at"])
         elif not created:
@@ -243,7 +243,7 @@ class CommunityService:
         if not membership:
             raise ValidationError("You are not a member of this community.")
 
-        # The owner cannot walk away with rank-4 authority (audit G-1): they'd
+        # The owner cannot walk away with rank-4 authority: they'd
         # keep exclusive member-management power from outside while nobody
         # inside could exercise it. Transfer first — the mirror of the
         # last-admin guard below.
@@ -320,7 +320,7 @@ class CommunityService:
                 member_status=CommunityMembership.MemberStatus.BANNED).exists():
             raise PermissionDenied("You cannot rejoin this community.")
 
-        # History-preserving (audit M-2): a re-request creates a NEW row —
+        # History-preserving: a re-request creates a NEW row —
         # never re-opens a decided one, so past reviews keep their reviewer
         # and timestamp. The partial unique constraint (one PENDING per pair)
         # backstops the existence check under concurrency.
@@ -345,7 +345,7 @@ class CommunityService:
     @staticmethod
     @transaction.atomic
     def cancel_join_request(user, request_id):
-        """Requester withdraws their own PENDING request (audit M-2/G-10)."""
+        """Requester withdraws their own PENDING request."""
         req = (CommunityJoinRequest.objects.select_for_update()
                .filter(id=request_id, requester=user).first())
         if req is None:
@@ -363,7 +363,7 @@ class CommunityService:
     @staticmethod
     @transaction.atomic
     def assign_role(creator, community, membership_id, role):
-        """Only the community creator can assign roles (ADR-0009 policy)."""
+        """Only the community creator can assign roles (ADR-0009)."""
         require(creator, "community.member.assign_role", community,
                 "Only the community creator can assign roles.")
         if role not in Role.values:
@@ -408,9 +408,9 @@ class CommunityService:
     @staticmethod
     @transaction.atomic
     def remove_member(creator, community, membership_id, *, ban=False):
-        """Only the community creator can remove other members (ADR-0009 policy).
+        """Only the community creator can remove other members (ADR-0009).
 
-        ``ban=True`` (audit H-4) marks the membership BANNED: the person can
+        ``ban=True`` marks the membership BANNED: the person can
         never rejoin or re-request — the plain-removal revolving door is shut
         for the cases where it matters.
         """
@@ -524,7 +524,7 @@ class CommunityService:
         return community
 
 
-    # ── Governance settings & invites (audit H-3 / M-1) ──────────────────────
+    # ── Governance settings & invites ──────────────────────
 
     # The settings a community may edit after creation. Single source of truth
     # for the update endpoint.
@@ -539,7 +539,7 @@ class CommunityService:
     def update_settings(actor, community, payload: dict):
         """Apply governance/profile changes with a full old→new audit diff —
         flipping join_policy or invite_permission is security-relevant and must
-        leave a trail (audit M-1)."""
+        leave a trail."""
         require(actor, "community.update", community,
                 "Only the creator or an admin can edit community details.")
         payload = {k: v for k, v in payload.items()
@@ -581,7 +581,7 @@ class CommunityService:
     @staticmethod
     @transaction.atomic
     def rotate_invite_code(actor, community):
-        """Regenerate the invite code (audit H-3): a leaked code is now
+        """Regenerate the invite code: a leaked code is now
         recoverable. Rotation authority follows the sharing setting — when
         invite_permission is 'creator', only the creator may rotate."""
         from .models import _generate_invite_code
@@ -602,7 +602,7 @@ class CommunityService:
                     community.name, community.id, actor.pk)
         return community
 
-    # ── Lifecycle (audit CR-1 / CR-2) ─────────────────────────────────────────
+    # ── Lifecycle ─────────────────────────────────────────
 
     @staticmethod
     def has_financial_history(community) -> bool:
@@ -700,7 +700,7 @@ class CommunityService:
     @staticmethod
     @transaction.atomic
     def delete_community(actor, community):
-        """Hard delete — legal ONLY for never-funded shells (audit CR-1).
+        """Hard delete — legal ONLY for never-funded shells.
 
         Any recorded financial movement makes the community permanent: the
         ledger's journal lines reference these domain objects, and destroying

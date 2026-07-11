@@ -1,5 +1,5 @@
 """
-Financial reporting from the double-entry general ledger (Phase 4).
+Financial reporting from the double-entry general ledger.
 
 Every figure here is computed from immutable ``JournalLine`` rows — the source of
 truth — never from the ``AccountBalance`` cache, so reports are reproducible from
@@ -55,7 +55,7 @@ def _lines(*, as_of=None, start=None, end=None, fund_type=None, fund_id=None, op
     return qs
 
 
-# ── P4-01 Trial balance ──────────────────────────────────────────────────────
+# ── Trial balance ──────────────────────────────────────────────────────
 def trial_balance(*, as_of=None, fund_type=None, fund_id=None, op_type=None, tenant_id=None) -> dict:
     """Per-account debit/credit/normal-balance plus totals and balanced flag."""
     rows = []
@@ -81,7 +81,7 @@ def trial_balance(*, as_of=None, fund_type=None, fund_id=None, op_type=None, ten
     }
 
 
-# ── P4-02 Balance sheet & income statement ───────────────────────────────────
+# ── Balance sheet & income statement ───────────────────────────────────
 def _totals_by_type(qs) -> dict:
     out = {}
     for r in qs.values('account__type').annotate(debit=_debit_expr(), credit=_credit_expr()):
@@ -132,7 +132,7 @@ def income_statement(*, start=None, end=None, fund_type=None, fund_id=None, tena
     }
 
 
-# ── P4-03 Statement of account ───────────────────────────────────────────────
+# ── Statement of account ───────────────────────────────────────────────
 def statement_of_account(account: Account, *, start=None, end=None) -> dict:
     """Opening balance, period lines with a running balance, and closing balance."""
     debit_normal = account.type in Account.DEBIT_NORMAL_TYPES
@@ -176,7 +176,7 @@ def member_account(user, fund_type: str, fund_id: int) -> Account | None:
     return Account.objects.filter(owner=user, fund_type=fund_type, fund_id=fund_id).first()
 
 
-# ── P5-04 Per-currency trial balance + presentation consolidation ────────────
+# ── Per-currency trial balance + presentation consolidation ────────────
 def trial_balance_by_currency(*, as_of=None, fund_type=None, fund_id=None, op_type=None, tenant_id=None) -> dict:
     """Trial balance split by account currency; each currency must self-balance."""
     out: dict[str, dict] = {}
@@ -206,7 +206,7 @@ def present_value(amount: Decimal, currency: str, presentation: str, *, at=None)
     return amount * get_rate(currency, presentation, at=at)
 
 
-# ── P4-04 Audit export ───────────────────────────────────────────────────────
+# ── Audit export ───────────────────────────────────────────────────────
 EXPORT_COLUMNS = (
     'journal_id', 'posted_at', 'op_type', 'idempotency_key', 'narration',
     'reverses_id', 'line_id', 'account_code', 'account_name', 'direction', 'amount',

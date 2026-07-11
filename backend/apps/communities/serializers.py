@@ -69,7 +69,7 @@ class CommunitySerializer(serializers.ModelSerializer):
 
     def get_invite_code(self, obj):
         """Expose the invite code only to ranks the community's own
-        ``invite_permission`` setting allows (audit H-3) — the setting was
+        ``invite_permission`` setting allows — the setting was
         previously stored but never enforced. Non-members never see it."""
         from .policies import can_see_invite_code
         user = self._request_user()

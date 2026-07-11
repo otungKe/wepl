@@ -1,4 +1,4 @@
-"""Tenant-scoped Channels group naming for chat (P6-05 follow-up).
+"""Tenant-scoped Channels group naming for chat.
 
 The Channels group that fans a conversation's events out to its WebSocket
 subscribers is namespaced by tenant, so groups can never collide across tenants

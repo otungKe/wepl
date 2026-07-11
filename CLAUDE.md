@@ -120,7 +120,13 @@ separate app/deployment — never co-hosted with the customer web app.
 - Async stack: Celery + Beat over Redis, queues `default,notifications,payments,financial`;
   served over ASGI (Channels/Daphne).
 - Work items are tracked as `P{phase}-{nn}` (e.g. `P0-05`) and referenced in commit messages,
-  phase docs, and GitHub issues.
+  phase docs, and GitHub issues — **but never in code**. Code comments/docstrings describe what
+  the code does and why it must be so, never what changed or by which PR/work-item/phase/audit
+  finding; that history lives in git and the ADRs. References to a governing decision (`ADR-0008`)
+  are fine. A CI guard enforces this. See the handbook coding standards.
+- The architectural handbook is the reference blueprint: `docs/handbook/` (start at its README;
+  new engineers read `docs/handbook/GETTING-STARTED.md`). Decisions are ADRs in `docs/adr/`;
+  the convergence plan (moving code onto the handbook) is `docs/handbook/program/61-convergence-plan.md`.
 
 ## Deploy
 

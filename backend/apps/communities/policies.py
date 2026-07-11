@@ -53,7 +53,7 @@ _MIN_RANK = {
     "community.delete":               _RANK[CREATOR],          # delete the community
     "community.archive":              _RANK[CREATOR],          # archive / un-archive
     "community.invite.rotate":        _RANK[Role.ADMIN],       # regenerate the invite code
-    "community.ownership.transfer":   _RANK[CREATOR],          # (reserved for ADR-0011)
+    "community.ownership.transfer":   _RANK[CREATOR],          # (ADR-0011)
 }
 
 
@@ -74,7 +74,7 @@ def community_rank(actor, community) -> int:
 
 
 def can_see_invite_code(actor, community) -> bool:
-    """Layered rule (audit H-3): the community's own ``invite_permission``
+    """Layered rule: the community's own ``invite_permission``
     setting decides which rank may see/share the invite code.
 
         creator → rank 4 only

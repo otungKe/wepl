@@ -7,8 +7,8 @@ Standard (ADR-0003):
   * Rounding is **banker's rounding** (``ROUND_HALF_EVEN``) applied only at the
     defined quantisation points here.
   * Every amount carries an explicit ISO-4217-style currency code (default KES).
-    Cross-currency arithmetic is rejected — FX is a Phase 5 concern and must go
-    through an explicit conversion, never an implicit one.
+    Cross-currency arithmetic is rejected — FX must go through an explicit
+    conversion, never an implicit one.
 
 Use ``Money`` at service boundaries and when building journals so amounts are
 always normalised and currency-safe. Bare ``Decimal`` math on money is the thing

@@ -6,6 +6,6 @@ class TenantsConfig(AppConfig):
     name = 'apps.tenants'
 
     def ready(self):
-        # Clear RLS tenant context at Celery task boundaries (P6-04 follow-up).
+        # Clear RLS tenant context at Celery task boundaries.
         from . import celery_hooks
         celery_hooks.connect()

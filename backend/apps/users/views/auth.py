@@ -1,4 +1,4 @@
-from ._common import *  # shared imports/helpers (ADR-0013 view split)
+from ._common import *  # shared imports/helpers (ADR-0013)
 
 from apps.core.throttling import ResilientAnonRateThrottle
 
@@ -150,8 +150,8 @@ class ResetPINView(APIView):
         POST /auth/pin/reset/    →  new PIN set, active JWT returned
     """
 
-    # Requires an otp_recovery-stage token. StageRequired handles the gate so we
-    # no longer need the manual _token_stage check in the body.
+    # Requires an otp_recovery-stage token. StageRequired handles the gate, so
+    # no manual _token_stage check is needed in the body.
     permission_classes = [StageRequired]
     required_stages    = {STAGE_OTP_RECOVERY}
 

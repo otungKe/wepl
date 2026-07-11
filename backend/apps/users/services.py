@@ -38,7 +38,7 @@ class UserService:
         """Platform-level deactivation (the domain's single door for it):
         blocks login, revokes every active session and outstanding refresh
         token, and audits. Community authority math already excludes
-        deactivated users (Communities audit M-4)."""
+        deactivated users."""
         from django.utils import timezone as _tz
         from apps.audit.services import AuditService
         from . import sessions as session_registry

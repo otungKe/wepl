@@ -1,4 +1,4 @@
-"""Phase 4 reporting tests — reports reconcile to the ledger and are
+"""Reporting tests — reports reconcile to the ledger and are
 point-in-time reproducible from immutable lines."""
 from datetime import timedelta
 from decimal import Decimal

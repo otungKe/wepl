@@ -1,4 +1,4 @@
-from ._common import *  # shared imports + helpers (ADR-0013 split)
+from ._common import *  # shared imports + helpers (ADR-0013)
 
 
 class WelfareService:
@@ -25,7 +25,7 @@ class WelfareService:
             welfare_fund=fund,
             initial_state=FinancialTransaction.State.SUCCESS,
         )
-        # Double-entry posting (P0-05).
+        # Double-entry posting.
         post_journal(
             idempotency_key=f"je-{idem_key}",
             op_type=_pm.Op.WELFARE_CONTRIBUTION,
@@ -177,7 +177,7 @@ class WelfareService:
         ):
             return  # already in progress
 
-        # Double-entry posting (P0-05): reserve welfare funds for the claimant.
+        # Double-entry posting: reserve welfare funds for the claimant.
         post_journal(
             idempotency_key=f"je-{idem_key}",
             op_type=_pm.Op.WELFARE_CLAIM,

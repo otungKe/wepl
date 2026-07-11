@@ -56,7 +56,7 @@ _FUND_PAYABLE_PARENT = {
 }
 
 # The GL "head" every sub-ledger fund_type hangs off — the prefix of its code.
-# Stable regardless of re-parenting (pool control accounts, ADR-0025 Part B).
+# Stable regardless of re-parenting (ADR-0025).
 _FUND_GL = {**_FUND_PAYABLE_PARENT, 'advance': ADVANCES_RECEIVABLE}
 
 # ── Canonical, GL-anchored account codes (ADR-0025) ──────────────────────────
@@ -122,7 +122,7 @@ def interest_income_account() -> Account:
 
 
 def _tenant_for_fund(fund_type: str, fund_id: int):
-    """Resolve the tenant that owns a fund's community (Phase 6, P6-03).
+    """Resolve the tenant that owns a fund's community.
 
     Lazy imports avoid a ledger→contributions dependency at module load. Returns
     None (shared) when not resolvable — safe under RLS (null tenant is visible).
@@ -164,7 +164,7 @@ def member_receivable_account(*, user, fund_id: int) -> Account:
 
 
 def pool_account(*, fund_type: str, fund_id: int) -> Account:
-    """Resolve (get-or-create) a pool/fund **control account** (ADR-0025 Part B).
+    """Resolve (get-or-create) a pool/fund **control account** (ADR-0025).
 
     A pool is a first-class ledger entity: an owner-less account (code e.g.
     ``2000-0350000``) that parents the pool's member sub-ledgers and can hold
@@ -193,7 +193,7 @@ def member_fund_account(*, user, fund_type: str, fund_id: int) -> Account:
 
     The platform owes contributed funds back to the member, hence LIABILITY.
     Rolls up into the fund_type's payable GL account. New sub-ledgers are stamped
-    with the fund's tenant (Phase 6); GL parents stay shared (tenant null).
+    with the fund's tenant; GL parents stay shared (tenant null).
     """
     parent_code = _FUND_PAYABLE_PARENT.get(fund_type)
     if parent_code is None:

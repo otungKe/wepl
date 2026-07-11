@@ -9,15 +9,14 @@ All outgoing M-Pesa B2C payments are dispatched through here, so that:
     balances stay correct
   - The B2C async result (from B2CResultView) handles SUCCESS/FAILED resolution
 
-P1-07 fix: _handle_payout_failure is now called ONLY from on_failure (after
-all retries are exhausted), not from the retry path.  The prior code called it
-before raise self.retry(), which transitioned FT → FAILED and caused the retry
-guard (if ft.state == FAILED: return) to fire on every subsequent attempt —
-effectively zero retries.
+_handle_payout_failure is called ONLY from on_failure (after all retries are
+exhausted), never from the retry path: calling it earlier would transition
+FT → FAILED and make the retry guard (if ft.state == FAILED: return) fire on
+every subsequent attempt, effectively allowing zero retries.
 
-P1-07 fix: retries resume from PROCESSING state (set on first attempt).
-The task now skips the PENDING→PROCESSING transition when ft.state is already
-PROCESSING, so retry attempts proceed to the B2C call without a TransitionError.
+Retries resume from PROCESSING state (set on the first attempt): the task skips
+the PENDING→PROCESSING transition when ft.state is already PROCESSING, so retry
+attempts proceed to the B2C call without a TransitionError.
 """
 import logging
 
@@ -394,7 +393,7 @@ def _update_context_on_failure(ft) -> None:
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# Reconciliation & observability (P0-08)
+# Reconciliation & observability
 # ═══════════════════════════════════════════════════════════════════════════
 
 def _alert(message: str, extra: dict) -> None:

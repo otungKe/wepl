@@ -1,4 +1,4 @@
-from ._common import *  # shared imports/helpers (ADR-0013 view split)
+from ._common import *  # shared imports/helpers (ADR-0013)
 
 
 class KYCView(APIView):
@@ -209,7 +209,7 @@ class KYCResubmitView(APIView):
                             status=status.HTTP_404_NOT_FOUND)
 
         # Approved KYC is closed to re-submission — nothing can be topped up,
-        # and reviewers can no longer request items on an approved case.
+        # and reviewers cannot request items on an approved case.
         if kyc.status == 'approved':
             return Response({'error': 'Your KYC is approved — no re-submission is needed.'},
                             status=status.HTTP_409_CONFLICT)

@@ -69,7 +69,7 @@ def post_journal(
         )
 
     debit_total = Decimal('0')
-    # Balance is enforced PER CURRENCY (Phase 5, P5-01): every currency in a
+    # Balance is enforced PER CURRENCY: every currency in a
     # journal must have Σdebit == Σcredit independently. Single-currency journals
     # (the common case) behave exactly as before; cross-currency moves must square
     # each currency via FX/clearing accounts (see apps/ledger/fx.py).
@@ -98,7 +98,7 @@ def post_journal(
                 f"debit={d} credit={c}."
             )
 
-    # ── Controls: limits & risk gate (Phase 3, ADR-0007) ─────────────────────
+    # ── Controls: limits & risk gate (ADR-0007) ─────────────────────────────
     # Evaluated here so every member-facing money movement passes through exactly
     # one enforcement point. Reversals and journals with no FinancialTransaction
     # (internal moves) bypass member-facing controls. Raises LimitExceeded (DENY)

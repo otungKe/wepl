@@ -1,4 +1,4 @@
-"""Tests for the PaymentProvider abstraction (Phase 1 / ADR-0005)."""
+"""Tests for the PaymentProvider abstraction (ADR-0005)."""
 from decimal import Decimal
 from unittest.mock import patch
 

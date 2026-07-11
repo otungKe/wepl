@@ -35,7 +35,7 @@ def fire_due_reminders(self):
     fired = 0
     try:
         now = timezone.now()
-        # Suspended/archived communities fall silent (audit CR-2).
+        # Suspended/archived communities fall silent.
         # community_id is a loose integer link, so exclude via subquery.
         from apps.communities.models import Community
         inactive_ids = Community.objects.exclude(status='active').values('id')

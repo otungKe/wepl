@@ -1,4 +1,4 @@
-"""Tenant-aware JWT authentication (Phase 6, P6-04).
+"""Tenant-aware JWT authentication.
 
 The app authenticates with JWT inside DRF (not Django's session middleware), so
 the per-request RLS tenant context is set here — right after the user is resolved,
@@ -16,7 +16,7 @@ from .rls import set_current_tenant
 
 
 class TenantJWTAuthentication(SessionJWTAuthentication):
-    """Session-aware JWT (ADR-0010) + per-request RLS tenant pinning (P6-04)."""
+    """Session-aware JWT (ADR-0010) + per-request RLS tenant pinning."""
 
     def authenticate(self, request):
         result = super().authenticate(request)

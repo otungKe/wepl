@@ -1,4 +1,4 @@
-"""Inbound callback views consume normalised CallbackEvents (P1-04)."""
+"""Inbound callback views consume normalised CallbackEvents."""
 from decimal import Decimal
 
 from django.contrib.auth import get_user_model

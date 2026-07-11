@@ -1,4 +1,4 @@
-from ._common import *  # shared imports + helpers (ADR-0013 split)
+from ._common import *  # shared imports + helpers (ADR-0013)
 from .contribution import ContributionService
 
 

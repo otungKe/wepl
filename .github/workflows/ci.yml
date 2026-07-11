@@ -79,6 +79,18 @@ jobs:
             exit 1
           fi
 
+      - name: Guard — no change-history narration in code comments
+        run: |
+          # Code describes what it does and why; the history of what changed
+          # (work-item IDs, PR/issue numbers, phase/rollout narration) lives in
+          # git and the ADRs, not in the source. See docs/handbook coding standards.
+          pattern='\bP[0-9]-[0-9]{2}\b|\bUX-[0-9]{2}\b|\bCV-[0-9]{2}\b|(issue|PR|see) #[0-9]'
+          if grep -rEn "$pattern" apps --include=*.py \
+               | grep -vE "/migrations/"; then
+            echo "::error::Change-history narration found in code. Describe what the code does, not what changed — history belongs in git/ADRs."
+            exit 1
+          fi
+
       - name: Check for missing migrations
         run: python manage.py makemigrations --check --dry-run
 

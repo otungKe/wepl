@@ -284,7 +284,7 @@ class KYCStatusSerializer(serializers.ModelSerializer):
 
 
 # ─────────────────────────────────────────────────────────────
-# USER SESSION (device/session registry — ADR-0010)
+# USER SESSION (ADR-0010)
 # ─────────────────────────────────────────────────────────────
 
 class UserSessionSerializer(serializers.ModelSerializer):

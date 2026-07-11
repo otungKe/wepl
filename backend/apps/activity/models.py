@@ -5,8 +5,7 @@ from django.db import models
 class ActivityQuerySet(models.QuerySet):
     def visible_to(self, user):
         """
-        Rows the given user is allowed to see (ADR-0016 visibility rule, encoded
-        once):
+        Rows the given user is allowed to see (ADR-0016):
           - they are the actor, OR
           - the row is community-scoped and they are an active member of that
             community, OR

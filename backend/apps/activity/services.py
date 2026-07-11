@@ -33,7 +33,7 @@ class ActivityService:
 
     @staticmethod
     def log_activity(user, activity_type, message):
-        """Back-compat shim (pre-ADR-0016 callers). Stores the pre-rendered
+        """Back-compat shim (ADR-0016). Stores the pre-rendered
         string with empty params and private visibility."""
         return ActivityService.record(
             actor=user, verb=activity_type, message=message,

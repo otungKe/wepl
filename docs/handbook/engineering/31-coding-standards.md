@@ -88,6 +88,14 @@ reintroduce them, and do not "temporarily" comment out the guard.
   docstring — stating the three guarantees — is the exemplar.
 - **Document invariants at the door.** Any function that upholds a P-rule says so in
   its docstring, so the next reader knows what must not be broken.
+- **No change-history in code.** Comments and docstrings describe what the code does
+  and *why it must be so* — never *what changed, when, or by which PR/work-item*. Do
+  not write `# P0-05: ...`, `# fixed in #154`, `(Phase 6)`, `(audit H-3)`,
+  `used to ... but now ...`, or `removed in ...`. That history lives in **git and the
+  ADRs**, which a future collaborator has; a phase/PR/audit-finding reference is
+  context they *don't*. References to the governing **decision** (`ADR-0008`) are
+  fine — they point at durable rationale, not at project archaeology. A CI guard
+  (`no change-history narration in code comments`) enforces this.
 - **Match comment density to the surrounding code** (E-12).
 
 ## Formatting and imports

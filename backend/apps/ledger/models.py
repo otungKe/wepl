@@ -3,8 +3,7 @@ Financial ledger — the single source of truth for all money movements.
 
 FinancialTransaction  — one complete financial event with a strict state machine
                         (orchestration layer; links to the journal that moved the
-                        money). The legacy single-entry shadow ledger was removed
-                        in P0-07 (ADR-0002).
+                        money).
 
 Double-entry core (the accounting source of truth):
     Account       — every place money can rest (GL classification + member
@@ -106,7 +105,7 @@ class FinancialTransaction(models.Model):
     # PII: shown in full to operators, masked to members.
     counterparty_name = models.CharField(max_length=120, blank=True)
 
-    # Tenant dimension (Phase 6, ADR-0008). Nullable during rollout.
+    # Tenant dimension (ADR-0008).
     tenant = models.ForeignKey(
         'tenants.Tenant', null=True, blank=True,
         on_delete=models.PROTECT, related_name='financial_transactions',
@@ -290,7 +289,7 @@ class Account(models.Model):
 
     currency  = models.CharField(max_length=3, default='KES')
     is_active = models.BooleanField(default=True)
-    # Tenant dimension (Phase 6, ADR-0008). Null = platform/shared (e.g. global
+    # Tenant dimension (ADR-0008). Null = platform/shared (e.g. global
     # GL accounts); member sub-ledgers carry their fund's tenant.
     tenant = models.ForeignKey(
         'tenants.Tenant', null=True, blank=True,
@@ -313,7 +312,7 @@ class Account(models.Model):
                 fields=['owner', 'fund_type', 'fund_id'],
                 condition=Q(owner__isnull=False),
                 name='ledger_acct_owner_fund_uniq'),
-            # A pool/fund control account (ADR-0025 Part B): owner-less, one per
+            # A pool/fund control account (ADR-0025): owner-less, one per
             # (fund_type, fund_id). Excludes GL accounts (fund_type = '').
             models.UniqueConstraint(
                 fields=['fund_type', 'fund_id'],
@@ -480,7 +479,7 @@ class AccountBalance(models.Model):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# ExchangeRate — effective-dated FX rates (Phase 5, P5-02)
+# ExchangeRate — effective-dated FX rates
 # ─────────────────────────────────────────────────────────────────────────────
 class ExchangeRate(models.Model):
     """An effective-dated conversion rate: 1 ``base`` = ``rate`` × ``quote``.

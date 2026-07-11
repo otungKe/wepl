@@ -1,4 +1,4 @@
-"""Contribution services (ADR-0013 module split).
+"""Contribution services (ADR-0013).
 
 ``services.py`` (1,919 lines) became this package — one module per sub-domain —
 without changing the public import surface: ``from apps.contributions.services

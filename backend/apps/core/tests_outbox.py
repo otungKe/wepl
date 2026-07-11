@@ -1,4 +1,4 @@
-"""Tests for the transactional outbox (Phase 2, ADR-0006)."""
+"""Tests for the transactional outbox (ADR-0006)."""
 from django.contrib.auth import get_user_model
 from django.db import transaction
 from django.test import TestCase, override_settings

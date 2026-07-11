@@ -1,5 +1,5 @@
 """
-Read-only financial reporting API (Phase 4).
+Read-only financial reporting API.
 
 Staff-gated (IsAdminUser): trial balance, balance sheet, income statement,
 statement of account, and an immutable audit export. Every figure is computed

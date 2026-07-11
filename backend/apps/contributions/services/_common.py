@@ -42,13 +42,12 @@ from apps.users.tiers import AccessPolicy
 from apps.ledger.permissions import FinancialPermissions
 from apps.ledger.writer import create_fin_transaction
 from apps.ledger.models import FinancialTransaction, JournalEntry
-# P0-05 strangler: post double-entry journals alongside the legacy writes. The
-# ledger becomes a parallel source of truth now; reads/gates flip to it in P0-06
-# and the legacy writes are deleted in P0-07.
+# The ledger is the single source of monetary truth: money moves through
+# post_journal() and balances are derived from it.
 from apps.ledger.posting import post_journal
 from apps.ledger import posting_map as _pm
 from apps.ledger.money import Money
-# P0-06: read pool/member balances from the ledger (the authoritative source).
+# Pool/member balances are read from the ledger (the source of truth).
 from apps.ledger.balances import fund_balance, account_balance
 from apps.ledger import coa as _coa
 

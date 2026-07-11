@@ -8,6 +8,27 @@
 
 ---
 
+## The reference baseline
+
+**This repository — as documented by this handbook — is the reference starting point
+for all future work on Wepl.** Everything that came before is prologue: the code is
+now ledger-first, the architecture is written down, and the record (handbook + ADRs)
+matches the code. From here, the platform moves forward by *convergence and addition*
+([Convergence Plan](program/61-convergence-plan.md)), not by re-invention.
+
+Two consequences for how we work from this baseline:
+
+- **The past is in git and the ADRs, not in the code.** Source comments describe what
+  the code does and *why it must be so* — never what changed, when, or by which
+  PR/work-item/phase. A CI guard enforces this, so the codebase reads as a clean,
+  timeless description of the system as it is now. (References to a governing
+  *decision* — an `ADR-XXXX` — are welcome; those are durable rationale, not history.)
+- **A new collaborator should be able to start here and be correct.** If any part of
+  this handbook or the code would leave that person guessing, that is a defect to fix
+  ([Charter](00-charter.md)). New engineers begin at [Getting Started](GETTING-STARTED.md).
+
+---
+
 ## How to read this handbook
 
 This is not one document. It is a set of cross-referenced documents, each owning

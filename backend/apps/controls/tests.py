@@ -1,4 +1,4 @@
-"""Phase 3 controls tests — limits engine + posting-chokepoint enforcement."""
+"""Controls tests — limits engine + posting-chokepoint enforcement."""
 from decimal import Decimal
 
 from django.contrib.auth import get_user_model
@@ -115,7 +115,7 @@ class ChokepointEnforcementTests(TestCase):
 
 
 class HeldMovementReviewTests(TestCase):
-    """P3-04 — blocked movements are durably recorded and reviewable."""
+    """blocked movements are durably recorded and reviewable."""
 
     def setUp(self):
         self.user = User.objects.create_user(phone_number='254700000003')

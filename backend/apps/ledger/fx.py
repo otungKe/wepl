@@ -1,5 +1,5 @@
 """
-Foreign-exchange helpers (Phase 5).
+Foreign-exchange helpers.
 
 Currency conversion is always **explicit** — there is no implicit cross-currency
 arithmetic anywhere (``Money`` rejects it). Rates come from the effective-dated

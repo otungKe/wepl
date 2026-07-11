@@ -11,10 +11,9 @@ from decimal import Decimal
 from unittest import skip
 from unittest.mock import MagicMock, patch
 
-# Quarantined under P0-02 — see GitHub issue #14. These cover the M-Pesa callback
-# credit/reversal paths that Phase 0 rewrites onto post_journal()/reverse_journal()
-# (P0-05); they will be rewritten and unskipped then.
-_LEGACY = "P0-02 #14: legacy M-Pesa money-path test; rewrite onto post_journal() in P0-05"
+# Legacy M-Pesa money-path tests, skipped pending a rewrite onto
+# post_journal() / reverse_journal().
+_LEGACY = "legacy M-Pesa money-path test — pending rewrite onto post_journal()"
 
 from django.test import TestCase
 from django.urls import reverse

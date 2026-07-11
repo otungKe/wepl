@@ -160,7 +160,7 @@ class ConversationConsumer(AsyncWebsocketConsumer):
 
     # ── Tenant-scoped DB helpers ──────────────────────────────────────────────
     # Wrap writes/reads in tenant_context so RLS applies on the worker thread's
-    # connection for the duration of the operation (P6-04 follow-up).
+    # connection for the duration of the operation.
 
     @staticmethod
     def _is_session_active(sid) -> bool:

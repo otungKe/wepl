@@ -1,4 +1,4 @@
-from ._common import *  # shared imports + helpers (ADR-0013 split)
+from ._common import *  # shared imports + helpers (ADR-0013)
 
 
 class StandingOrderService:
@@ -104,7 +104,7 @@ class StandingOrderService:
         ):
             return order  # already in flight
 
-        # Double-entry posting (P0-05): payout draws down the owner's pool share.
+        # Double-entry posting: payout draws down the owner's pool share.
         post_journal(
             idempotency_key=f"je-{idem_key}",
             op_type=_pm.Op.STANDING_ORDER,

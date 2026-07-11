@@ -1,4 +1,4 @@
-"""Tenant-context tests for chat WS + the channel-group scoping (P6-04/P6-05).
+"""Tenant-context tests for chat WS + the channel-group scoping.
 
 Covers the two gaps the platform-hardening review flagged outside REST:
   * chat WebSocket fan-out groups must be tenant-scoped, and

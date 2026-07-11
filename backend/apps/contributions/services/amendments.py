@@ -1,4 +1,4 @@
-from ._common import *  # shared imports + helpers (ADR-0013 split)
+from ._common import *  # shared imports + helpers (ADR-0013)
 
 
 class AmendmentService:
@@ -174,7 +174,7 @@ class AmendmentService:
         if amendment.proposed_by == voter:
             raise PermissionDenied("You cannot vote on your own amendment proposal.")
 
-        # Section C: amendment votes use amendment_voting_threshold (ADR-0009 policy)
+        # Section C: amendment votes use amendment_voting_threshold (ADR-0009)
         require(voter, "contribution.vote_amendment", contribution,
                 "You are not authorised to vote on this amendment.")
 

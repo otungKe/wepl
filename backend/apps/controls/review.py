@@ -1,4 +1,4 @@
-"""Held/denied movement review queue (P3-04).
+"""Held/denied movement review queue.
 
 A control exception (LimitExceeded / ControlHeld) propagates out of the money
 service's ``@transaction.atomic`` block, rolling back the FinancialTransaction.

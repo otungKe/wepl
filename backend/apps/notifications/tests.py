@@ -1,8 +1,7 @@
 """Notification tests — ownership isolation + core behaviours.
 
 Notifications are a *per-user* resource: every query is scoped to the owner, so
-authorization here is ownership, not roles (hence no policy resolver — see
-ADR-0009). These tests lock in that isolation (the IDOR boundary) and the
+authorization here is ownership, not roles (ADR-0009). These tests lock in that isolation (the IDOR boundary) and the
 service guarantees the rest of the platform depends on.
 """
 from django.contrib.auth import get_user_model

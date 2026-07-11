@@ -308,7 +308,7 @@ class PrivacyPreferences(models.Model):
 
 
 # ─────────────────────────────────────────────────────────────
-# USER SESSION (device/session registry — ADR-0010)
+# USER SESSION (ADR-0010)
 # ─────────────────────────────────────────────────────────────
 
 class UserSession(models.Model):

@@ -28,5 +28,5 @@ logger = logging.getLogger(__name__)
 User = get_user_model()
 
 # Export top-level names so each view sub-module gets the shared imports
-# via `from ._common import *` (ADR-0013 view split).
+# via `from ._common import *` (ADR-0013).
 __all__ = [n for n in dir() if not n.startswith('__')]

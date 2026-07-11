@@ -184,7 +184,7 @@ def custom_exception_handler(exc, context):
         resp['Retry-After'] = '30'
         return resp
 
-    # Controls (Phase 3): durably record the blocked movement to the review queue.
+    # Controls: durably record the blocked movement to the review queue.
     # This runs AFTER the service's @transaction.atomic has rolled back, so the
     # record persists even though the FinancialTransaction did not. Best-effort —
     # a recording failure must never mask the original control response.

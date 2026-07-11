@@ -1,5 +1,5 @@
 """
-Controls layer — limits & risk (Phase 3, ADR-0007).
+Controls layer — limits & risk (ADR-0007).
 
 Two models:
   • LimitRule        — config-driven caps (amount/count) per scope/op_type/
@@ -39,7 +39,7 @@ class LimitRule(models.Model):
         HOLD = 'HOLD', 'Hold for review'
 
     name      = models.CharField(max_length=120)
-    # Null = global rule (all tenants); set = applies only to that tenant (P6-03).
+    # Null = global rule (all tenants); set = applies only to that tenant.
     tenant    = models.ForeignKey(
         'tenants.Tenant', null=True, blank=True,
         on_delete=models.CASCADE, related_name='limit_rules',
@@ -106,7 +106,7 @@ class ControlDecision(models.Model):
 
 
 class HeldMovement(models.Model):
-    """Durable manual-review queue for blocked movements (P3-04).
+    """Durable manual-review queue for blocked movements.
 
     A held (HOLD) or denied (DENY) movement leaves no FinancialTransaction behind
     — the service's atomic block rolls back when the control exception propagates.

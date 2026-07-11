@@ -1,4 +1,4 @@
-from ._common import *  # shared imports + helpers (ADR-0013 split)
+from ._common import *  # shared imports + helpers (ADR-0013)
 
 
 class DisbursementService:
@@ -72,7 +72,7 @@ class DisbursementService:
             from apps.communities.services import check_cooling_off
             check_cooling_off(voter, contribution.community, 'disbursement_vote')
 
-        # Authorization — threshold-aware voting eligibility (ADR-0009 policy)
+        # Authorization — threshold-aware voting eligibility (ADR-0009)
         require(voter, "contribution.vote_disbursement", contribution,
                 "You are not authorised to vote on this request.")
 
@@ -159,7 +159,7 @@ class DisbursementService:
             # Already scheduled or completed — nothing to do
             return
 
-        # Double-entry posting (P0-05): reserve funds out of the pool.
+        # Double-entry posting: reserve funds out of the pool.
         post_journal(
             idempotency_key=f"je-{idem_key}",
             op_type=_pm.Op.DISBURSEMENT,

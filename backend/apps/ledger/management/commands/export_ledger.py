@@ -1,4 +1,4 @@
-"""Immutable audit export of journals + lines (P4-04).
+"""Immutable audit export of journals + lines.
 
 Writes the full general-ledger trail (one row per journal line) as CSV — suitable
 for handing to an auditor or archiving to WORM storage. Source is the immutable

@@ -4,8 +4,7 @@ code (and tests) never depend on Tesseract being installed.
 
 Adapters:
   TesseractEngine — real OCR via pytesseract + Pillow. Needs the `tesseract`
-                    system binary (not present on Render's native Python runtime;
-                    requires the Docker runtime — see ADR-0023 follow-up).
+                    system binary (ADR-0023).
   NullOcrEngine   — returns '' — used automatically when no OCR backend is
                     available, so KYC degrades gracefully to manual review.
   FakeOcrEngine   — returns canned text; used by tests and local dev.

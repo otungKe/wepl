@@ -10,7 +10,7 @@ def _generate_invite_code() -> str:
 
 class Community(models.Model):
 
-    # Lifecycle (Communities audit CR-2). ACTIVE is the only state in which new
+    # Lifecycle. ACTIVE is the only state in which new
     # money objects, memberships, or conversations may be created. SUSPENDED is
     # an ops-only freeze (fraud investigation / compliance); ARCHIVED is the
     # owner's orderly exit for a community whose cycle is done. Reads stay open
@@ -39,9 +39,8 @@ class Community(models.Model):
         related_name="created_communities",
     )
 
-    # Multi-tenancy boundary (Phase 6, ADR-0008). Every community belongs to
-    # exactly one tenant (a SACCO / hosted institution); stamped on create and
-    # backfilled, so the column is now mandatory (P6-05).
+    # Multi-tenancy boundary (ADR-0008). Every community belongs to exactly one
+    # tenant (a SACCO / hosted institution); stamped on create and mandatory.
     tenant = models.ForeignKey(
         'tenants.Tenant',
         on_delete=models.PROTECT, related_name='communities',
@@ -111,7 +110,7 @@ class Community(models.Model):
     def active_admin_count(self) -> int:
         """Admins who can actually act: platform-deactivated users are excluded
         so a banned/deactivated account can never satisfy (or deadlock) the
-        last-admin guards (audit G-9)."""
+        last-admin guards."""
         return self.memberships.filter(
             is_active=True, role=CommunityMembership.Role.ADMIN,
             user__is_active=True,
@@ -131,7 +130,7 @@ class CommunityMembership(models.Model):
         TREASURER = "treasurer", "Treasurer"
         MEMBER    = "member",    "Member"
 
-    # WHY a membership is (in)active (audit H-4). is_active stays the fast
+    # WHY a membership is (in)active. is_active stays the fast
     # query flag; member_status records the reason and carries the one state
     # with teeth: BANNED members cannot rejoin or re-request — ever — until
     # an owner lifts it (by removing again without ban… deliberately absent;
@@ -151,7 +150,7 @@ class CommunityMembership(models.Model):
     joined_at = models.DateTimeField(auto_now_add=True)
     # Set whenever an inactive membership is reactivated. The cooling-off clock
     # runs from membership_start (the LATER of joined_at / rejoined_at) so
-    # leaving and rejoining can never bypass the waiting period (audit G-4),
+    # leaving and rejoining can never bypass the waiting period,
     # while joined_at keeps the original tenure for history.
     rejoined_at = models.DateTimeField(null=True, blank=True)
     # When True, this member gets no *push* for this community's activity (the
@@ -197,7 +196,7 @@ class CommunityJoinRequest(models.Model):
     class Meta:
         # One OPEN request per (community, requester); decided/cancelled rows
         # accumulate as history — a re-request creates a NEW row instead of
-        # overwriting the previous decision's reviewer/timestamp (audit M-2).
+        # overwriting the previous decision's reviewer/timestamp.
         constraints = [
             models.UniqueConstraint(
                 fields=["community", "requester"],

@@ -1,4 +1,4 @@
-"""Reset the RLS tenant context at the end of every request (Phase 6, P6-04).
+"""Reset the RLS tenant context at the end of every request.
 
 DB connections are pooled (CONN_MAX_AGE), so a tenant pinned during one request
 must be cleared before the connection serves another — otherwise tenant context

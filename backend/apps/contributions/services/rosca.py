@@ -1,4 +1,4 @@
-from ._common import *  # shared imports + helpers (ADR-0013 split)
+from ._common import *  # shared imports + helpers (ADR-0013)
 
 
 class ROSCAService:
@@ -91,7 +91,7 @@ class ROSCAService:
         )
         tx.financial_transaction = ft
         tx.save(update_fields=['financial_transaction'])
-        # Double-entry posting (P0-05): payout draws the recipient's pool share.
+        # Double-entry posting: payout draws the recipient's pool share.
         post_journal(
             idempotency_key=f"je-{idem_key}",
             op_type=_pm.Op.ROSCA_PAYOUT,

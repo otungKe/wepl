@@ -84,7 +84,7 @@ def _window_totals(*, rule, direction, op_type, subject_user_id, now, exclude_ft
 def evaluate(*, subject_user_id, op_type, direction, amount, financial_transaction=None, tenant_id=None) -> ControlDecision:
     """Evaluate all active rules and persist + return a ControlDecision.
 
-    Rule scope by tenant (P6-03): global rules (tenant IS NULL) always apply;
+    Rule scope by tenant: global rules (tenant IS NULL) always apply;
     tenant-specific rules apply only to that tenant's movements.
     """
     from django.db.models import Q

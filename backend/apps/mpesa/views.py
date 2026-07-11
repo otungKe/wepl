@@ -552,7 +552,7 @@ def _process_shares_purchase(stk: MpesaSTKRequest) -> None:
         initial_state=FinancialTransaction.State.SUCCESS,
     )
 
-    # Double-entry posting (P0-05): cash into the float, member shares liability up.
+    # Double-entry posting: cash into the float, member shares liability up.
     from apps.ledger.posting import post_journal
     from apps.ledger import posting_map as pm
     from apps.ledger.money import Money

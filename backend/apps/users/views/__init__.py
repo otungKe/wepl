@@ -1,4 +1,4 @@
-"""User views (ADR-0013 module split) — one module per area; public import
+"""User views (ADR-0013) — one module per area; public import
 surface unchanged (urls.py still does `from .views import ...`)."""
 from .auth import PINLoginThrottle, OTPRequestThrottle, RequestOTPView, VerifyOTPView, SetPINView, ResetPINView, PINLoginView, ProtectedView
 from .sessions import LogoutView, SessionListView, SessionRevokeView, SessionRevokeOthersView

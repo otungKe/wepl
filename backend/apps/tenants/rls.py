@@ -1,4 +1,4 @@
-"""Row-Level-Security tenant context (Phase 6, P6-02, ADR-0008).
+"""Row-Level-Security tenant context (ADR-0008).
 
 Postgres RLS policies isolate tenant rows based on the ``app.tenant_id`` session
 GUC. These helpers set / clear it. When unset (empty), the policy is permissive —
@@ -7,7 +7,7 @@ across all tenants; a request that sets a tenant is restricted to it.
 
 Note: RLS is bypassed for superusers and (without FORCE) table owners. The
 migration uses ``FORCE ROW LEVEL SECURITY``; deploy the app with a NON-superuser
-DB role for isolation to bite. Until per-user tenant wiring lands (P6-04), nothing
+DB role for isolation to bite. Until per-user tenant wiring lands, nothing
 sets the context on web requests, so behaviour is unchanged in production.
 """
 from contextlib import contextmanager

@@ -3,10 +3,9 @@ from unittest import skip
 from django.test import TestCase
 from django.contrib.auth import get_user_model
 
-# Quarantined under P0-02 — see GitHub issue #14. These exercise the legacy money
-# paths (single-entry shadow ledger + mutable balance fields) that Phase 0 rewrites
-# onto post_journal(); they will be rewritten and unskipped in P0-05/06.
-_LEGACY = "P0-02 #14: legacy money-path test; rewrite onto post_journal() in P0-05/06"
+# Legacy money-path tests (single-entry shadow ledger + mutable balance fields),
+# skipped pending a rewrite onto post_journal().
+_LEGACY = "legacy money-path test — pending rewrite onto post_journal()"
 
 from django.core.exceptions import PermissionDenied, ValidationError
 
@@ -91,7 +90,7 @@ class DisbursementRecipientMaskingTests(TestCase):
 # ---------------------------------------------------------------------------
 
 class ContributionCreationGovernanceTests(TestCase):
-    """Regression tests for issue #14 — creation must not run the old, buggy
+    """Regression tests — creation must not run the buggy
     creation-time governance deadlock pre-check. Quorum is enforced at request
     time instead (see submit_disbursement_request / propose_amendment)."""
 
@@ -120,8 +119,8 @@ class ContributionCreationGovernanceTests(TestCase):
 
 
 class ContributionLedgerPostingTests(TestCase):
-    """P0-05: contribute() posts a balanced double-entry journal alongside the
-    legacy writes (strangler pattern). Reads/gates flip to the ledger in P0-06."""
+    """contribute() posts a balanced double-entry journal; pool and member
+    balances are derived from the ledger."""
 
     def setUp(self):
         coa.seed_chart_of_accounts()
@@ -142,8 +141,7 @@ class ContributionLedgerPostingTests(TestCase):
         self.assertEqual(account_balance(member), Decimal("1000.0000"))
         self.assertTrue(trial_balance()["balanced"])
 
-        # Pool balance is now ledger-derived (the mutable current_amount column
-        # was removed in P0-07).
+        # Pool balance is ledger-derived.
         from apps.ledger.balances import fund_balance
         self.assertEqual(fund_balance("contribution", self.c.id), Decimal("1000.0000"))
 
@@ -159,7 +157,7 @@ class ContributionLedgerPostingTests(TestCase):
 
 
 class WelfareLedgerPostingTests(TestCase):
-    """P0-05: welfare contribution posts a balanced journal alongside legacy."""
+    """welfare contribution posts a balanced journal alongside legacy."""
 
     def setUp(self):
         coa.seed_chart_of_accounts()

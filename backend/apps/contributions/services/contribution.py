@@ -1,4 +1,4 @@
-from ._common import *  # shared imports + helpers (ADR-0013 split)
+from ._common import *  # shared imports + helpers (ADR-0013)
 
 
 class ContributionService:
@@ -12,10 +12,10 @@ class ContributionService:
             require_active_community(validated_data['community'], 'create a contribution')
         # Governance quorum is enforced at request time against the real
         # contribution row (submit_disbursement_request / propose amendment),
-        # which correctly accounts for members who join after creation. A
-        # creation-time pre-check used to run here but was removed (issue #14):
-        # it blocked legitimate solo/open contributions and crashed on
-        # percentage thresholds (it queried participants via a fake proxy object).
+        # which correctly accounts for members who join after creation. It is
+        # deliberately not pre-checked at creation: doing so would block
+        # legitimate solo/open contributions and cannot evaluate percentage
+        # thresholds before any participants exist.
         contribution = Contribution.objects.create(created_by=user, **validated_data)
 
         ContributionParticipant.objects.create(contribution=contribution, user=user, is_active=True)

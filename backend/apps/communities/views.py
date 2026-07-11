@@ -205,7 +205,7 @@ class CommunityDetailView(APIView):
 
     def get(self, request, community_id):
         community = get_object_or_404(Community, id=community_id)
-        # Cross-tenant guardrail (P6-05): refuse + audit access to another
+        # Cross-tenant guardrail: refuse + audit access to another
         # tenant's community when the request is pinned to a tenant.
         from apps.tenants.guards import guard_tenant
         guard_tenant(community.tenant_id, request=request,
@@ -245,7 +245,7 @@ class CommunityDeleteView(APIView):
 
     def delete(self, request, community_id):
         community = get_object_or_404(Community, id=community_id)
-        # Safe-delete rules live in the service (audit CR-1): refused whenever
+        # Safe-delete rules live in the service: refused whenever
         # any financial history exists — the exit for a real community is
         # archive, never delete.
         CommunityService.delete_community(request.user, community)
@@ -397,7 +397,7 @@ class RemoveMemberView(APIView):
     def delete(self, request, community_id, membership_id):
         community = get_object_or_404(Community, id=community_id)
         # ?ban=true (or body {"ban": true}) marks the member BANNED — they can
-        # never rejoin or re-request (audit H-4). Plain removal stays reversible.
+        # never rejoin or re-request. Plain removal stays reversible.
         ban = str(request.query_params.get("ban",
                   request.data.get("ban", ""))).lower() in ("true", "1", "yes")
         try:
@@ -501,7 +501,7 @@ class JoinRequestCreateByIdView(APIView):
 
 class JoinRequestCancelView(APIView):
     """POST /communities/join-requests/<req_id>/cancel/ — the requester
-    withdraws their own pending request (audit M-2)."""
+    withdraws their own pending request."""
     permission_classes = [IsActiveSession]
 
     def post(self, request, req_id):

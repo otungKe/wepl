@@ -1,4 +1,4 @@
-from ._common import *  # shared imports/helpers (ADR-0013 view split)
+from ._common import *  # shared imports/helpers (ADR-0013)
 
 
 class UserProfileView(APIView):

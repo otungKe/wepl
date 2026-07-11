@@ -1,4 +1,4 @@
-"""Tests for ledger reconciliation & integrity (P0-08)."""
+"""Tests for ledger reconciliation & integrity."""
 from decimal import Decimal
 
 from django.contrib.auth import get_user_model

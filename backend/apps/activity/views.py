@@ -57,7 +57,7 @@ class _ActivityFeedBase(APIView):
 
         Without ``?community`` → the caller's own activity (personal feed). With
         ``?community=<id>`` → activity visible to the caller within that community
-        (ADR-0016 visibility rule); a non-member sees nothing. An optional
+        (ADR-0016); a non-member sees nothing. An optional
         ``?type=`` substring filter applies to either.
         """
         activity_type = request.query_params.get('type')

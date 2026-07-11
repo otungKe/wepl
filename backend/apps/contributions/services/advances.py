@@ -1,4 +1,4 @@
-from ._common import *  # shared imports + helpers (ADR-0013 split)
+from ._common import *  # shared imports + helpers (ADR-0013)
 
 
 class EmergencyAdvanceService:
@@ -117,7 +117,7 @@ class EmergencyAdvanceService:
         ):
             return advance  # already in progress
 
-        # Double-entry posting (P0-05): receivable model — the borrower owes the
+        # Double-entry posting: receivable model — the borrower owes the
         # principal back (asset), funded out of the float.
         post_journal(
             idempotency_key=f"je-{idem_key}",
@@ -238,7 +238,7 @@ class EmergencyAdvanceService:
             context_id=advance.id,
             initial_state=FinancialTransaction.State.SUCCESS,
         )
-        # Double-entry posting (P0-06): split the repayment into principal (clears
+        # Double-entry posting: split the repayment into principal (clears
         # the receivable) and interest (income). Outstanding principal is the AR
         # sub-ledger balance, so the principal portion never over-clears it.
         ar_acct = _coa.member_receivable_account(user=user, fund_id=advance.id)

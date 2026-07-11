@@ -60,5 +60,5 @@ def _member_only(contribution, user):
 # ---------------------------------------------------------------------------
 
 # Export every top-level name so each view sub-module gets the shared
-# imports/helpers via `from ._common import *` (ADR-0013 view split).
+# imports/helpers via `from ._common import *` (ADR-0013).
 __all__ = [n for n in dir() if not n.startswith('__')]

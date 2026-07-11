@@ -38,7 +38,7 @@ def emit(event_type: str, *, user_id: int, title: str, message: str,
          contribution_id: int | None = None,
          join_request_id: int | None = None) -> None:
     """
-    Emit a domain event durably (transactional outbox, ADR-0006).
+    Emit a domain event durably (ADR-0006).
 
     Writes an OutboxEvent row in the CURRENT transaction — atomic with the state
     change when called inside an ``atomic`` block, so a rolled-back transaction

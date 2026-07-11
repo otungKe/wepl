@@ -1,4 +1,4 @@
-"""Phase 5 multi-currency tests — per-currency balancing, FX rates, conversion,
+"""Multi-currency tests — per-currency balancing, FX rates, conversion,
 and per-currency trial balance."""
 from datetime import timedelta
 from decimal import Decimal

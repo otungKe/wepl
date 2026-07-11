@@ -1,5 +1,5 @@
 """
-Tenant — the multi-tenancy boundary (Phase 6, ADR-0008).
+Tenant — the multi-tenancy boundary (ADR-0008).
 
 A Tenant is one hosted institution (a SACCO, an enterprise group, a future BaaS
 client). The business root for a tenant is the Community; financial data
@@ -29,7 +29,7 @@ class Tenant(models.Model):
 
 
 class CrossTenantAccessAttempt(models.Model):
-    """Audit of a blocked cross-tenant access (Phase 6, P6-05).
+    """Audit of a blocked cross-tenant access.
 
     Recorded by ``apps.tenants.guards.guard_tenant`` when a request pinned to one
     tenant tries to reach a resource owned by another. RLS already blocks the

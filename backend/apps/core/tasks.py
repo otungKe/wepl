@@ -1,5 +1,5 @@
 """
-Outbox relay (Phase 2, ADR-0006).
+Outbox relay (ADR-0006).
 
 `process_outbox` delivers durably-stored OutboxEvents to consumers at-least-once.
 Scheduled every few seconds (settings.CELERY_BEAT_SCHEDULE). Each event is claimed

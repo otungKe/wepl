@@ -1,4 +1,4 @@
-"""Cross-tenant access guardrails (Phase 6, P6-05).
+"""Cross-tenant access guardrails.
 
 RLS blocks the ledger tables at the database. This guard covers app-level access
 to tenant-owned aggregates (communities, funds) whose tables are not (yet) under

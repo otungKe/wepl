@@ -17,7 +17,7 @@ from .models import (
 class ContributionSerializer(serializers.ModelSerializer):
     created_by        = serializers.CharField(source='created_by.phone_number', read_only=True)
     participant_count = serializers.SerializerMethodField()
-    # Ledger-derived pool balance (replaces the removed mutable current_amount column)
+    # Ledger-derived pool balance.
     current_amount    = serializers.SerializerMethodField()
     user_balance      = serializers.SerializerMethodField()
     voting_label      = serializers.SerializerMethodField()
@@ -241,7 +241,7 @@ class ShareHoldingSerializer(serializers.ModelSerializer):
 class SharesFundSerializer(serializers.ModelSerializer):
     holdings     = ShareHoldingSerializer(many=True, read_only=True)
     total_shares = serializers.SerializerMethodField()
-    # Ledger-derived (replaces the removed mutable total_pool column)
+    # Ledger-derived pool total.
     total_pool   = serializers.SerializerMethodField()
 
     class Meta:
@@ -315,7 +315,7 @@ class DisbursementRequestSerializer(serializers.ModelSerializer):
 
 class WelfareFundSerializer(serializers.ModelSerializer):
     is_admin = serializers.SerializerMethodField()
-    # Ledger-derived (replaces the removed mutable balance column)
+    # Ledger-derived balance.
     balance  = serializers.SerializerMethodField()
 
     def get_balance(self, obj):

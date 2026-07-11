@@ -51,7 +51,7 @@ class Contribution(models.Model):
         settings.AUTH_USER_MODEL, on_delete=models.PROTECT,
         related_name='created_contributions'
     )
-    # PROTECT (audit CR-1): a community with financial objects can never be
+    # PROTECT: a community with financial objects can never be
     # hard-deleted out from under them; deletion of never-funded shells clears
     # these rows first via CommunityService.delete_community.
     community = models.ForeignKey(

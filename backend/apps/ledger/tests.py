@@ -194,7 +194,7 @@ class DoubleEntryTests(TestCase):
         self.assertEqual(a.pk, b.pk)
         self.assertEqual(a.type, Account.Type.LIABILITY)
         # Member sub-ledger now hangs off the pool control account, which hangs
-        # off the GL head (ADR-0025 Part B): member → pool → GL.
+        # off the GL head (ADR-0025): member → pool → GL.
         self.assertEqual(a.parent.owner_id, None)               # the pool account
         self.assertEqual(a.parent.fund_id, 1)
         self.assertEqual(a.parent.parent.code, coa.MEMBER_CONTRIB_PAYABLE)

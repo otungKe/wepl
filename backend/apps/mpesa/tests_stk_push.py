@@ -91,7 +91,7 @@ class STKPushThrottleTests(APITestCase):
 class STKPushTierGateTests(APITestCase):
     """STK push is the single money front-door — Tier-0 (unverified) users are
     blocked with a structured KYC_REQUIRED 403, regardless of the enforcement
-    flag (money paths are always gated, ADR-0022)."""
+    flag (ADR-0022)."""
 
     def setUp(self):
         registry.use_provider(FakeProvider())
