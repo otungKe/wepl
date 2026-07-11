@@ -33,8 +33,15 @@ add a new ADR that supersedes the old one (note it in both).
 | [0023](0023-identity-verification-provider.md) | Identity-verification provider port/adapter | Accepted |
 | [0024](0024-fee-and-tax-postings.md) | Fee, excise-duty and withholding postings | Proposed |
 | [0025](0025-financial-account-and-pool-identity.md) | Financial-account identity and pools as first-class accounts | Accepted |
+| [0026](0026-public-baas-api-and-versioning.md) | Public BaaS API surface & versioning | Proposed |
+| [0027](0027-baas-api-key-authentication.md) | Per-tenant API-key authentication for BaaS | Proposed |
+| [0028](0028-outbound-webhooks.md) | Outbound webhooks on the transactional outbox | Proposed |
+| [0029](0029-baas-sandbox-environment.md) | BaaS sandbox environment | Proposed |
 
-> Statuses reflect the ADR files as of 2026-07-11. Several "Accepted" ADRs note
+> Statuses reflect the ADR files as of 2026-07-11.
+> ADRs 0026–0029 are **Proposed** — the Phase 7 (BaaS) decisions, drafted ahead of
+> implementation per P-20; see the [Convergence Plan](../handbook/program/61-convergence-plan.md)
+> Workstream D. Several "Accepted" ADRs note
 > deferred follow-ups inside the file; the index shows the headline status only.
 > ADR-0024 remains **Proposed** — fee postings are built, but excise-duty/
 > withholding await business/compliance inputs.

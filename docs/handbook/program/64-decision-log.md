@@ -103,9 +103,13 @@ without it.
   inputs. This was the first act of Workstream A in the
   [Convergence Plan](61-convergence-plan.md) (CV-01) — a live example of the
   [Charter](../00-charter.md)'s rule that code and record must not silently diverge.
-- Future decisions (BaaS API shape, AML monitoring design, service-extraction
-  triggers, the import-contract tool) will each earn an ADR when they harden from
-  [direction](63-future-evolution.md) into plan.
+- **The Phase 7 (BaaS) decisions are now drafted** as **ADRs 0026–0029** (Proposed):
+  public API surface & versioning (0026), per-tenant API-key auth (0027), outbound
+  webhooks on the outbox (0028), and the sandbox (0029). Per P-20 they precede the
+  implementation ([Convergence Plan](61-convergence-plan.md) Workstream D).
+- Remaining future decisions (AML monitoring design, service-extraction triggers, the
+  import-contract tool, the ledger↔M-Pesa de-coupling of CV-23) will each earn an ADR
+  when they harden from [direction](63-future-evolution.md) into plan.
 
 ---
 
