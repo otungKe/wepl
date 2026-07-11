@@ -69,7 +69,7 @@ A platform where a group can:
 
 ## The arc — three horizons
 
-The [roadmap](../roadmap/README.md) is the detailed plan; here is the shape.
+The [roadmap](../../roadmap/README.md) is the detailed plan; here is the shape.
 
 ### Horizon 1 — Trustworthy community finance (now)
 A polished, correct app for chamas and welfare groups in Kenya. The ledger is the

@@ -68,10 +68,9 @@ tenant boundary (**P-19**) as a standing checklist. Security-sensitive changes g
 [`/security-review`](../architecture/25-security-architecture.md) pass.
 
 ### 9. Merge and deploy
-Merge to the default branch triggers deployment via the [blueprint](../operations/51-deployment-strategy.md)
-(Render + Neon). Migrations run as part of release. See
-[Deployment Strategy](51-deployment-strategy.md) — wait, that's operations →
-[Deployment Strategy](../operations/51-deployment-strategy.md).
+Merge to the default branch triggers deployment via the
+[blueprint](../operations/51-deployment-strategy.md) (Render + Neon). Migrations run
+as part of release; see [Deployment Strategy](../operations/51-deployment-strategy.md).
 
 ### 10. Close the loop
 Definition of Done for a work item: **code merged · acceptance criteria met · tests
