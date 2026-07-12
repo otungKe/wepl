@@ -12,7 +12,6 @@ urlpatterns = [
     path('communities/',   include('apps.communities.urls')),
     path('conversations/', include('apps.conversations.urls')),
     path('contributions/', include('apps.contributions.urls')),
-    path('payments/',      include('apps.payments.urls')),
     path('activity/',      include('apps.activity.urls')),
     path('notifications/', include('apps.notifications.urls')),
     path('files/',         include('apps.files.urls')),
