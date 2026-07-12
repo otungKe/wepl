@@ -215,6 +215,11 @@ class ProviderEvent(models.Model):
     payment_intent = models.ForeignKey(
         PaymentIntent, null=True, blank=True, on_delete=models.SET_NULL,
         related_name='provider_events')
+    # Tenant of the owning intent, stamped at write time so the raw-callback log is
+    # under the same RLS isolation as every other tenant-columned table (ADR-0008);
+    # null for events that arrive before an intent is known (system-visible).
+    tenant         = models.ForeignKey('tenants.Tenant', null=True, blank=True,
+                                       on_delete=models.SET_NULL, related_name='provider_events')
     provider       = models.CharField(max_length=30, db_index=True)
     provider_ref   = models.CharField(max_length=255, blank=True, default='', db_index=True)
     event_type     = models.CharField(

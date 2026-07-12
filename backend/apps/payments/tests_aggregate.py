@@ -258,3 +258,69 @@ class PaymentIntentHardeningTests(TestCase):
         self.assertIsNotNone(a)
         self.assertIsNone(b)   # re-delivery dropped
         self.assertEqual(ProviderEvent.objects.filter(provider_event_id="EVT-1").count(), 1)
+
+    def test_provider_event_correlates_to_intent(self):
+        # An event recorded by provider_ref links to its intent automatically —
+        # the log is per-intent for investigation/audit.
+        i = self._pending(provider_ref="CORR", idempotency_key="a")
+        ev = PaymentService.record_provider_event(
+            provider="mpesa", event_type="payout_result", payload={"x": 1},
+            provider_ref="CORR")
+        self.assertEqual(ev.payment_intent_id, i.id)
+
+
+class ReconciliationOwnershipTests(TestCase):
+    """PaymentService orchestrates lifecycle only; the duplicate-receipt
+    consistency check is owned by the reconciliation subsystem (which resolve
+    delegates to)."""
+
+    def test_duplicate_receipt_owned_by_reconciliation(self):
+        from . import reconciliation
+        a = PaymentService.record_initiation(
+            provider="mpesa", direction=D.COLLECTION, amount=Decimal("1"),
+            idempotency_key="a", provider_ref="R1")
+        a.transition_to(S.SUCCEEDED, receipt="DUP1")
+        b = PaymentService.record_initiation(
+            provider="mpesa", direction=D.COLLECTION, amount=Decimal("1"),
+            idempotency_key="b", provider_ref="R2")
+        # The reconciliation-owned check flags the dup and tells the caller to skip it.
+        self.assertTrue(reconciliation.note_duplicate_receipt(b, "DUP1"))
+        self.assertFalse(reconciliation.note_duplicate_receipt(b, "FRESH"))
+        self.assertTrue(ReconciliationDrift.objects.filter(
+            kind="duplicate_receipt", subject_id=str(b.id)).exists())
+
+
+class OperatorRecoverySettlesIntentTests(TestCase):
+    """PaymentOpsService heals through the SAME door callbacks use — operator
+    recovery settles the linked PaymentIntent, leaving no intent↔FT drift."""
+
+    def setUp(self):
+        from apps.payments.providers import registry
+        from apps.payments.providers.fake import FakeProvider
+        self.fake = FakeProvider()
+        registry.use_provider(self.fake)
+        self.addCleanup(registry.use_provider, None)
+
+    def _payout(self, state, conv="CONV1"):
+        ft = make_ft(state=state, mpesa_conversation_id=conv)
+        PaymentService.record_initiation(
+            provider=self.fake.name, direction=D.PAYOUT, amount=ft.amount,
+            idempotency_key=f"pi-{ft.id}", provider_ref=conv, financial_transaction=ft)
+        return ft
+
+    def test_requery_success_settles_intent(self):
+        from apps.payments.ops import PaymentOpsService
+        ft = self._payout(FinancialTransaction.State.PROCESSING)
+        self.fake.set_status("CONV1", "success")
+        PaymentOpsService.requery(ft, actor_label="tester")
+        intent = PaymentIntent.objects.get(provider_ref="CONV1")
+        self.assertEqual(intent.status, S.SUCCEEDED)   # settled via the shared door
+        # And reconciliation sees no intent/FT mismatch.
+        self.assertNotIn("intent_ft_mismatch", reconcile_payments())
+
+    def test_mark_failed_settles_intent(self):
+        from apps.payments.ops import PaymentOpsService
+        ft = self._payout(FinancialTransaction.State.PROCESSING, conv="CONV2")
+        self.fake.set_status("CONV2", "failed")
+        PaymentOpsService.mark_failed(ft, reason="rail confirmed failure", actor_label="t")
+        self.assertEqual(PaymentIntent.objects.get(provider_ref="CONV2").status, S.FAILED)

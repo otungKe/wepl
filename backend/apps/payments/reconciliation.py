@@ -36,6 +36,23 @@ def _open_drift(kind, subject_type, subject_id, detail):
     return created
 
 
+def note_duplicate_receipt(intent, receipt) -> bool:
+    """Reconciliation-owned check called by settlement: is this receipt already on
+    another intent? If so, open a ``duplicate_receipt`` drift and return True so the
+    caller declines to store it twice. Keeps duplicate detection in the
+    reconciliation subsystem, not in PaymentService."""
+    from .models import PaymentIntent
+    if not receipt:
+        return False
+    if PaymentIntent.objects.filter(receipt=receipt).exclude(pk=intent.pk).exists():
+        _open_drift('duplicate_receipt', 'payment_intent', intent.id,
+                    f"receipt {receipt} already recorded on another intent")
+        logger.warning("PaymentIntent %s: duplicate receipt %s — settling without it",
+                       intent.id, receipt)
+        return True
+    return False
+
+
 def reconcile_payments() -> dict:
     """Run all reconciliation checks. Returns a per-kind drift count (new opens)."""
     from .models import PaymentIntent

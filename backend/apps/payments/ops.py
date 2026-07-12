@@ -160,6 +160,24 @@ class PaymentOpsService:
             logger.exception("requery: rail status query failed for %s", provider_ref)
             return "unknown"
 
+    @staticmethod
+    def _settle_intent(ft: FT, *, success: bool, reason: str = "") -> None:
+        """Settle the linked PaymentIntent through the SAME door a provider callback
+        uses (``PaymentService.resolve``), so operator recovery never leaves an
+        intent↔FT drift or a privileged shortcut. Best-effort and idempotent — a
+        missing or already-terminal intent is a no-op."""
+        ref = ft.mpesa_conversation_id
+        if not ref:
+            return
+        try:
+            from apps.payments.providers.registry import get_provider
+            from apps.payments.services import PaymentService
+            PaymentService.resolve(
+                provider=get_provider().name, provider_ref=ref,
+                success=success, failure_message=reason or '')
+        except Exception:
+            logger.exception("PaymentOps: intent settlement failed for FT %s", ft.id)
+
     @classmethod
     @transaction.atomic
     def _apply_success(cls, ft: FT, *, actor_label: str = "") -> dict:
@@ -172,6 +190,7 @@ class PaymentOpsService:
             ft.refresh_from_db()
             return cls._result("noop", ft, "Already resolved by a concurrent update.")
         _on_b2c_success(ft, "")
+        cls._settle_intent(ft, success=True)
         logger.info("FinOps: payout FT %s healed to SUCCESS by %s", ft.id, actor_label or "ops")
         return cls._result("healed_success", ft, "Payout confirmed and finalised.")
 
@@ -189,6 +208,7 @@ class PaymentOpsService:
             return cls._result("noop", ft, "Already resolved by a concurrent update.")
         reverse_financial_transaction(ft, note=reason)   # idempotent; no-op if nothing posted
         _update_context_on_failure(ft)
+        cls._settle_intent(ft, success=False, reason=reason)
         logger.warning("FinOps: payout FT %s failed by %s — %s", ft.id, actor_label or "ops", reason)
         return cls._result("healed_failed", ft, reason)
 
