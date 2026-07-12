@@ -39,3 +39,42 @@ class SettlementSeamTests(TestCase):
                       idempotency_key="settle-missing")
         settlement.on_payout_settled(ft, "RCPT")
         settlement.on_payout_failed(ft)
+
+
+class CollectionSettlementTests(TestCase):
+    """The relocated collection routing (Move 2): on_collection_settled drives the
+    right business service off provider-agnostic primitives — proven end-to-end for
+    the shares path, which had its money-posting relocated from the rail app into
+    SharesService."""
+
+    def setUp(self):
+        from apps.ledger import coa
+        coa.seed_chart_of_accounts()
+
+    def test_shares_collection_credits_holding_and_posts_journal(self):
+        from apps.contributions.models import SharesFund, ShareHolding
+        from apps.ledger.models import FinancialTransaction
+        user = get_user_model().objects.create(phone_number="254700000701")
+        fund = SharesFund.objects.create(name="Test Shares", share_price=Decimal("100.00"))
+
+        settlement.on_collection_settled(
+            payment_type="shares", user=user, amount=Decimal("200.00"),
+            receipt="SHRC1", shares_fund_id=fund.id, idempotency_seed="chk-1")
+
+        holding = ShareHolding.objects.get(shares_fund=fund, user=user)
+        self.assertEqual(holding.shares_count, Decimal("2.0000"))     # 200 / 100
+        self.assertEqual(holding.total_contributed, Decimal("200.00"))
+        self.assertTrue(FinancialTransaction.objects.filter(
+            op_type=FinancialTransaction.OpType.SHARES_PURCHASE, shares_fund=fund).exists())
+
+    def test_shares_purchase_is_idempotent_on_receipt(self):
+        from apps.contributions.models import SharesFund, ShareHolding
+        user = get_user_model().objects.create(phone_number="254700000702")
+        fund = SharesFund.objects.create(name="Test Shares 2", share_price=Decimal("100.00"))
+        for _ in range(2):   # duplicate callback → same receipt → credited once
+            settlement.on_collection_settled(
+                payment_type="shares", user=user, amount=Decimal("100.00"),
+                receipt="DUPR", shares_fund_id=fund.id, idempotency_seed="chk-2")
+        self.assertEqual(
+            ShareHolding.objects.get(shares_fund=fund, user=user).shares_count,
+            Decimal("1.0000"))
