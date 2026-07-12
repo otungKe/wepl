@@ -233,6 +233,20 @@ class PaymentIntentHardeningTests(TestCase):
         with self.assertRaises(TransitionError):
             i.transition_to(S.FAILED)   # optimistic UPDATE matches 0 rows
 
+    def test_lost_race_transition_does_not_apply_its_metadata(self):
+        # The optimistic status guard serialises transitions: the loser's metadata
+        # never merges in, so the documented read-modify-write merge can't lose the
+        # winner's keys. (Two workers, same PENDING base.)
+        from apps.core.exceptions import TransitionError
+        winner = self._pending(provider_ref="M", idempotency_key="a")
+        loser = PaymentIntent.objects.get(pk=winner.pk)   # a second stale handle
+        winner.transition_to(S.SUCCEEDED, metadata={"foo": 1})
+        with self.assertRaises(TransitionError):
+            loser.transition_to(S.FAILED, metadata={"bar": 2})   # rows==0, raises
+        fresh = PaymentIntent.objects.get(pk=winner.pk)
+        self.assertEqual(fresh.status, S.SUCCEEDED)
+        self.assertEqual(fresh.metadata, {"foo": 1})   # "bar" never landed
+
     # ── ProviderEvent history ───────────────────────────────────────────────────
     def test_provider_event_is_append_only(self):
         from apps.core.exceptions import TransitionError

@@ -1,5 +1,5 @@
 from django.conf import settings
-from django.db import models
+from django.db import models, transaction
 from django.db.models import Q
 from django.utils import timezone
 
@@ -168,6 +168,11 @@ class PaymentIntent(models.Model):
         settle), stamps the lifecycle timestamp, and folds in receipt / structured
         failure / metadata. Raises TransitionError on an illegal edge or a lost
         race — callers that want best-effort semantics catch it.
+
+        The whole write is wrapped in ``transaction.atomic()`` so it is atomic even
+        when called standalone, and so any future side effect that must be atomic
+        with the status change (e.g. emitting a domain event to the outbox) can be
+        added inside this boundary without reworking callers.
         """
         if target not in self.VALID_TRANSITIONS.get(self.status, frozenset()):
             raise TransitionError(
@@ -182,15 +187,24 @@ class PaymentIntent(models.Model):
         if failure_message:
             updates['failure_message'] = failure_message
         if metadata:
+            # Read-modify-write merge of a stale in-memory copy. Safe ONLY because
+            # the optimistic `status=<current>` guard below serialises transitions:
+            # exactly one concurrent transition commits, the rest get rows==0 and
+            # raise, so no two writers ever merge into the same base concurrently.
+            # If metadata ever becomes mutable OUTSIDE a transition, switch to a
+            # server-side JSONB merge (`metadata = metadata || %s::jsonb`) to avoid
+            # a lost update.
             updates['metadata'] = {**(self.metadata or {}), **metadata}
         if target in self._PROVIDER_TERMINAL:
             updates['provider_completed_at'] = completed_at or now
 
-        rows = PaymentIntent.objects.filter(pk=self.pk, status=self.status).update(**updates)
-        if rows == 0:
-            raise TransitionError(
-                f"PaymentIntent {self.pk}: transition {self.status!r} → {target!r} lost a "
-                "concurrent race — another worker already advanced it.")
+        with transaction.atomic():
+            rows = PaymentIntent.objects.filter(
+                pk=self.pk, status=self.status).update(**updates)
+            if rows == 0:
+                raise TransitionError(
+                    f"PaymentIntent {self.pk}: transition {self.status!r} → {target!r} lost a "
+                    "concurrent race — another worker already advanced it.")
 
         # Reflect the committed change in memory without tripping the save guard.
         self._in_transition = True
