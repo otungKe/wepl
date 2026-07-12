@@ -22,6 +22,38 @@ from apps.core.exceptions import TransitionError
 logger = logging.getLogger(__name__)
 
 
+def on_collection_settled(*, payment_type, user, amount, receipt=None,
+                          contribution_id=None, welfare_fund_id=None,
+                          shares_fund_id=None, advance_id=None,
+                          idempotency_seed=None) -> None:
+    """Route a settled pay-in (collection) to the business service that credits
+    it. Provider-agnostic: takes normalised primitives, not a rail model, so any
+    collection rail (M-Pesa STK today, card/bank later) settles through one door.
+
+    ``idempotency_seed`` is a caller-supplied fallback token (e.g. the rail's
+    checkout id) used to build a stable idempotency key when no receipt is present.
+    """
+    from .services import (
+        ContributionService, EmergencyAdvanceService, SharesService, WelfareService,
+    )
+
+    if payment_type == "welfare" and welfare_fund_id:
+        WelfareService.contribute_to_welfare(
+            welfare_fund_id, user, amount, mpesa_receipt=receipt)
+    elif payment_type == "shares" and shares_fund_id:
+        SharesService.purchase(
+            user, shares_fund_id, amount,
+            mpesa_receipt=receipt, idempotency_key=idempotency_seed)
+    elif payment_type == "advance_repayment" and advance_id:
+        EmergencyAdvanceService.repay(
+            advance_id, user, amount, mpesa_receipt=receipt)
+    else:
+        idem = f"contrib-stk-{receipt or idempotency_seed}"
+        ContributionService.contribute(
+            user, contribution_id, amount,
+            mpesa_receipt=receipt, idempotency_key=idem)
+
+
 def on_payout_settled(ft, receipt: str = "") -> None:
     """Advance the linked domain object and notify the member after a payout
     succeeds. Routes on ``ft.context_type``; a no-op when the FT carries no

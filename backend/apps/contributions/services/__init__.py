@@ -14,10 +14,11 @@ from .advances import EmergencyAdvanceService
 from .standing_orders import StandingOrderService
 from .amendments import AmendmentService
 from .join_requests import ContributionJoinRequestService
+from .shares import SharesService
 
 __all__ = [
     "ContributionService", "ROSCAService", "DisbursementService",
     "WelfareService", "EmergencyAdvanceService", "StandingOrderService",
-    "AmendmentService", "ContributionJoinRequestService",
+    "AmendmentService", "ContributionJoinRequestService", "SharesService",
     "_notify", "_dn", "_compute_next_run",
 ]

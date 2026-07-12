@@ -21,7 +21,6 @@ from datetime import datetime
 from decimal import Decimal, InvalidOperation
 
 from django.db import transaction
-from django.db.models import F
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from rest_framework import status
@@ -481,7 +480,7 @@ def _process_stk_sync_with_fallback(stk_id: int) -> None:
     writes), we fall back to the Celery retry queue so no payment is ever lost.
     """
     from .models import MpesaSTKRequest
-    from apps.contributions.services import ContributionService, WelfareService, EmergencyAdvanceService
+    from apps.contributions.settlement import on_collection_settled
 
     try:
         stk = MpesaSTKRequest.objects.select_related(
@@ -492,25 +491,13 @@ def _process_stk_sync_with_fallback(stk_id: int) -> None:
         return
 
     try:
-        if stk.payment_type == "welfare" and stk.welfare_fund_id:
-            WelfareService.contribute_to_welfare(
-                stk.welfare_fund_id, stk.user, stk.amount,
-                mpesa_receipt=stk.mpesa_receipt,
-            )
-        elif stk.payment_type == "shares" and stk.shares_fund_id:
-            _process_shares_purchase(stk)
-        elif stk.payment_type == "advance_repayment" and stk.advance_id:
-            EmergencyAdvanceService.repay(
-                stk.advance_id, stk.user, stk.amount,
-                mpesa_receipt=stk.mpesa_receipt,
-            )
-        else:
-            idempotency_key = f"contrib-stk-{stk.mpesa_receipt or stk.checkout_request_id}"
-            ContributionService.contribute(
-                stk.user, stk.contribution_id, stk.amount,
-                mpesa_receipt=stk.mpesa_receipt,
-                idempotency_key=idempotency_key,
-            )
+        # Read the rail model, delegate the business routing to the domain seam.
+        on_collection_settled(
+            payment_type=stk.payment_type, user=stk.user, amount=stk.amount,
+            receipt=stk.mpesa_receipt, contribution_id=stk.contribution_id,
+            welfare_fund_id=stk.welfare_fund_id, shares_fund_id=stk.shares_fund_id,
+            advance_id=stk.advance_id, idempotency_seed=stk.checkout_request_id,
+        )
         logger.info(
             "_process_stk_sync: STKRequest %s processed synchronously — type=%s receipt=%s",
             stk_id, stk.payment_type, stk.mpesa_receipt,
@@ -521,62 +508,3 @@ def _process_stk_sync_with_fallback(stk_id: int) -> None:
             stk_id,
         )
         _enqueue_stk_processing(stk_id)
-
-
-@transaction.atomic
-def _process_shares_purchase(stk: MpesaSTKRequest) -> None:
-    """
-    Process a successful STK payment for shares.
-
-    Fixed vs. old code:
-      - Wrapped in @transaction.atomic (was absent — two .save() calls could diverge).
-      - F() expressions for all balance increments (no read-modify-write race).
-      - Dual-write to ledger.
-    """
-    from decimal import Decimal as D
-    from apps.contributions.models import ShareHolding
-    from apps.ledger.writer import create_fin_transaction
-    from apps.ledger.models import FinancialTransaction
-
-    fund = SharesFund.objects.select_for_update().get(id=stk.shares_fund_id)
-    amount = D(str(stk.amount))
-
-    new_shares = (amount / fund.share_price).quantize(D('0.0001'))
-
-    # F() updates — atomic, no race condition
-    ShareHolding.objects.update_or_create(
-        shares_fund=fund,
-        user=stk.user,
-        defaults={'shares_count': D('0'), 'total_contributed': D('0')},
-    )
-    ShareHolding.objects.filter(shares_fund=fund, user=stk.user).update(
-        shares_count=F('shares_count') + new_shares,
-        total_contributed=F('total_contributed') + amount,
-    )
-
-    # FinancialTransaction (orchestration)
-    idem_key = f"shares-{fund.id}-{stk.user_id}-{stk.mpesa_receipt or stk.checkout_request_id}"
-    ft, _ = create_fin_transaction(
-        idempotency_key=idem_key,
-        op_type=FinancialTransaction.OpType.SHARES_PURCHASE,
-        amount=amount,
-        initiated_by=stk.user,
-        shares_fund=fund,
-        initial_state=FinancialTransaction.State.SUCCESS,
-    )
-
-    # Double-entry posting (P0-05): cash into the float, member shares liability up.
-    from apps.ledger.posting import post_journal
-    from apps.ledger import posting_map as pm
-    from apps.ledger.money import Money
-    post_journal(
-        idempotency_key=f"je-{idem_key}",
-        op_type=pm.Op.SHARES_PURCHASE,
-        lines=pm.contribution_lines(
-            member=stk.user, fund_type='shares', fund_id=fund.id,
-            gross=Money(str(amount)),
-        ),
-        narration=f"Shares purchase by {stk.user.phone_number}",
-        financial_transaction=ft,
-        created_by=stk.user,
-    )

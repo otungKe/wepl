@@ -40,38 +40,15 @@ def process_stk_payment(self, stk_request_id: int) -> str:
         return "not_found"
 
     try:
-        if stk.payment_type == "welfare" and stk.welfare_fund_id:
-            from apps.contributions.services import WelfareService
-            WelfareService.contribute_to_welfare(
-                stk.welfare_fund_id,
-                stk.user,
-                stk.amount,
-                mpesa_receipt=stk.mpesa_receipt,
-            )
-
-        elif stk.payment_type == "shares" and stk.shares_fund_id:
-            from apps.mpesa.views import _process_shares_purchase
-            _process_shares_purchase(stk)
-
-        elif stk.payment_type == "advance_repayment" and stk.advance_id:
-            from apps.contributions.services import EmergencyAdvanceService
-            EmergencyAdvanceService.repay(
-                stk.advance_id,
-                stk.user,
-                stk.amount,
-                mpesa_receipt=stk.mpesa_receipt,
-            )
-
-        else:
-            from apps.contributions.services import ContributionService
-            idempotency_key = f"contrib-stk-{stk.mpesa_receipt or stk.checkout_request_id}"
-            ContributionService.contribute(
-                stk.user,
-                stk.contribution_id,
-                stk.amount,
-                mpesa_receipt=stk.mpesa_receipt,
-                idempotency_key=idempotency_key,
-            )
+        # Read the rail model; delegate the business routing to the domain seam
+        # (the same door the synchronous callback path uses).
+        from apps.contributions.settlement import on_collection_settled
+        on_collection_settled(
+            payment_type=stk.payment_type, user=stk.user, amount=stk.amount,
+            receipt=stk.mpesa_receipt, contribution_id=stk.contribution_id,
+            welfare_fund_id=stk.welfare_fund_id, shares_fund_id=stk.shares_fund_id,
+            advance_id=stk.advance_id, idempotency_seed=stk.checkout_request_id,
+        )
 
     except Exception as exc:
         logger.exception(
