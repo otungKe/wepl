@@ -73,9 +73,14 @@ jobs:
           pattern='LedgerEntry|write_ledger_entry|write_reversal_credit|ledger\.queries'
           pattern="$pattern|ContributionAccount|ContributionBalance"
           pattern="$pattern|current_amount[[:space:]]*=[[:space:]]*F\(|total_pool[[:space:]]*=[[:space:]]*F\(|balance[[:space:]]*=[[:space:]]*F\('balance'\)"
+          # The legacy contribution-coupled payments.Payment (a money record kept
+          # OUTSIDE the ledger, pre-ADR-0003 precision) and its serializer/view were
+          # removed (#165) — don't let them come back. Word boundaries keep this off
+          # the legitimate PaymentIntent (ADR-0014) and ContributionPaymentSerializer.
+          pattern="$pattern|class Payment\(|\bPaymentSerializer\b|\bContributionPaymentsView\b"
           if grep -rEn "$pattern" apps --include=*.py \
                | grep -vE "/migrations/|/tests\.py|/tests_"; then
-            echo "::error::Legacy ledger / mutable balance cache reintroduced — money moves only via post_journal() and balances are ledger-derived."
+            echo "::error::Legacy ledger / mutable balance cache / payments.Payment reintroduced — money moves only via post_journal() and balances are ledger-derived; external payments use payments.PaymentIntent (ADR-0014)."
             exit 1
           fi
 
