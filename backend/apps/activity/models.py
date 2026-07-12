@@ -10,19 +10,23 @@ class ActivityQuerySet(models.QuerySet):
           - they are the actor, OR
           - the row is community-scoped and they are an active member of that
             community, OR
-          - the row is public.
+          - the row is public *within the viewer's tenant* (a public row from
+            another institution never crosses the tenant boundary, ADR-0008).
         """
         from apps.communities.models import CommunityMembership
+        from apps.tenants.resolve import tenant_for_user
 
         member_community_ids = CommunityMembership.objects.filter(
             user=user, is_active=True
         ).values('community_id')
+        viewer_tenant_id = tenant_for_user(user).id
 
         return self.filter(
             models.Q(user=user)
             | models.Q(visibility=Activity.Visibility.COMMUNITY,
                        community_id__in=member_community_ids)
-            | models.Q(visibility=Activity.Visibility.PUBLIC)
+            | models.Q(visibility=Activity.Visibility.PUBLIC,
+                       tenant_id=viewer_tenant_id)
         )
 
 
@@ -80,6 +84,17 @@ class Activity(models.Model):
         blank=True,
         on_delete=models.CASCADE,
         related_name='activities',
+    )
+
+    # Owning tenant (ADR-0008). Stamped on write from the community, else the
+    # actor's tenant. Used to scope *public* rows so a public activity from one
+    # institution can never surface in another tenant's feed. Null = legacy/shared.
+    tenant = models.ForeignKey(
+        'tenants.Tenant',
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name='+',
     )
 
     created_at = models.DateTimeField(auto_now_add=True)

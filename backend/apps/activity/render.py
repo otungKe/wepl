@@ -9,15 +9,22 @@ feed. Unknown verbs / empty params fall back to the stored `message`.
 
 English-only for now; render-at-read makes a locale catalogue a drop-in later.
 """
+from decimal import Decimal, InvalidOperation
 
 
 def _amount(params):
-    """Format a KES amount param without trailing decimals (e.g. '500' → KES 500)."""
+    """Format a KES amount param without trailing decimals (e.g. '500' → KES 500).
+
+    Money is Decimal, never float (CLAUDE.md — the one rule that matters). The
+    amount rides in ``params`` as a string (``str(Decimal)``); parse it back as a
+    Decimal for a precision-safe display format.
+    """
     raw = params.get('amount')
     try:
-        return f"KES {float(raw):,.0f}"
-    except (TypeError, ValueError):
+        value = Decimal(str(raw))
+    except (InvalidOperation, TypeError, ValueError):
         return f"KES {raw}"
+    return f"KES {value:,.0f}"
 
 
 RENDERERS = {

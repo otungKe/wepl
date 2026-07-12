@@ -18,13 +18,19 @@ class ActivityService:
         visibility — 'private' (actor only), 'community', or 'public'.
         community  — scope for community-visible rows (required for 'community').
         """
+        from apps.tenants.resolve import tenant_for_user
+
         params = params or {}
+        # Stamp the owning tenant (ADR-0008): the community's tenant when scoped
+        # to one, else the actor's — so public rows are tenant-isolated at read.
+        tenant = getattr(community, 'tenant', None) or tenant_for_user(actor)
         activity = Activity(
             user=actor,
             activity_type=verb,
             params=params,
             visibility=visibility,
             community=community,
+            tenant=tenant,
         )
         # Store a rendered fallback (search target + back-compat for old clients).
         activity.message = message if message is not None else render_activity(activity)

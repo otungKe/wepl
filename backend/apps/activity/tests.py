@@ -100,6 +100,15 @@ class ActivityVisibilityTests(APITestCase):
                                    message='public', visibility=Activity.Visibility.PUBLIC)
         self.assertIn(a, Activity.objects.visible_to(self.outsider))
 
+    def test_public_row_is_tenant_scoped(self):
+        # A public row belonging to another institution's tenant must never
+        # surface in this viewer's feed (ADR-0008 — no cross-tenant leak).
+        other_tenant = Tenant.objects.create(slug='other-org', name='Other Org')
+        a = ActivityService.record(actor=self.actor, verb='payment_made',
+                                   message='public', visibility=Activity.Visibility.PUBLIC)
+        Activity.objects.filter(pk=a.pk).update(tenant=other_tenant)
+        self.assertNotIn(a, Activity.objects.visible_to(self.outsider))
+
 
 class ActivityFeedEndpointTests(APITestCase):
     def setUp(self):
