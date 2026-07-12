@@ -217,13 +217,19 @@ class STKCallbackView(APIView):
         if not checkout_id:
             return Response({"ResultCode": 0, "ResultDesc": "Accepted"})
 
-        # Settle the provider-agnostic payment aggregate (ADR-0014) — best-effort.
+        # Settle the provider-agnostic payment aggregate (ADR-0014) — best-effort,
+        # and durably record the raw callback for audit/replay first.
         try:
             from apps.payments.services import PaymentService
+            PaymentService.record_provider_event(
+                provider=get_provider().name, event_type='collection_callback',
+                payload=request.data, provider_ref=checkout_id,
+                signature_verified=True,   # gated by SafaricomIPPermission
+            )
             PaymentService.resolve(
                 provider=get_provider().name, provider_ref=checkout_id,
                 success=event.success, receipt=event.receipt or '',
-                failure_reason=event.result_desc or '',
+                failure_code=event.code or '', failure_message=event.result_desc or '',
             )
         except Exception:
             logger.exception("PaymentIntent resolve (collection) failed for %s", checkout_id)
@@ -356,13 +362,19 @@ class B2CResultView(APIView):
         if not conversation_id:
             return Response({"ResultCode": 0, "ResultDesc": "Accepted"})
 
-        # Settle the provider-agnostic payment aggregate (ADR-0014) — best-effort.
+        # Settle the provider-agnostic payment aggregate (ADR-0014) — best-effort,
+        # and durably record the raw result callback for audit/replay first.
         try:
             from apps.payments.services import PaymentService
+            PaymentService.record_provider_event(
+                provider=get_provider().name, event_type='payout_result',
+                payload=request.data, provider_ref=conversation_id,
+                signature_verified=True,   # gated by SafaricomIPPermission
+            )
             PaymentService.resolve(
                 provider=get_provider().name, provider_ref=conversation_id,
                 success=event.success, receipt=event.receipt or '',
-                failure_reason=event.result_desc or '',
+                failure_code=event.code or '', failure_message=event.result_desc or '',
             )
         except Exception:
             logger.exception("PaymentIntent resolve (payout) failed for %s", conversation_id)
