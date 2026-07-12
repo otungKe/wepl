@@ -78,3 +78,62 @@ class CollectionSettlementTests(TestCase):
         self.assertEqual(
             ShareHolding.objects.get(shares_fund=fund, user=user).shares_count,
             Decimal("1.0000"))
+
+
+class C2BPaybillResolveTests(TestCase):
+    """ContributionService.credit_paybill_payin — the business half of the old
+    mpesa reconcile_c2b (Move 2b). Covers the resolution branches and the
+    security-critical community-membership gate that had no active test before."""
+
+    def _svc(self):
+        from apps.contributions.services import ContributionService
+        return ContributionService
+
+    def test_unknown_reference(self):
+        r = self._svc().credit_paybill_payin(
+            reference="RANDOM-REF", phone="254700000001", amount=Decimal("100"))
+        self.assertFalse(r["reconciled"])
+        self.assertEqual(r["reason"], "unknown_ref")
+
+    def test_contribution_not_found(self):
+        r = self._svc().credit_paybill_payin(
+            reference="WEPL-999999", phone="254700000001", amount=Decimal("100"))
+        self.assertEqual(r["reason"], "contribution_not_found")
+
+    def test_user_not_found(self):
+        from apps.contributions.tests import make_user, make_contribution
+        owner = make_user("254712345678")
+        contrib = make_contribution(owner)   # open, no community
+        r = self._svc().credit_paybill_payin(
+            reference=f"WEPL-{contrib.id}", phone="254799999999", amount=Decimal("100"))
+        self.assertEqual(r["reason"], "user_not_found")
+
+    def test_membership_gate_blocks_non_member_but_records_for_review(self):
+        from apps.contributions.tests import make_user, make_community, make_contribution
+        owner = make_user("254712345678")
+        community = make_community(owner, "Gated Chama")
+        contrib = make_contribution(owner, community=community)   # community-scoped
+        stranger = make_user("254701010101")   # NOT a community member
+        r = self._svc().credit_paybill_payin(
+            reference=f"WEPL-{contrib.id}", phone=stranger.phone_number, amount=Decimal("100"))
+        self.assertFalse(r["reconciled"])
+        self.assertEqual(r["reason"], "not_community_member")
+        # Resolved to member+fund so the rail can record it for admin review.
+        self.assertEqual(r["contribution_id"], contrib.id)
+        self.assertEqual(r["user_id"], stranger.id)
+
+    def test_open_contribution_credits_and_reconciles(self):
+        from apps.ledger import coa
+        from apps.contributions.models import ContributionTransaction
+        from apps.contributions.tests import make_user, make_contribution, approve_kyc
+        coa.seed_chart_of_accounts()
+        owner = make_user("254712345678")
+        approve_kyc(owner)                       # contribute() requires Tier-1
+        contrib = make_contribution(owner)       # open, no community
+        r = self._svc().credit_paybill_payin(
+            reference=f"WEPL-{contrib.id}", phone=owner.phone_number,
+            amount=Decimal("500"), receipt="C2BR1", payer_name="JANE DOE")
+        self.assertTrue(r["reconciled"])
+        self.assertEqual(r["reason"], "ok")
+        self.assertTrue(ContributionTransaction.objects.filter(
+            contribution=contrib, user=owner, mpesa_receipt="C2BR1").exists())

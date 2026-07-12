@@ -310,6 +310,74 @@ class ContributionService:
 
         return tx
 
+    @staticmethod
+    def credit_paybill_payin(*, reference, phone, amount, receipt=None, payer_name=""):
+        """Resolve and credit an inbound paybill (C2B) pay-in — provider-agnostic.
+
+        A paybill deposit arrives with a ``WEPL-<contribution_id>`` account
+        reference and the payer's phone. Resolve the fund + member, gate community
+        membership, auto-join, and credit the contribution. Returns a result dict
+        the rail layer stamps onto its own record; never raises on a non-match.
+
+        This is the business half of the old ``mpesa.MpesaService.reconcile_c2b``
+        (Move 2b) — the rail app now only reads its C2B model and delegates here.
+
+        result: ``{reconciled, reason, contribution_id, user_id}``
+        """
+        import logging
+        from django.contrib.auth import get_user_model
+        from apps.users.phone import normalize_phone
+        from apps.communities.models import CommunityMembership
+        log = logging.getLogger(__name__)
+        User = get_user_model()
+
+        def _result(reconciled, reason, contribution_id=None, user_id=None):
+            return {"reconciled": reconciled, "reason": reason,
+                    "contribution_id": contribution_id, "user_id": user_id}
+
+        ref = (reference or "").upper()
+        if not ref.startswith("WEPL-"):
+            log.warning("C2B reconcile: unknown bill ref %r", reference)
+            return _result(False, "unknown_ref")
+        try:
+            contribution_id = int(ref.split("-", 1)[1])
+        except (IndexError, ValueError):
+            return _result(False, "unknown_ref")
+        try:
+            contribution = Contribution.objects.get(id=contribution_id, is_active=True)
+        except Contribution.DoesNotExist:
+            return _result(False, "contribution_not_found")
+
+        norm = normalize_phone(phone)
+        try:
+            user = User.objects.get(phone_number=norm)
+        except User.DoesNotExist:
+            log.warning("C2B reconcile: no user for phone %s — receipt %s unmatched", norm, receipt)
+            return _result(False, "user_not_found")
+
+        # Community membership gate: a paybill deposit must not buy its way into a
+        # community contribution the payer isn't a member of (same class of bug as
+        # the communities join-bypass).
+        if contribution.community_id:
+            is_member = CommunityMembership.objects.filter(
+                community_id=contribution.community_id, user=user, is_active=True).exists()
+            if not is_member:
+                log.warning(
+                    "C2B reconcile: user %s paid into community contribution %s but is NOT a "
+                    "member — recorded, NOT auto-joined. Receipt %s. Admin review required.",
+                    user.id, contribution.id, receipt)
+                return _result(False, "not_community_member", contribution.id, user.id)
+
+        # Open / already-member path: auto-join and credit.
+        ContributionParticipant.objects.get_or_create(
+            contribution=contribution, user=user, defaults={"is_active": True})
+        ContributionService.contribute(
+            user, contribution.id, amount,
+            mpesa_receipt=receipt, counterparty_name=payer_name or "")
+        log.info("C2B reconcile: receipt %s → user %s, contribution %s, amount %s",
+                 receipt, user.id, contribution.id, amount)
+        return _result(True, "ok", contribution.id, user.id)
+
 
 # ---------------------------------------------------------------------------
 # ROSCA

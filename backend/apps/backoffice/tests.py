@@ -627,10 +627,12 @@ class OpsTransactionsModuleTests(TestCase):
         self.assertTrue(any(r["id"] == self.ft.pk
                             for r in c.get(base, {"min": "1000"}).data["results"]))
 
-        # Date range — tomorrow onward excludes today's movement.
-        tomorrow = (timezone.now() + timedelta(days=1)).date().isoformat()
+        # Date range — tomorrow onward excludes today's movement. Use localdate():
+        # the filter interprets the date string as a settings-timezone (local)
+        # midnight, so a UTC-based date is off by one between 21:00–24:00 UTC.
+        tomorrow = (timezone.localdate() + timedelta(days=1)).isoformat()
         self.assertEqual(c.get(base, {"date_from": tomorrow}).data["count"], 0)
-        today = timezone.now().date().isoformat()
+        today = timezone.localdate().isoformat()
         self.assertTrue(any(r["id"] == self.ft.pk
                             for r in c.get(base, {"date_from": today}).data["results"]))
 
