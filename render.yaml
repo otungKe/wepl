@@ -136,10 +136,15 @@ services:
       # ENABLED: KYC/profile uploads (the verification case evidence store) live
       # in the private R2 bucket and are served via signed URLs — they survive
       # redeploys. The four creds below are set directly on the service
-      # (sync: false). See production.py. If the service ever needs to boot
-      # without R2, set this back to "false" rather than removing creds.
+      # (sync: false). See production.py. Production REFUSES TO BOOT with
+      # USE_S3=false unless ALLOW_EPHEMERAL_MEDIA=true (apps/core/deploy_checks.py),
+      # and with USE_S3=true but missing creds it fails fast with a clear error.
       - key: USE_S3
         value: "true"
+      # Escape hatch for deployments that genuinely store no user media/KYC.
+      # Leave "false" for any deployment that accepts uploads.
+      - key: ALLOW_EPHEMERAL_MEDIA
+        value: "false"
       - key: AWS_STORAGE_BUCKET_NAME
         sync: false
       - key: AWS_S3_REGION_NAME
