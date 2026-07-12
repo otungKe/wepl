@@ -282,6 +282,55 @@ class PaymentIntentHardeningTests(TestCase):
             provider_ref="CORR")
         self.assertEqual(ev.payment_intent_id, i.id)
 
+    def test_provider_event_bulk_mutation_blocked(self):
+        from apps.core.exceptions import TransitionError
+        from .models import ProviderEvent
+        PaymentService.record_provider_event(
+            provider="mpesa", event_type="payout_result", payload={}, provider_ref="B1")
+        qs = ProviderEvent.objects.filter(provider_ref="B1")
+        for call in (lambda: qs.update(event_type="x"),
+                     lambda: qs.delete(),
+                     lambda: ProviderEvent.objects.bulk_update([], ["event_type"])):
+            with self.assertRaises(TransitionError):
+                call()
+
+    def test_intent_delete_still_nulls_event_fk(self):
+        # The append-only queryset guard must not break FK SET_NULL cascades.
+        from .models import ProviderEvent
+        i = self._pending(provider_ref="CASC", idempotency_key="a")
+        ev = PaymentService.record_provider_event(
+            provider="mpesa", event_type="payout_result", payload={}, provider_ref="CASC")
+        i.delete()
+        ev.refresh_from_db()
+        self.assertIsNone(ev.payment_intent_id)
+
+    def test_future_completion_time_clamped(self):
+        from datetime import timedelta
+        from django.utils import timezone
+        i = self._pending(provider_ref="FUT", idempotency_key="a")
+        future = timezone.now() + timedelta(days=3650)
+        i.transition_to(S.SUCCEEDED, completed_at=future)
+        i.refresh_from_db()
+        self.assertLessEqual(i.provider_completed_at, timezone.now())
+
+    def test_is_terminal(self):
+        i = self._pending(provider_ref="T", idempotency_key="a")
+        self.assertFalse(i.is_terminal)             # PENDING → {SUCCEEDED, FAILED}
+        i.transition_to(S.SUCCEEDED)
+        self.assertFalse(i.is_terminal)             # SUCCEEDED → {REVERSED}
+        i.transition_to(S.REVERSED)
+        self.assertTrue(i.is_terminal)              # REVERSED → {}
+
+    def test_drift_resolve_is_idempotent(self):
+        i = self._pending(provider_ref="D", idempotency_key="a")
+        d = ReconciliationDrift.objects.create(
+            kind="amount_mismatch", subject_type="payment_intent", subject_id=str(i.id))
+        d.resolve()
+        first = d.resolved_at
+        self.assertIsNotNone(first)
+        d.resolve()   # no-op — not reopened or re-stamped
+        self.assertEqual(d.resolved_at, first)
+
 
 class ReconciliationOwnershipTests(TestCase):
     """PaymentService orchestrates lifecycle only; the duplicate-receipt
