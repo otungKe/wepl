@@ -71,3 +71,39 @@ resolve action; `WARNING` log as the alert seam) for:
   the ledger core and lets one money-op span multiple provider attempts.
 - **Reuse the legacy contribution-coupled `payments.Payment`.** Rejected — it's tied
   to `Contribution` and unused since manual recording was removed.
+
+## Addendum — post-MVP hardening (2026-07)
+
+The aggregate was hardened while preserving the boundary above (provider-lifecycle
+only; the ledger stays authoritative; no business-object FKs):
+
+- **Uniqueness invariants.** `(provider, provider_ref)` is unique once `provider_ref`
+  is populated, and `receipt` is unique once populated — both as partial constraints
+  so blank values are still allowed during initiation/before settlement. The
+  `(provider, provider_ref)` lookup index is retained for callback resolution.
+- **Encapsulated transitions.** Status changes go through `PaymentIntent.transition_to()`
+  — the mirror of `FinancialTransaction.transition_to()`: it validates
+  `VALID_TRANSITIONS`, applies an optimistic `UPDATE WHERE status=<current>` lock,
+  stamps lifecycle timestamps, and folds in receipt/failure/metadata. Direct
+  `.status = …` on an existing row is rejected in `save()`. Services never mutate
+  `status` directly.
+- **Lifecycle timestamps.** `initiated_at`, `callback_received_at`,
+  `provider_completed_at` support SLA/timeout/late-callback checks and dispute work,
+  distinct from row `created_at`/`updated_at`.
+- **Structured failure.** `failure_reason` (free text) → `failure_code` +
+  `failure_message`, enabling retry classification and per-provider analytics.
+- **Provider event history.** A separate append-only `ProviderEvent` (payment_intent,
+  provider, event_type, payload, received_at, signature_verified, provider_event_id)
+  preserves raw callbacks for audit/replay/dedup — callback history lives here, never
+  on `PaymentIntent`. This subsumes the deferred "generic signed-webhook intake".
+- **`direction` vs `op_type`.** Kept as distinct concepts and documented on the model:
+  `direction` is the provider money-flow axis (pay-in/pay-out); `op_type` is a
+  denormalised, non-authoritative *label* of the originating business op for
+  analytics — a free string, never an FK, so it creates no business dependency.
+- **Currency.** Fixed to `KES` and `editable=False` while the platform is Kenya-only;
+  multi-currency is a later flip, not a redesign.
+- **Reconciliation vocabulary.** `ReconciliationDrift.KIND_CHOICES` expanded (amount
+  mismatch, duplicate receipt/callback, provider/ledger success-failure splits,
+  timeouts, orphan/late callbacks); `amount_mismatch` and `duplicate_receipt` are
+  detected now, the rest are the vocabulary for detectors added over time. The
+  one-open-drift-per-`(kind, subject)` invariant is unchanged.

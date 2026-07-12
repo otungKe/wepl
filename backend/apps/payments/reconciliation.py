@@ -75,6 +75,12 @@ def reconcile_payments() -> dict:
                            f"intent={intent.status} but FT {ft.id}={ft.state}"):
                 bump('intent_ft_mismatch')
 
+        # Amount mismatch between the provider attempt and the internal money-op.
+        if intent.amount != ft.amount:
+            if _open_drift('amount_mismatch', 'payment_intent', intent.id,
+                           f"intent amount {intent.amount} != FT {ft.id} amount {ft.amount}"):
+                bump('amount_mismatch')
+
     # 3) Successful FT without a posted journal entry (ledger linkage broken).
     success_fts = FinancialTransaction.objects.filter(
         state=FinancialTransaction.State.SUCCESS)
