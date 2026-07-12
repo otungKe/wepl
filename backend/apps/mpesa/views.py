@@ -410,7 +410,8 @@ class B2CResultView(APIView):
                 ft.counterparty_name = event.counterparty_name
                 ft.save(update_fields=["counterparty_name"])
 
-            _on_b2c_success(ft, receipt)
+            from apps.contributions.settlement import on_payout_settled
+            on_payout_settled(ft, receipt)
 
         else:
             err = f"B2C ResultCode {event.code}: {event.result_desc}"
@@ -422,10 +423,10 @@ class B2CResultView(APIView):
             except TransitionError:
                 pass
 
-            from apps.ledger.tasks import _update_context_on_failure
+            from apps.contributions.settlement import on_payout_failed
             from apps.ledger.posting import reverse_financial_transaction
             reverse_financial_transaction(ft, note=err)  # restore reserved funds
-            _update_context_on_failure(ft)
+            on_payout_failed(ft)
 
         return Response({"ResultCode": 0, "ResultDesc": "Accepted"})
 
@@ -579,79 +580,3 @@ def _process_shares_purchase(stk: MpesaSTKRequest) -> None:
         financial_transaction=ft,
         created_by=stk.user,
     )
-
-
-def _on_b2c_success(ft, receipt: str) -> None:
-    """Update the domain object and notify the user after a successful B2C payout."""
-    from apps.contributions.services import _notify
-
-    if not ft.context_type or not ft.context_id:
-        return
-
-    if ft.context_type == 'welfare_claim':
-        from apps.contributions.models import WelfareClaim
-        from apps.core.exceptions import TransitionError
-        try:
-            claim = WelfareClaim.objects.get(id=ft.context_id)
-            claim.transition_to(
-                'DISBURSED',
-                disbursed_at=timezone.now(),
-                mpesa_receipt=receipt or None,
-            )
-            _notify(
-                user=claim.claimant,
-                notification_type='welfare_disbursed',
-                title="M-Pesa payment sent!",
-                message=(
-                    f"KES {claim.amount_requested:,.0f} has been sent to your M-Pesa."
-                    + (f" Receipt: {receipt}." if receipt else "")
-                ),
-            )
-        except WelfareClaim.DoesNotExist:
-            logger.warning("_on_b2c_success: WelfareClaim %s not found", ft.context_id)
-        except TransitionError:
-            logger.warning(
-                "_on_b2c_success: WelfareClaim %s already transitioned (idempotent)",
-                ft.context_id,
-            )
-
-    elif ft.context_type == 'disbursement_request':
-        from apps.contributions.models import DisbursementRequest
-        try:
-            req = DisbursementRequest.objects.get(id=ft.context_id)
-            _notify(
-                user=req.requested_by,
-                notification_type='disbursement_sent',
-                title="Disbursement sent!",
-                message=(
-                    f"KES {req.amount} has been sent to {req.recipient_phone}."
-                    + (f" M-Pesa receipt: {receipt}." if receipt else "")
-                ),
-                contribution_id=req.contribution_id,
-            )
-        except DisbursementRequest.DoesNotExist:
-            pass
-
-    elif ft.context_type == 'emergency_advance':
-        from apps.contributions.models import EmergencyAdvance
-        try:
-            advance = EmergencyAdvance.objects.get(id=ft.context_id)
-            _notify(
-                user=advance.borrower,
-                notification_type='advance_sent',
-                title="Advance sent!",
-                message=(
-                    f"KES {advance.amount} has been sent to your M-Pesa."
-                    + (f" Receipt: {receipt}." if receipt else "")
-                ),
-                contribution_id=advance.contribution_id,
-            )
-        except EmergencyAdvance.DoesNotExist:
-            pass
-
-    elif ft.context_type == 'standing_order':
-        logger.info(
-            "B2C success for standing order context_id=%s receipt=%s",
-            ft.context_id, receipt,
-        )
-

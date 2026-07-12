@@ -201,9 +201,9 @@ def recover_stale_processing_transactions() -> dict:
                     from apps.core.exceptions import TransitionError
                     ft.transition_to(FinancialTransaction.State.SUCCESS)
                     # Trigger the same success handler the B2C callback would use
-                    from apps.mpesa.views import _on_b2c_success
+                    from apps.contributions.settlement import on_payout_settled
                     receipt = ft.mpesa_receipt or ""
-                    _on_b2c_success(ft, receipt)
+                    on_payout_settled(ft, receipt)
                     recovered += 1
                 except Exception:
                     logger.exception("STALE-RECOVER: success-transition failed for FT-%s", ft.id)
@@ -337,60 +337,9 @@ def _handle_payout_failure(ft, reason: str) -> None:
     except TransitionError:
         pass  # already transitioned by another path
 
-    _update_context_on_failure(ft)
+    from apps.contributions.settlement import on_payout_failed
+    on_payout_failed(ft)
 
-
-def _update_context_on_failure(ft) -> None:
-    """Reset the linked domain object to a retryable state after a payout failure."""
-    if not ft.context_type or not ft.context_id:
-        return
-
-    try:
-        if ft.context_type == 'disbursement_request':
-            from apps.contributions.models import DisbursementRequest
-            try:
-                req = DisbursementRequest.objects.get(id=ft.context_id)
-                req.transition_to('APPROVED')
-            except (DisbursementRequest.DoesNotExist, TransitionError):
-                pass
-            logger.error(
-                "Disbursement payout FAILED for request %s — pool balance has been restored. "
-                "Admin must re-trigger the payout.",
-                ft.context_id,
-            )
-
-        elif ft.context_type == 'welfare_claim':
-            from apps.contributions.models import WelfareClaim
-            try:
-                # Ledger funds are restored by reverse_financial_transaction;
-                # reset the claim so it can be retried.
-                claim = WelfareClaim.objects.get(id=ft.context_id)
-                claim.transition_to('PENDING')
-            except (WelfareClaim.DoesNotExist, TransitionError):
-                pass
-            logger.error(
-                "Welfare payout FAILED for claim %s — fund balance restored. Claim reset to PENDING.",
-                ft.context_id,
-            )
-
-        elif ft.context_type == 'emergency_advance':
-            from apps.contributions.models import EmergencyAdvance
-            try:
-                advance = EmergencyAdvance.objects.get(id=ft.context_id)
-                advance.transition_to('APPROVED')
-            except (EmergencyAdvance.DoesNotExist, TransitionError):
-                pass
-            logger.error(
-                "Advance payout FAILED for advance %s — pool balance restored. "
-                "Advance reset to APPROVED.",
-                ft.context_id,
-            )
-
-    except Exception:
-        logger.exception(
-            "_update_context_on_failure: error updating context %s/%s",
-            ft.context_type, ft.context_id,
-        )
 
 
 # ═══════════════════════════════════════════════════════════════════════════

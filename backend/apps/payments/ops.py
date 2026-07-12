@@ -183,13 +183,13 @@ class PaymentOpsService:
     def _apply_success(cls, ft: FT, *, actor_label: str = "") -> dict:
         """Finalise a confirmed payout exactly as the B2C callback would. The rail
         status query carries no receipt, so it finalises without one."""
-        from apps.mpesa.views import _on_b2c_success
+        from apps.contributions.settlement import on_payout_settled
         try:
             ft.transition_to(FT.State.SUCCESS)
         except TransitionError:
             ft.refresh_from_db()
             return cls._result("noop", ft, "Already resolved by a concurrent update.")
-        _on_b2c_success(ft, "")
+        on_payout_settled(ft, "")
         cls._settle_intent(ft, success=True)
         logger.info("FinOps: payout FT %s healed to SUCCESS by %s", ft.id, actor_label or "ops")
         return cls._result("healed_success", ft, "Payout confirmed and finalised.")
@@ -200,14 +200,14 @@ class PaymentOpsService:
         """Fail the payout and restore reserved funds via the reversal path the
         B2C failure callback uses."""
         from apps.ledger.posting import reverse_financial_transaction
-        from apps.ledger.tasks import _update_context_on_failure
+        from apps.contributions.settlement import on_payout_failed
         try:
             ft.transition_to(FT.State.FAILED, failure_reason=reason)
         except TransitionError:
             ft.refresh_from_db()
             return cls._result("noop", ft, "Already resolved by a concurrent update.")
         reverse_financial_transaction(ft, note=reason)   # idempotent; no-op if nothing posted
-        _update_context_on_failure(ft)
+        on_payout_failed(ft)
         cls._settle_intent(ft, success=False, reason=reason)
         logger.warning("FinOps: payout FT %s failed by %s — %s", ft.id, actor_label or "ops", reason)
         return cls._result("healed_failed", ft, reason)
