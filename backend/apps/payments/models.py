@@ -237,6 +237,10 @@ class AppendOnlyQuerySet(models.QuerySet):
     them via low-level ``UpdateQuery``/``DeleteQuery``, not through this manager's
     queryset, so deleting a linked PaymentIntent/Tenant still nulls the FK.
     Row creation (``create``/``bulk_create``) is intentionally left open.
+
+    Legitimate erasure/redaction (e.g. a data-subject "right to erasure" over the
+    PII in a raw payload) must go through a dedicated, audited, privileged path —
+    never these blocked bulk ops — so history is never quietly rewritten.
     """
     def update(self, *args, **kwargs):
         raise TransitionError("ProviderEvent is append-only — write a new row, never update().")
