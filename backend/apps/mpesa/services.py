@@ -5,11 +5,9 @@ from decimal import Decimal
 
 import requests
 from django.conf import settings
-from django.contrib.auth import get_user_model
 from django.utils import timezone
 
 logger = logging.getLogger(__name__)
-User = get_user_model()
 
 
 def _normalize_phone(phone: str) -> str:
@@ -131,83 +129,27 @@ class MpesaService:
 
     @staticmethod
     def reconcile_c2b(transaction) -> bool:
-        """
-        Match an inbound C2B payment to a contribution and user, then
-        trigger the contribution ledger update.
-        Returns True if reconciled successfully.
-        """
-        from apps.contributions.models import Contribution, ContributionParticipant
+        """Thin rail adapter (Move 2b): hand the C2B deposit's normalised fields to
+        the contributions resolver and stamp the outcome onto the rail record.
+
+        The business logic — resolve the fund from the WEPL-<id> reference, match
+        the member, gate community membership, auto-join, and credit — lives in
+        ``ContributionService.credit_paybill_payin``. This app only owns the C2B
+        model. Returns True when the payment was reconciled."""
         from apps.contributions.services import ContributionService
 
-        # bill_ref_number format: "WEPL-{contribution_id}"
-        ref = transaction.bill_ref_number.upper()
-        if not ref.startswith("WEPL-"):
-            logger.warning("Unknown bill ref: %s", ref)
-            return False
-
-        try:
-            contribution_id = int(ref.split("-", 1)[1])
-        except (IndexError, ValueError):
-            return False
-
-        try:
-            contribution = Contribution.objects.get(id=contribution_id, is_active=True)
-        except Contribution.DoesNotExist:
-            return False
-
-        # Match user by phone
-        phone = _normalize_phone(transaction.phone_number)
-        try:
-            user = User.objects.get(phone_number=phone)
-        except User.DoesNotExist:
-            logger.warning("C2B reconcile: no user for phone %s — receipt %s unmatched",
-                           phone, transaction.mpesa_receipt)
-            return False
-
-        # ── Community membership gate ──────────────────────────────────────────
-        # If this contribution belongs to a community, the payer must be an active
-        # member of that community before we add them as a participant.
-        # Skipping this check is the same bug as the communities join-bypass: anyone
-        # who knows a contribution ID (or guesses "WEPL-42") could pay their way in.
-        if contribution.community_id:
-            from apps.communities.models import CommunityMembership
-            is_community_member = CommunityMembership.objects.filter(
-                community_id=contribution.community_id,
-                user=user,
-                is_active=True,
-            ).exists()
-            if not is_community_member:
-                # Record the payment against the transaction row so the money is
-                # not lost, but do NOT auto-join. Flag for admin review.
-                transaction.contribution = contribution
-                transaction.user = user
-                transaction.is_reconciled = False  # intentionally left un-reconciled
-                transaction.save(update_fields=["contribution", "user", "is_reconciled"])
-                logger.warning(
-                    "C2B reconcile: user %s (phone %s) paid into community contribution %s "
-                    "but is NOT a community member — payment recorded, NOT auto-joined. "
-                    "Receipt: %s. Admin review required.",
-                    user.id, phone, contribution.id, transaction.mpesa_receipt,
-                )
-                return False
-
-        # Auto-join as participant if not already one (open / already-member path).
-        ContributionParticipant.objects.get_or_create(
-            contribution=contribution, user=user, defaults={"is_active": True}
+        result = ContributionService.credit_paybill_payin(
+            reference=transaction.bill_ref_number,
+            phone=transaction.phone_number,
+            amount=transaction.amount,
+            receipt=transaction.mpesa_receipt,
+            payer_name=transaction.payer_name,
         )
-
-        ContributionService.contribute(
-            user, contribution.id, transaction.amount,
-            mpesa_receipt=transaction.mpesa_receipt,
-            counterparty_name=transaction.payer_name,
-        )
-
-        transaction.contribution = contribution
-        transaction.user = user
-        transaction.is_reconciled = True
-        transaction.save(update_fields=["contribution", "user", "is_reconciled"])
-        logger.info(
-            "C2B reconcile: receipt %s → user %s, contribution %s, amount %s",
-            transaction.mpesa_receipt, user.id, contribution.id, transaction.amount,
-        )
-        return True
+        # Stamp the rail record when the deposit resolved to a member+fund (both
+        # the reconciled path and the recorded-but-not-a-member review case).
+        if result.get("contribution_id") and result.get("user_id"):
+            transaction.contribution_id = result["contribution_id"]
+            transaction.user_id = result["user_id"]
+            transaction.is_reconciled = result["reconciled"]
+            transaction.save(update_fields=["contribution", "user", "is_reconciled"])
+        return result["reconciled"]
