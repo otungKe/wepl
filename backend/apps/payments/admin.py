@@ -44,5 +44,7 @@ class ReconciliationDriftAdmin(admin.ModelAdmin):
 
     @admin.action(description="Mark selected drifts resolved")
     def mark_resolved(self, request, queryset):
-        from django.utils import timezone
-        queryset.filter(resolved_at__isnull=True).update(resolved_at=timezone.now())
+        # Go through the model's resolve() — the one sanctioned mutation — rather
+        # than a bulk update, so resolution stays idempotent and single-door.
+        for drift in queryset.filter(resolved_at__isnull=True):
+            drift.resolve()

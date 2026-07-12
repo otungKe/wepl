@@ -8,7 +8,8 @@ across all tenants; a request that sets a tenant is restricted to it.
 RLS is enforced on every table that carries a ``tenant_id`` column:
 ``ledger_account`` and ``ledger_financialtransaction`` (migration 0003), and
 ``communities_community``, ``controls_limitrule``, ``payments_paymentintent``,
-``audit_auditevent`` and ``files_storedfile`` (migration 0005). Tables without a
+``audit_auditevent`` and ``files_storedfile`` (migration 0005), and
+``payments_providerevent`` (migration 0006). Tables without a
 ``tenant_id`` column (e.g. contributions funds, which inherit tenancy via their
 Community) stay application-scoped — see ADR-0008.
 

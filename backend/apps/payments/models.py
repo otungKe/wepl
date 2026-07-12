@@ -1,5 +1,5 @@
 from django.conf import settings
-from django.db import models
+from django.db import models, transaction
 from django.db.models import Q
 from django.utils import timezone
 
@@ -44,9 +44,12 @@ class PaymentIntent(models.Model):
         Status.REVERSED:  frozenset(),
     }
 
-    # Provider-side completion is reached at SUCCEEDED/FAILED (REVERSED is a later
-    # internal refund, not a provider event).
-    _PROVIDER_TERMINAL = frozenset({Status.SUCCEEDED, Status.FAILED})
+    # "Provider completion" (SUCCEEDED/FAILED) = the provider produced a final
+    # result; used to stamp provider_completed_at. NOTE this is a different notion
+    # from state-machine terminality: SUCCEEDED still has an outgoing edge to
+    # REVERSED (a later internal refund), so it is *not* graph-terminal. See
+    # ``is_terminal`` below, which is derived from VALID_TRANSITIONS.
+    PROVIDER_TERMINAL = frozenset({Status.SUCCEEDED, Status.FAILED})
 
     provider     = models.CharField(max_length=30, db_index=True)   # 'mpesa', 'fake', …
     # `direction` is the PROVIDER-lifecycle axis: is money flowing in (collection)
@@ -146,6 +149,12 @@ class PaymentIntent(models.Model):
     def __str__(self):
         return f"PaymentIntent[{self.provider}/{self.direction}] {self.amount} {self.status}"
 
+    @property
+    def is_terminal(self) -> bool:
+        """No further transitions are possible from the current status. Derived
+        from VALID_TRANSITIONS so it stays correct if the graph changes."""
+        return not self.VALID_TRANSITIONS.get(self.status, frozenset())
+
     def save(self, *args, **kwargs):
         """Block ad-hoc ``.status = …`` on an existing row — all status changes go
         through transition_to() so the state machine and its side effects (item 4)
@@ -168,6 +177,11 @@ class PaymentIntent(models.Model):
         settle), stamps the lifecycle timestamp, and folds in receipt / structured
         failure / metadata. Raises TransitionError on an illegal edge or a lost
         race — callers that want best-effort semantics catch it.
+
+        The whole write is wrapped in ``transaction.atomic()`` so it is atomic even
+        when called standalone, and so any future side effect that must be atomic
+        with the status change (e.g. emitting a domain event to the outbox) can be
+        added inside this boundary without reworking callers.
         """
         if target not in self.VALID_TRANSITIONS.get(self.status, frozenset()):
             raise TransitionError(
@@ -181,16 +195,29 @@ class PaymentIntent(models.Model):
             updates['failure_code'] = failure_code[:64]
         if failure_message:
             updates['failure_message'] = failure_message
-        if metadata:
+        if metadata is not None:
+            # `{}` is a valid (no-op) metadata update, so gate on `is not None`.
+            # Read-modify-write merge of a stale in-memory copy. Safe ONLY because
+            # the optimistic `status=<current>` guard below serialises transitions:
+            # exactly one concurrent transition commits, the rest get rows==0 and
+            # raise, so no two writers ever merge into the same base concurrently.
+            # If metadata ever becomes mutable OUTSIDE a transition, switch to a
+            # server-side JSONB merge (`metadata = metadata || %s::jsonb`) to avoid
+            # a lost update.
             updates['metadata'] = {**(self.metadata or {}), **metadata}
-        if target in self._PROVIDER_TERMINAL:
-            updates['provider_completed_at'] = completed_at or now
+        if target in self.PROVIDER_TERMINAL:
+            # Clamp a future completion time — a provider that reports a completion
+            # "in the future" is sending garbage; a real completion is now-or-past.
+            stamp = completed_at or now
+            updates['provider_completed_at'] = min(stamp, now) if stamp else now
 
-        rows = PaymentIntent.objects.filter(pk=self.pk, status=self.status).update(**updates)
-        if rows == 0:
-            raise TransitionError(
-                f"PaymentIntent {self.pk}: transition {self.status!r} → {target!r} lost a "
-                "concurrent race — another worker already advanced it.")
+        with transaction.atomic():
+            rows = PaymentIntent.objects.filter(
+                pk=self.pk, status=self.status).update(**updates)
+            if rows == 0:
+                raise TransitionError(
+                    f"PaymentIntent {self.pk}: transition {self.status!r} → {target!r} lost a "
+                    "concurrent race — another worker already advanced it.")
 
         # Reflect the committed change in memory without tripping the save guard.
         self._in_transition = True
@@ -199,6 +226,30 @@ class PaymentIntent(models.Model):
         self._committed_status = target
         self._in_transition = False
         return self
+
+
+class AppendOnlyQuerySet(models.QuerySet):
+    """Blocks the *bulk* mutation paths (``update``/``bulk_update``/``delete``) that
+    slip past a model's ``save()``/``delete()`` overrides, so append-only history
+    can't be quietly rewritten via ``Model.objects.filter(...).update(...)``.
+
+    FK ``SET_NULL`` cascades are unaffected: Django's deletion collector applies
+    them via low-level ``UpdateQuery``/``DeleteQuery``, not through this manager's
+    queryset, so deleting a linked PaymentIntent/Tenant still nulls the FK.
+    Row creation (``create``/``bulk_create``) is intentionally left open.
+
+    Legitimate erasure/redaction (e.g. a data-subject "right to erasure" over the
+    PII in a raw payload) must go through a dedicated, audited, privileged path —
+    never these blocked bulk ops — so history is never quietly rewritten.
+    """
+    def update(self, *args, **kwargs):
+        raise TransitionError("ProviderEvent is append-only — write a new row, never update().")
+
+    def bulk_update(self, *args, **kwargs):
+        raise TransitionError("ProviderEvent is append-only — write new rows, never bulk_update().")
+
+    def delete(self, *args, **kwargs):
+        raise TransitionError("ProviderEvent is append-only — history cannot be deleted.")
 
 
 class ProviderEvent(models.Model):
@@ -215,6 +266,11 @@ class ProviderEvent(models.Model):
     payment_intent = models.ForeignKey(
         PaymentIntent, null=True, blank=True, on_delete=models.SET_NULL,
         related_name='provider_events')
+    # Tenant of the owning intent, stamped at write time so the raw-callback log is
+    # under the same RLS isolation as every other tenant-columned table (ADR-0008);
+    # null for events that arrive before an intent is known (system-visible).
+    tenant         = models.ForeignKey('tenants.Tenant', null=True, blank=True,
+                                       on_delete=models.SET_NULL, related_name='provider_events')
     provider       = models.CharField(max_length=30, db_index=True)
     provider_ref   = models.CharField(max_length=255, blank=True, default='', db_index=True)
     event_type     = models.CharField(
@@ -226,6 +282,8 @@ class ProviderEvent(models.Model):
         max_length=128, blank=True, default='',
         help_text="The provider's own event id, when it supplies one (for dedup/replay).")
     received_at    = models.DateTimeField(auto_now_add=True, db_index=True)
+
+    objects = AppendOnlyQuerySet.as_manager()
 
     class Meta:
         ordering = ['-received_at']
@@ -301,3 +359,12 @@ class ReconciliationDrift(models.Model):
     def __str__(self):
         state = 'resolved' if self.resolved_at else 'open'
         return f"Drift[{self.kind}] {self.subject_type}#{self.subject_id} ({state})"
+
+    def resolve(self) -> None:
+        """The only sanctioned mutation: stamp the drift resolved. Idempotent — a
+        second call is a no-op, keeping the append-only philosophy (a drift is
+        opened once and closed once, never reopened or edited)."""
+        if self.resolved_at:
+            return
+        self.resolved_at = timezone.now()
+        self.save(update_fields=['resolved_at'])

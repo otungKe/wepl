@@ -79,14 +79,10 @@ class PaymentService:
         PaymentIntent.objects.filter(pk=intent.pk).update(callback_received_at=now)
         intent.callback_received_at = now
 
-        # Receipt uniqueness: a receipt seen elsewhere is a reconciliation signal,
-        # not something to store twice. Settle without it and flag the drift.
-        if success and receipt and PaymentIntent.objects.filter(
-                receipt=receipt).exclude(pk=intent.pk).exists():
-            _open_drift('duplicate_receipt', 'payment_intent', intent.id,
-                        f"receipt {receipt} already recorded on another intent")
-            logger.warning("PaymentIntent %s: duplicate receipt %s — settling without it",
-                           intent.id, receipt)
+        # Receipt uniqueness: a receipt already seen elsewhere is a reconciliation
+        # concern, owned by the reconciliation subsystem — not PaymentService.
+        # resolve() only makes the *lifecycle* decision (don't double-store it).
+        if success and receipt and _reconciliation().note_duplicate_receipt(intent, receipt):
             receipt = ''
 
         target = (PaymentIntent.Status.SUCCEEDED if success
@@ -122,8 +118,16 @@ class PaymentService:
                               provider_event_id=''):
         """Append a raw provider callback/event to the immutable history. Best-effort
         and idempotent on ``provider_event_id`` — a re-delivered event is dropped.
+        Correlates to (and inherits the tenant of) the intent for the same
+        (provider, provider_ref) so the log is per-intent and tenant-isolated.
         Returns the ProviderEvent or None."""
         from django.db import IntegrityError
+        # Correlate to the intent so the event log is queryable per-intent and
+        # carries the intent's tenant (RLS). Cheap: one indexed lookup.
+        if payment_intent is None and provider_ref:
+            payment_intent = (PaymentIntent.objects
+                              .filter(provider=provider, provider_ref=provider_ref)
+                              .order_by('-created_at').first())
         try:
             # Own savepoint so a duplicate (IntegrityError) rolls back cleanly
             # without poisoning the caller's transaction.
@@ -131,6 +135,7 @@ class PaymentService:
                 return ProviderEvent.objects.create(
                     provider=provider, event_type=event_type, payload=payload or {},
                     provider_ref=provider_ref or '', payment_intent=payment_intent,
+                    tenant_id=getattr(payment_intent, 'tenant_id', None),
                     signature_verified=signature_verified,
                     provider_event_id=provider_event_id or '')
         except IntegrityError:
@@ -142,7 +147,8 @@ class PaymentService:
             return None
 
 
-def _open_drift(kind, subject_type, subject_id, detail):
-    """Open a reconciliation drift (deferred import avoids a cycle)."""
-    from .reconciliation import _open_drift as _open
-    return _open(kind, subject_type, subject_id, detail)
+def _reconciliation():
+    """The reconciliation subsystem (deferred import avoids a cycle). Payment
+    orchestration delegates all consistency concerns here."""
+    from . import reconciliation
+    return reconciliation

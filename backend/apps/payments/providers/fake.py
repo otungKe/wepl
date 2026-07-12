@@ -22,6 +22,7 @@ class FakeProvider(PaymentProvider):
         self.collections: list[dict] = []
         self.payouts: list[dict] = []
         self._seq = itertools.count(1)
+        self._statuses: dict[str, str] = {}   # provider_ref → forced query state
 
     def initiate_collection(self, *, phone, amount: Money, reference, description) -> CollectionResult:
         ref = f"FAKE-COL-{next(self._seq)}"
@@ -51,9 +52,18 @@ class FakeProvider(PaymentProvider):
         )
 
     def query_status(self, *, provider_ref: str) -> StatusResult:
-        return StatusResult(state='success', raw={'provider_ref': provider_ref})
+        # Deterministic: 'success' by default, or whatever a test pinned via
+        # set_status() — so a lifecycle test can drive requery down either branch
+        # without mocking the rail.
+        return StatusResult(state=self._statuses.get(provider_ref, 'success'),
+                            raw={'provider_ref': provider_ref})
 
     # ── Test helpers ─────────────────────────────────────────────────────────
+    def set_status(self, provider_ref: str, state: str) -> None:
+        """Pin the state query_status() returns for a provider_ref ('success' |
+        'failed' | 'pending' | 'unknown')."""
+        self._statuses[provider_ref] = state
+
     def make_collection_callback(self, provider_ref, *, success=True, receipt='FAKE-RCPT',
                                  amount=None, phone=None) -> CallbackEvent:
         return CallbackEvent(
