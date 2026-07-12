@@ -335,3 +335,24 @@ as "Proposed" though they are Accepted/implemented. The index is stale — updat
 
 *This audit did not modify application code; it verifies and records. Each remaining item in
 Phase 8 is a self-contained, testable follow-up in the established ADR/PR style.*
+
+---
+
+## Correction (2026-07-12) — a legacy artifact the "legacy wiped" claim missed
+
+The Phase-0 verification confirmed ADR-0002's enumerated legacy (the single-entry
+`LedgerEntry` + `writer.py` shadow + `queries.py`, and the mutable balance columns
+`current_amount` / `WelfareFund.balance` / `SharesFund.total_pool` /
+`ContributionAccount` / `ContributionBalance`) was genuinely gone. It **missed a
+different legacy artifact not on that list and not covered by the CI grep-guard**:
+`payments.Payment` — a contribution-coupled money record with pre-ADR-0003 precision
+(`Decimal(12,2)`) and a mutable `status`, living **outside the ledger**. It was dead
+(no writers since manual recording was removed; only a read-only legacy list view +
+serializer referenced it) but never deleted, so it survived the cutover.
+
+**Resolved:** the model, its `PaymentSerializer`, the read-only
+`ContributionPaymentsView` + its `/api/payments/contribution/<id>/` route, and the
+`payments/` URL include were removed, and migration
+`payments.0005_delete_legacy_payment` drops the table (consistent with ADR-0002's
+clean-reset posture; no client consumed the endpoint). `PaymentIntent` and
+`ReconciliationDrift` (the current ADR-0014 code) are unaffected.
