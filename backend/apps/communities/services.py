@@ -136,6 +136,10 @@ class CommunityService:
         community = Community.objects.create(
             created_by=user, tenant=tenant_for_user(user), **validated_data,
         )
+        # Organization spine (ADR-0026): every community is born as an
+        # Organization of archetype 'community'.
+        from apps.organizations.models import ensure_organization_for_community
+        ensure_organization_for_community(community)
         CommunityMembership.objects.create(user=user, community=community, role=Role.ADMIN)
 
         if community.has_welfare_fund:

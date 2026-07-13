@@ -17,7 +17,8 @@ add a new ADR that supersedes the old one (note it in both).
 | [0007](0007-controls-at-posting-chokepoint.md) | Limits & risk controls live at the posting chokepoint | Proposed |
 | [0023](0023-identity-verification-provider.md) | Identity-verification provider port/adapter | Accepted |
 | [0024](0024-fee-and-tax-postings.md) | Fee, excise-duty and withholding postings | Proposed |
-| [0025](0025-financial-account-and-pool-identity.md) | Financial-account identity and pools as first-class accounts | Proposed |
+| [0025](0025-financial-account-and-pool-identity.md) | Financial-account identity and pools as first-class accounts | Accepted |
+| [0026](0026-organization-and-program-spine.md) | Organization spine — every participant is an Organization | Accepted |
 
 ## Template
 

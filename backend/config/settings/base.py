@@ -74,6 +74,7 @@ INSTALLED_APPS = [
     'apps.search.apps.SearchConfig',
 
     'apps.users.apps.UsersConfig',
+    'apps.organizations.apps.OrganizationsConfig',
     'apps.communities.apps.CommunitiesConfig',
     'apps.conversations.apps.ConversationsConfig',
     'apps.contributions.apps.ContributionsConfig',

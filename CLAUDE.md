@@ -115,7 +115,8 @@ separate app/deployment — never co-hosted with the customer web app.
 - `backend/config/settings/`: `base.py` → `development.py` / `production.py`.
 - `backend/apps/`: `ledger` (the book of record), `core` (event bus + outbox), `payments` +
   `mpesa` (rails), `users` (phone auth/KYC), `contributions` (contributions, welfare funds,
-  shares, and advances all live here), and `communities`, `conversations`, `notifications`,
+  shares, and advances all live here), `organizations` (the participant spine, ADR-0026),
+  and `communities`, `conversations`, `notifications`,
   `reminders`, `activity`.
 - Async stack: Celery + Beat over Redis, queues `default,notifications,payments,financial`;
   served over ASGI (Channels/Daphne).

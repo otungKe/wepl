@@ -47,6 +47,15 @@ class Community(models.Model):
         on_delete=models.PROTECT, related_name='communities',
     )
 
+    # Organization spine (ADR-0026): a Community is the first Organization
+    # archetype. The Organization row is the general participant entity; this
+    # row is its archetype-specific profile. Stamped at creation and backfilled;
+    # nullable only so pre-spine rows migrate additively.
+    organization = models.OneToOneField(
+        'organizations.Organization', null=True, blank=True,
+        on_delete=models.PROTECT, related_name='community_profile',
+    )
+
     community_photo = models.ImageField(upload_to="communities/", null=True, blank=True)
 
     is_private       = models.BooleanField(default=False)
