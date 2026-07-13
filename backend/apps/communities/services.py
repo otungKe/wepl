@@ -144,10 +144,12 @@ class CommunityService:
 
         if community.has_welfare_fund:
             from apps.contributions.models import WelfareFund
-            WelfareFund.objects.create(
+            welfare = WelfareFund.objects.create(
                 community=community,
                 name=f"{community.name} Welfare Fund",
             )
+            from apps.organizations.models import ensure_program
+            ensure_program(fund=welfare, program_type='welfare')
 
         if community.has_shares_fund:
             from decimal import Decimal
@@ -158,6 +160,8 @@ class CommunityService:
                 name=f"{community.name} Shares Fund",
                 share_price=price,
             )
+            from apps.organizations.models import ensure_program
+            ensure_program(fund=fund, program_type='shares')
             ShareHolding.objects.create(shares_fund=fund, user=user)
 
         logger.info("Community created: '%s' (id=%s) by user %s", community.name, community.id, user.pk)

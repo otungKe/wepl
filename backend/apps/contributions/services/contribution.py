@@ -17,6 +17,9 @@ class ContributionService:
         # it blocked legitimate solo/open contributions and crashed on
         # percentage thresholds (it queried participants via a fake proxy object).
         contribution = Contribution.objects.create(created_by=user, **validated_data)
+        # Program spine (ADR-0026): every fund is born as a Program.
+        from apps.organizations.models import ensure_program
+        ensure_program(fund=contribution, program_type='contribution')
 
         ContributionParticipant.objects.create(contribution=contribution, user=user, is_active=True)
 

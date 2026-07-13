@@ -16,6 +16,13 @@ def _generate_invite_code():
 
 class Contribution(models.Model):
 
+    # Program spine (ADR-0026): this fund is the archetype profile of a Program.
+    # Stamped at creation, backfilled for pre-spine rows (hence nullable).
+    program = models.OneToOneField(
+        'organizations.Program', null=True, blank=True,
+        on_delete=models.PROTECT, related_name='contribution_profile',
+    )
+
     VISIBILITY_CHOICES = (
         ('closed', 'Closed'),
         ('open',   'Open'),
@@ -236,6 +243,13 @@ class ContributionTransaction(models.Model):
 # ---------------------------------------------------------------------------
 
 class SharesFund(models.Model):
+    # Program spine (ADR-0026): this fund is the archetype profile of a Program.
+    # Stamped at creation, backfilled for pre-spine rows (hence nullable).
+    program = models.OneToOneField(
+        'organizations.Program', null=True, blank=True,
+        on_delete=models.PROTECT, related_name='shares_profile',
+    )
+
     community = models.OneToOneField(
         'communities.Community', on_delete=models.PROTECT, related_name='shares_fund',
         null=True, blank=True,
@@ -477,6 +491,13 @@ class DisbursementVote(models.Model):
 # ---------------------------------------------------------------------------
 
 class WelfareFund(models.Model):
+    # Program spine (ADR-0026): this fund is the archetype profile of a Program.
+    # Stamped at creation, backfilled for pre-spine rows (hence nullable).
+    program = models.OneToOneField(
+        'organizations.Program', null=True, blank=True,
+        on_delete=models.PROTECT, related_name='welfare_profile',
+    )
+
     community    = models.ForeignKey(
         Community, on_delete=models.PROTECT,
         related_name='welfare_funds', null=True, blank=True,
