@@ -1,6 +1,6 @@
 # ADR-0026: Organization spine — every participant is an Organization
 
-- **Status:** Accepted (Phase 0 in progress)
+- **Status:** Accepted (Phase 0 shipped — Organization + Program spine merged)
 - **Date:** 2026-07-13
 - **Deciders:** Platform strategy review (see `docs/strategy/organization-os.md`)
 
