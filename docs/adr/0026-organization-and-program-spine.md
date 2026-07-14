@@ -52,7 +52,17 @@ Phase 0 lands the spine additively, without changing user-facing behaviour:
    The ledger's `(fund_type, fund_id)` account anchoring is untouched; Program
    generalizes `fund_type` from enum to entity so new surfaces enumerate one
    concept.
-3. **Subscription / Relationship** (Phase 1) — the org↔program edge that
+3. **Capability layer** (shipped, `organizations/capabilities.py`) — the
+   code-defined map that makes "archetype selects a capability bundle" real: a
+   universal kernel every org holds, regulated capabilities (deposit-taking,
+   lending, fund distribution, clearing) as compliance-gated vocabulary, and per
+   archetype a `bundle` (granted today) within a `ceiling` (may *ever* hold).
+   The community ceiling equals the kernel — a chama can never be granted a
+   regulated capability. `ensure_program` is the first checkpoint (inert for the
+   community archetype, load-bearing once a narrower bundle exists). No per-org
+   grant store yet: with one archetype whose bundle equals its ceiling, the
+   bundle *is* the grant — the store lands with the first regulated archetype.
+4. **Subscription / Relationship** (Phase 1) — the org↔program edge that
    replaces "Provider", built against the first real counterparty partnership.
 
 Rules that keep the spine honest:
