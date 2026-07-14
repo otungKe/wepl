@@ -293,3 +293,42 @@ class DeferredTriggerTests(TransactionTestCase):
                     JournalLine(journal=je, account=self.member, direction=CR, amount=Decimal('80')),
                 ])
                 # leaving the atomic block triggers the deferred constraint check
+
+
+class DbImmutabilityTriggerTests(TestCase):
+    """DB-level immutability (migration 0016).
+
+    The Python save()/delete() overrides only guard the model-instance path;
+    they are bypassed by QuerySet.update(), QuerySet.delete(), bulk_update and
+    raw SQL. A BEFORE UPDATE OR DELETE trigger on both journal tables closes
+    those paths so the append-only invariant holds against every writer.
+    PostgreSQL only. Each mutation is wrapped in its own savepoint so the raised
+    error doesn't poison the surrounding test transaction.
+    """
+
+    def setUp(self):
+        if connection.vendor != 'postgresql':
+            self.skipTest('Immutability triggers are PostgreSQL-specific.')
+        self.user = User.objects.create_user(phone_number='+254700000098')
+        coa.seed_chart_of_accounts()
+        self.float = coa.mpesa_float_account()
+        self.member = coa.member_fund_account(user=self.user, fund_type='contribution', fund_id=1)
+        self.je = post_journal(
+            idempotency_key='imm-db-1', op_type='CONTRIBUTION',
+            lines=[Line(self.float, DR, Decimal('10')), Line(self.member, CR, Decimal('10'))],
+        )
+
+    def test_queryset_update_on_entry_is_blocked_at_db(self):
+        with self.assertRaises(IntegrityError):
+            with transaction.atomic():
+                JournalEntry.objects.filter(pk=self.je.pk).update(narration='tampered')
+
+    def test_queryset_update_on_line_is_blocked_at_db(self):
+        with self.assertRaises(IntegrityError):
+            with transaction.atomic():
+                JournalLine.objects.filter(journal=self.je).update(amount=Decimal('999'))
+
+    def test_queryset_delete_on_line_is_blocked_at_db(self):
+        with self.assertRaises(IntegrityError):
+            with transaction.atomic():
+                JournalLine.objects.filter(journal=self.je).delete()
