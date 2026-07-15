@@ -22,10 +22,12 @@ export default function KycPage() {
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [form, setForm] = useState({
-    given_names: '', surname: '', id_number: '', date_of_birth: '', email: '',
+    given_names: '', surname: '', id_number: '', kra_pin: '', date_of_birth: '', email: '',
     physical_address: '', county: '', occupation: '', source_of_income: '', expected_monthly_income: '',
+    referral_code: '',
   })
   const idFront = useRef<HTMLInputElement | null>(null)
+  const idBack = useRef<HTMLInputElement | null>(null)
   const selfie = useRef<HTMLInputElement | null>(null)
 
   useEffect(() => {
@@ -36,11 +38,16 @@ export default function KycPage() {
 
   async function submit(e: React.FormEvent) {
     e.preventDefault()
+    // All three images are required by the backend so a reviewer always has the
+    // full document set (both ID sides) plus a selfie for liveness.
     if (!idFront.current?.files?.[0]) return toast.error('Upload the front of your ID')
+    if (!idBack.current?.files?.[0]) return toast.error('Upload the back of your ID')
+    if (!selfie.current?.files?.[0]) return toast.error('Upload a selfie')
     const fd = new FormData()
     Object.entries(form).forEach(([k, v]) => v && fd.append(k, v))
     fd.append('id_front', idFront.current.files[0])
-    if (selfie.current?.files?.[0]) fd.append('selfie', selfie.current.files[0])
+    fd.append('id_back', idBack.current.files[0])
+    fd.append('selfie', selfie.current.files[0])
     setSaving(true)
     try {
       await auth.kycSubmit(fd)
@@ -74,6 +81,7 @@ export default function KycPage() {
           <Input label="National ID number" value={form.id_number} onChange={e => set('id_number', e.target.value)} required />
           <Input label="Date of birth" type="date" value={form.date_of_birth} onChange={e => set('date_of_birth', e.target.value)} required />
         </div>
+        <Input label="KRA PIN" value={form.kra_pin} onChange={e => set('kra_pin', e.target.value.toUpperCase())} required hint="e.g. A012345678Z" />
         <Input label="Email" type="email" value={form.email} onChange={e => set('email', e.target.value)} required hint="Used to send a verification link." />
         <Input label="Physical address" value={form.physical_address} onChange={e => set('physical_address', e.target.value)} required />
         <div className="grid gap-4 sm:grid-cols-2">
@@ -94,8 +102,13 @@ export default function KycPage() {
           </Select>
         </div>
 
-        <FileField label="ID front (required)" inputRef={idFront} />
-        <FileField label="Selfie (optional)" inputRef={selfie} />
+        <Input label="Referral / sales code" value={form.referral_code} onChange={e => set('referral_code', e.target.value)} hint="Optional — leave blank if you don't have one." />
+
+        <div className="grid gap-4 sm:grid-cols-2">
+          <FileField label="ID front (required)" inputRef={idFront} />
+          <FileField label="ID back (required)" inputRef={idBack} />
+        </div>
+        <FileField label="Selfie (required)" inputRef={selfie} />
 
         <Button type="submit" size="lg" loading={saving}><ShieldCheck size={16} /> Submit for verification</Button>
       </form>
