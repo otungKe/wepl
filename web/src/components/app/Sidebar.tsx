@@ -2,7 +2,7 @@
 import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
 import { useEffect, useState } from 'react'
-import { Users, Compass, Bell, User as UserIcon, Settings, LogOut, Building2, ShieldCheck, BarChart3, Clock, Receipt, Coins } from 'lucide-react'
+import { Users, Compass, Bell, User as UserIcon, Settings, LogOut, Building2, ShieldCheck, BarChart3, Clock, Receipt, Coins, Activity } from 'lucide-react'
 import { useAuthStore } from '@/store/auth'
 import { useTier } from '@/hooks/useTier'
 import { notificationsApi } from '@/lib/api'
@@ -19,6 +19,7 @@ const NAV = [
   { href: '/discover',     label: 'Discover',     icon: Compass, tier0: true },
   { href: '/requests',     label: 'My requests',  icon: Clock },
   { href: '/transactions', label: 'Transactions', icon: Receipt },
+  { href: '/activity',     label: 'Activity',     icon: Activity },
   { href: '/reports',      label: 'Reports',      icon: BarChart3 },
   { href: '/notifications',label: 'Notifications',icon: Bell, key: 'notifications' },
   { href: '/kyc',          label: 'Verification', icon: ShieldCheck, tier0: true },

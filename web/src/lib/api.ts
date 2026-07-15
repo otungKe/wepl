@@ -488,3 +488,28 @@ export const reminders = {
     unwrap<Reminder>((await api.get('/reminders/upcoming/', { params: limit ? { limit } : {} })).data),
   list:     async () => unwrap<Reminder>((await api.get('/reminders/')).data),
 }
+
+// ── Activity feed (ADR-0016) ──────────────────────────────────
+export interface Activity {
+  id: number
+  user: string
+  activity_type: string
+  message: string
+  visibility: string
+  community: number | null
+  created_at: string
+}
+
+// The legacy /activity/ endpoint uses offset pagination and returns
+// {count, results, has_more} — kept stable for shipped mobile binaries
+// (ADR-0021). We keep the full page shape (not unwrap) so the feed can page.
+export interface ActivityPage {
+  count: number
+  results: Activity[]
+  has_more: boolean
+}
+
+export const activityApi = {
+  feed: async (params?: { type?: string; limit?: number; offset?: number }): Promise<ActivityPage> =>
+    (await api.get('/activity/', { params })).data,
+}
