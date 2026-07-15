@@ -11,10 +11,12 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import {
   getMyCommunities, getCommunityByInviteCode, requestToJoinCommunity,
   getMyJoinRequests, PendingRequest,
+  leaveCommunity, muteCommunity, deleteCommunity, archiveCommunity,
   Community,
 } from "../../api/communities";
 import { getUnreadSummary, UnreadSummary } from "../../api/conversations";
 import { on } from "../../utils/eventBus";
+import * as secureStorage from "../../utils/secureStorage";
 import { COLORS, FONTS, RADIUS, avatarColorFor, initialsFor } from "../../constants/theme";
 import Avatar from "../../components/app/Avatar";
 import FAB from "../../components/app/FAB";
@@ -32,6 +34,34 @@ const PIN_KEY  = "wepl.pinnedCommunities";
 const SEEN_KEY = "wepl.communityLastSeen";
 const MAX_PINS = 3;
 
+// WhatsApp-style relative activity time: today → clock; yesterday → "Yesterday";
+// this week → weekday; older → day + month.
+function fmtActivityTime(iso: string | null): string {
+  if (!iso) return "";
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return "";
+  const startOf = (x: Date) => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime();
+  const today = startOf(new Date());
+  const that  = startOf(d);
+  const DAY   = 86_400_000;
+  if (that === today)       return d.toLocaleTimeString("en-KE", { hour: "numeric", minute: "2-digit" });
+  if (that === today - DAY) return "Yesterday";
+  if (today - that < 7 * DAY) return d.toLocaleDateString("en-KE", { weekday: "short" });
+  return d.toLocaleDateString("en-KE", { day: "numeric", month: "short" });
+}
+
+function ActionRow({ icon, label, onPress, destructive }: {
+  icon: string; label: string; onPress: () => void; destructive?: boolean;
+}) {
+  const color = destructive ? COLORS.error : COLORS.textSecondary;
+  return (
+    <TouchableOpacity style={styles.actionRow} onPress={onPress} activeOpacity={0.6}>
+      <Ionicons name={icon as any} size={21} color={color} />
+      <Text style={[styles.actionLabel, destructive && { color: COLORS.error }]}>{label}</Text>
+    </TouchableOpacity>
+  );
+}
+
 export default function CommunitiesScreen() {
   const [communities, setCommunities]     = useState<Community[]>([]);
   const [pendingRequests, setPendingRequests] = useState<PendingRequest[]>([]);
@@ -42,6 +72,9 @@ export default function CommunitiesScreen() {
   const [cat, setCat]           = useState<string | null>(null);
   const [pinnedIds, setPinnedIds] = useState<number[]>([]);
   const [lastSeen, setLastSeen]   = useState<Record<string, string>>({});
+  const [myPhone, setMyPhone]     = useState("");
+  const [actionTarget, setActionTarget] = useState<Community | null>(null);
+  const [showArchived, setShowArchived] = useState(false);
 
   // FAB action sheet
   const [sheet, setSheet] = useState<Sheet>(null);
@@ -65,15 +98,17 @@ export default function CommunitiesScreen() {
     } catch {}
   }, []);
 
-  // Load per-device pins + last-seen map alongside the network data.
+  // Load per-device pins + last-seen map (and my phone for owner-only actions).
   const loadLocal = useCallback(async () => {
     try {
-      const [p, s] = await Promise.all([
+      const [p, s, phone] = await Promise.all([
         AsyncStorage.getItem(PIN_KEY),
         AsyncStorage.getItem(SEEN_KEY),
+        secureStorage.getItem("phone"),
       ]);
       setPinnedIds(p ? JSON.parse(p) : []);
       setLastSeen(s ? JSON.parse(s) : {});
+      if (phone) setMyPhone(phone);
     } catch {}
   }, []);
 
@@ -126,6 +161,49 @@ export default function CommunitiesScreen() {
     return !seen || new Date(c.last_activity).getTime() > new Date(seen).getTime();
   }, [lastSeen]);
 
+  const isOwner = useCallback((c: Community) => !!myPhone && c.created_by === myPhone, [myPhone]);
+
+  // ── Row action-sheet handlers ────────────────────────────────────────────────
+  const closeActions = () => setActionTarget(null);
+
+  const onPin = (c: Community) => { togglePin(c.id); closeActions(); };
+  const onMarkRead = (c: Community) => { markSeen(c.id); closeActions(); };
+
+  const onMute = async (c: Community) => {
+    closeActions();
+    try { await muteCommunity(c.id, !c.is_muted); await load(); }
+    catch (e: any) { Alert.alert("Couldn't update", e?.response?.data?.error ?? "Try again."); }
+  };
+
+  const onArchive = async (c: Community) => {
+    closeActions();
+    const archiving = c.status !== "archived";
+    try { await archiveCommunity(c.id, archiving); await load(); }
+    catch (e: any) { Alert.alert("Couldn't update", e?.response?.data?.error ?? "Try again."); }
+  };
+
+  const onLeave = (c: Community) => {
+    closeActions();
+    Alert.alert("Leave group", `Leave "${c.name}"? You'll need a new invite to rejoin.`, [
+      { text: "Cancel", style: "cancel" },
+      { text: "Leave", style: "destructive", onPress: async () => {
+        try { await leaveCommunity(c.id); await load(); }
+        catch (e: any) { Alert.alert("Couldn't leave", e?.response?.data?.error ?? "Try again."); }
+      } },
+    ]);
+  };
+
+  const onDelete = (c: Community) => {
+    closeActions();
+    Alert.alert("Delete group", `Permanently delete "${c.name}"? This can't be undone.`, [
+      { text: "Cancel", style: "cancel" },
+      { text: "Delete", style: "destructive", onPress: async () => {
+        try { await deleteCommunity(c.id); await load(); }
+        catch (e: any) { Alert.alert("Couldn't delete", e?.response?.data?.error ?? "Try again."); }
+      } },
+    ]);
+  };
+
   const onRefresh = async () => {
     setRefreshing(true);
     await load();
@@ -143,13 +221,17 @@ export default function CommunitiesScreen() {
     return matchesSearch && matchesCat;
   });
 
+  // Archived groups drop out of the main list into their own collapsible section.
+  const archivedList = filtered.filter((c) => c.status === "archived");
+  const activeList   = filtered.filter((c) => c.status !== "archived");
+
   // Pinned (capped, in pin order) float to the top; the rest sort by most recent
-  // activity. Both derive from the filtered set so search/category still apply.
+  // activity. Both derive from the active set so search/category still apply.
   const pinnedSet  = new Set(pinnedIds);
   const pinnedList = pinnedIds
-    .map((id) => filtered.find((c) => c.id === id))
+    .map((id) => activeList.find((c) => c.id === id))
     .filter(Boolean) as Community[];
-  const restList = filtered
+  const restList = activeList
     .filter((c) => !pinnedSet.has(c.id))
     .sort((a, b) => {
       const ta = a.last_activity ? new Date(a.last_activity).getTime() : 0;
@@ -160,6 +242,7 @@ export default function CommunitiesScreen() {
   const sections: { title: string; data: Community[] }[] = [];
   if (pinnedList.length) sections.push({ title: "Pinned", data: pinnedList });
   if (restList.length)   sections.push({ title: pinnedList.length ? "All groups" : "", data: restList });
+  if (archivedList.length) sections.push({ title: "__archived", data: showArchived ? archivedList : [] });
 
   const closeSheet = () => {
     setSheet(null);
@@ -328,16 +411,32 @@ export default function CommunitiesScreen() {
           sections={sections}
           keyExtractor={(i) => String(i.id)}
           stickySectionHeadersEnabled={false}
-          renderSectionHeader={({ section }) =>
-            section.title ? (
+          renderSectionHeader={({ section }) => {
+            if (section.title === "__archived") {
+              return (
+                <TouchableOpacity
+                  style={styles.sectionHeader}
+                  onPress={() => setShowArchived((s) => !s)}
+                  activeOpacity={0.6}
+                >
+                  <Ionicons name="archive-outline" size={13} color={COLORS.textMuted} />
+                  <Text style={styles.sectionHeaderText}>ARCHIVED ({archivedList.length})</Text>
+                  <Ionicons
+                    name={showArchived ? "chevron-up" : "chevron-down"}
+                    size={14} color={COLORS.textMuted} style={{ marginLeft: "auto" }}
+                  />
+                </TouchableOpacity>
+              );
+            }
+            return section.title ? (
               <View style={styles.sectionHeader}>
                 {section.title === "Pinned" && (
                   <Ionicons name="pin" size={12} color={COLORS.textMuted} style={styles.sectionPin} />
                 )}
                 <Text style={styles.sectionHeaderText}>{section.title.toUpperCase()}</Text>
               </View>
-            ) : null
-          }
+            ) : null;
+          }}
           renderItem={({ item }: { item: Community }) => {
             const unreadCount = unreadSummary.by_community[String(item.id)] ?? 0;
             const hasUnread   = unreadCount > 0;
@@ -350,8 +449,8 @@ export default function CommunitiesScreen() {
               <TouchableOpacity
                 style={styles.row}
                 onPress={() => openCommunity(item)}
-                onLongPress={() => togglePin(item.id)}
-                delayLongPress={250}
+                onLongPress={() => setActionTarget(item)}
+                delayLongPress={280}
                 activeOpacity={0.6}
               >
                 {/* Photo — circular */}
@@ -417,16 +516,21 @@ export default function CommunitiesScreen() {
                   ) : null}
                 </View>
 
-                {/* Right: unread count / unseen dot + pin marker */}
+                {/* Right: activity time (green when unseen) + unread count + pin */}
                 <View style={styles.cardRight}>
-                  {hasUnread ? (
-                    <View style={styles.unreadBadge}>
-                      <Text style={styles.unreadBadgeText}>{unreadCount > 9 ? "9+" : unreadCount}</Text>
-                    </View>
-                  ) : unseen ? (
-                    <View style={styles.unseenDotRight} />
+                  {item.last_activity ? (
+                    <Text style={[styles.timeText, highlight && styles.timeUnseen]}>
+                      {fmtActivityTime(item.last_activity)}
+                    </Text>
                   ) : null}
-                  {pinned && <Ionicons name="pin" size={13} color={COLORS.textMuted} style={styles.pinMark} />}
+                  <View style={styles.rightBottom}>
+                    {hasUnread ? (
+                      <View style={styles.unreadBadge}>
+                        <Text style={styles.unreadBadgeText}>{unreadCount > 9 ? "9+" : unreadCount}</Text>
+                      </View>
+                    ) : null}
+                    {pinned ? <Ionicons name="pin" size={13} color={COLORS.textMuted} style={styles.pinMark} /> : null}
+                  </View>
                 </View>
               </TouchableOpacity>
             );
@@ -439,6 +543,49 @@ export default function CommunitiesScreen() {
       )}
 
       <FAB icon="add" onPress={() => setSheet("menu")} />
+
+      {/* ── Row long-press action sheet ── */}
+      <Modal visible={actionTarget !== null} transparent animationType="slide" onRequestClose={closeActions}>
+        <Pressable style={styles.sheetWrap} onPress={closeActions}>
+          <Pressable style={styles.sheet} onPress={() => {}}>
+            <View style={styles.sheetHandle} />
+            {actionTarget && (() => {
+              const c = actionTarget;
+              const pinned    = pinnedSet.has(c.id);
+              const owner     = isOwner(c);
+              const archived  = c.status === "archived";
+              const unread    = (unreadSummary.by_community[String(c.id)] ?? 0) > 0;
+              const highlight = unread || isUnseen(c);
+              return (
+                <>
+                  <Text style={styles.sheetTitle} numberOfLines={1}>{c.name}</Text>
+                  <ActionRow icon={pinned ? "pin" : "pin-outline"} label={pinned ? "Unpin" : "Pin to top"} onPress={() => onPin(c)} />
+                  {highlight && (
+                    <ActionRow icon="checkmark-done-outline" label="Mark as read" onPress={() => onMarkRead(c)} />
+                  )}
+                  <ActionRow
+                    icon={c.is_muted ? "notifications-outline" : "notifications-off-outline"}
+                    label={c.is_muted ? "Unmute" : "Mute notifications"}
+                    onPress={() => onMute(c)}
+                  />
+                  {owner && (
+                    <ActionRow
+                      icon="archive-outline"
+                      label={archived ? "Unarchive" : "Archive"}
+                      onPress={() => onArchive(c)}
+                    />
+                  )}
+                  {owner ? (
+                    <ActionRow icon="trash-outline" label="Delete group" destructive onPress={() => onDelete(c)} />
+                  ) : (
+                    <ActionRow icon="exit-outline" label="Leave group" destructive onPress={() => onLeave(c)} />
+                  )}
+                </>
+              );
+            })()}
+          </Pressable>
+        </Pressable>
+      </Modal>
 
       {/* ── FAB action sheet ── */}
       <Modal visible={sheet !== null} transparent animationType="slide" onRequestClose={closeSheet}>
@@ -692,8 +839,10 @@ const styles = StyleSheet.create({
   chipText:    { fontSize: 10, fontWeight: "700" },
   chipWelfare: { backgroundColor: COLORS.primaryPale },
   chipShares:  { backgroundColor: COLORS.accentPale },
-  cardRight:   { flexDirection: "row", alignItems: "center", gap: 5, alignSelf: "center" },
-  unseenDotRight: { width: 10, height: 10, borderRadius: 5, backgroundColor: COLORS.primary },
+  cardRight:   { alignItems: "flex-end", justifyContent: "center", gap: 4, minWidth: 44, alignSelf: "stretch", paddingTop: 2 },
+  timeText:    { fontSize: 11, color: COLORS.textMuted, fontWeight: "500" },
+  timeUnseen:  { color: COLORS.primary, fontWeight: "700" },
+  rightBottom: { flexDirection: "row", alignItems: "center", gap: 4, minHeight: 20 },
   pinMark:     { transform: [{ rotate: "45deg" }] },
 
   unreadBadge: {
@@ -703,6 +852,14 @@ const styles = StyleSheet.create({
     paddingHorizontal: 4,
   },
   unreadBadgeText: { fontSize: 11, fontWeight: "700", color: COLORS.white },
+
+  // Long-press action rows
+  actionRow: {
+    flexDirection: "row", alignItems: "center", gap: 14,
+    paddingVertical: 14,
+    borderBottomWidth: 1, borderBottomColor: COLORS.divider,
+  },
+  actionLabel: { fontSize: FONTS.md, fontWeight: "600", color: COLORS.text },
 
   // Bottom sheet
   sheetWrap: { flex: 1, backgroundColor: "rgba(0,0,0,0.4)", justifyContent: "flex-end" },

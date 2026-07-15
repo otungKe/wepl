@@ -21,6 +21,7 @@ export type Community = {
   member_count: number;
   is_member: boolean;
   is_muted: boolean;
+  status: 'active' | 'frozen' | 'archived';
   join_request_status: 'PENDING' | 'APPROVED' | 'REJECTED' | null;
   created_at: string;
   // Most recent activity in the group (message, contribution, governance…).
@@ -110,6 +111,14 @@ export const getCommunityMembers = async (id: number): Promise<CommunityMember[]
 
 export const deleteCommunity = async (id: number) => {
   await API.delete(`communities/${id}/delete/`);
+};
+
+/** Archive (owner's orderly freeze) or unarchive a community. Returns the
+ *  updated community. Archived groups stay readable but are frozen for new
+ *  money objects / conversations. */
+export const archiveCommunity = async (id: number, archived: boolean): Promise<Community> => {
+  const r = await API.post(`communities/${id}/${archived ? "archive" : "unarchive"}/`);
+  return r.data;
 };
 
 export const getCommunityByInviteCode = async (code: string): Promise<Community> => {
