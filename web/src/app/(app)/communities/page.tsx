@@ -399,7 +399,10 @@ function CommunityAvatar({ c, size }: { c: Community; size: number }) {
   )
 }
 
-const CARD_MOTION = 'transition-all duration-200 hover:-translate-y-0.5 hover:border-primary/30 hover:shadow-card'
+// List-row hover: a crisp border + surface tint, no vertical lift (a translate
+// on the hovered row jitters when the pointer sits near its edge). The chevron's
+// group-hover nudge stays as the directional affordance.
+const CARD_MOTION = 'transition-colors duration-150 hover:border-primary/40 hover:bg-primary-bg/40'
 
 /** Richer card used in the Pinned section. Denser than before; identity-only avatar. */
 function PinnedCard({ c, pinned, onTogglePin }: { c: Community; pinned?: boolean; onTogglePin?: () => void }) {

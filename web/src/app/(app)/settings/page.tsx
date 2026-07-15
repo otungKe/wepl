@@ -7,8 +7,8 @@ import { notificationsApi, apiError } from '@/lib/api'
 import { useAuthStore } from '@/store/auth'
 import { PageHeader } from '@/components/app/PageHeader'
 import { Button } from '@/components/ui/Button'
+import { Switch } from '@/components/ui/Switch'
 import { Skeleton } from '@/components/ui/Spinner'
-import { cn } from '@/lib/utils'
 import { toast } from 'sonner'
 
 type Prefs = { push_enabled: boolean; payments: boolean; contributions: boolean; reminders: boolean; communities: boolean; advances: boolean }
@@ -28,14 +28,6 @@ const ACCOUNT_LINKS: { href: string; label: string; desc: string; icon: LucideIc
   { href: '/payment-methods', label: 'Payment methods', desc: 'Manage where payouts are sent',     icon: CreditCard },
   { href: '/privacy',         label: 'Privacy',         desc: 'Visibility controls and your data', icon: Lock },
 ]
-
-function Toggle({ on, onClick }: { on: boolean; onClick: () => void }) {
-  return (
-    <button onClick={onClick} className={cn('relative h-6 w-11 rounded-full transition-colors', on ? 'bg-primary' : 'bg-border')}>
-      <span className={cn('absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition-transform', on ? 'translate-x-[22px]' : 'translate-x-0.5')} />
-    </button>
-  )
-}
 
 export default function SettingsPage() {
   const router = useRouter()
@@ -69,7 +61,7 @@ export default function SettingsPage() {
                 <p className="font-medium text-text">{r.label}</p>
                 <p className="text-sm text-text-muted">{r.desc}</p>
               </div>
-              <Toggle on={!!prefs[r.key]} onClick={() => toggle(r.key)} />
+              <Switch checked={!!prefs[r.key]} onChange={() => toggle(r.key)} ariaLabel={r.label} />
             </div>
           ))}
         </div>

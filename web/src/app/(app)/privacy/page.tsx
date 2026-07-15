@@ -5,9 +5,9 @@ import { privacyApi, apiError, type PrivacyPreferences, type Visibility } from '
 import { PageHeader } from '@/components/app/PageHeader'
 import { Select } from '@/components/ui/Input'
 import { Button } from '@/components/ui/Button'
+import { Switch } from '@/components/ui/Switch'
 import { PageLoader } from '@/components/ui/Spinner'
 import { ErrorState } from '@/components/ui/EmptyState'
-import { cn } from '@/lib/utils'
 import { toast } from 'sonner'
 
 const VIS_OPTS: { value: Visibility; label: string }[] = [
@@ -21,15 +21,6 @@ const VIS_ROWS: { key: keyof PrivacyPreferences; label: string; desc: string }[]
   { key: 'photo_visibility',        label: 'Profile photo',       desc: 'Who can see your profile photo' },
   { key: 'contribution_visibility', label: 'Contribution history', desc: 'Who can see what you contribute' },
 ]
-
-function Toggle({ on, onClick, disabled }: { on: boolean; onClick: () => void; disabled?: boolean }) {
-  return (
-    <button type="button" onClick={onClick} disabled={disabled}
-      className={cn('relative h-6 w-11 shrink-0 rounded-full transition-colors disabled:opacity-50', on ? 'bg-primary' : 'bg-border')}>
-      <span className={cn('absolute top-0.5 h-5 w-5 rounded-full bg-white transition-transform', on ? 'translate-x-[22px]' : 'translate-x-0.5')} />
-    </button>
-  )
-}
 
 export default function PrivacyPage() {
   const [prefs, setPrefs] = useState<PrivacyPreferences | null>(null)
@@ -125,16 +116,16 @@ export default function PrivacyPage() {
             <p className="font-medium text-text">Discoverable</p>
             <p className="text-xs text-text-muted">Let others find you to invite you to communities</p>
           </div>
-          <Toggle on={prefs.discoverable} disabled={savingKey === 'discoverable'}
-            onClick={() => update('discoverable', !prefs.discoverable)} />
+          <Switch checked={prefs.discoverable} disabled={savingKey === 'discoverable'}
+            onChange={() => update('discoverable', !prefs.discoverable)} ariaLabel="Discoverable" />
         </div>
         <div className="flex items-center justify-between gap-4 rounded-lg border border-border bg-surface p-4">
           <div className="min-w-0">
             <p className="font-medium text-text">Show online status</p>
             <p className="text-xs text-text-muted">Show when you’re active in chats</p>
           </div>
-          <Toggle on={prefs.show_online_status} disabled={savingKey === 'show_online_status'}
-            onClick={() => update('show_online_status', !prefs.show_online_status)} />
+          <Switch checked={prefs.show_online_status} disabled={savingKey === 'show_online_status'}
+            onChange={() => update('show_online_status', !prefs.show_online_status)} ariaLabel="Show online status" />
         </div>
       </div>
 
