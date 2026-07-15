@@ -1,12 +1,13 @@
 import { useState, useCallback, useEffect } from "react";
 import {
-  View, Text, FlatList, TouchableOpacity, StyleSheet,
+  View, Text, SectionList, TouchableOpacity, StyleSheet,
   ActivityIndicator, RefreshControl, TextInput, Modal,
-  KeyboardAvoidingView, Platform, Pressable, Image, ScrollView,
+  KeyboardAvoidingView, Platform, Pressable, Image, ScrollView, Alert,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { router, useFocusEffect } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import {
   getMyCommunities, getCommunityByInviteCode, requestToJoinCommunity,
   getMyJoinRequests, PendingRequest,
@@ -23,6 +24,14 @@ import { useKYCGate } from "../../hooks/useKYCGate";
 type Sheet = null | "menu" | "join";
 type JoinStep = "input" | "loading" | "preview" | "requesting" | "success";
 
+// Pinning + "last seen" are curated per-device (no backend flag yet), mirroring
+// the web reference. Pins are capped; recency + unseen use the server's
+// last_activity timestamp compared against the last time this device opened the
+// group.
+const PIN_KEY  = "wepl.pinnedCommunities";
+const SEEN_KEY = "wepl.communityLastSeen";
+const MAX_PINS = 3;
+
 export default function CommunitiesScreen() {
   const [communities, setCommunities]     = useState<Community[]>([]);
   const [pendingRequests, setPendingRequests] = useState<PendingRequest[]>([]);
@@ -31,6 +40,8 @@ export default function CommunitiesScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [search, setSearch]     = useState("");
   const [cat, setCat]           = useState<string | null>(null);
+  const [pinnedIds, setPinnedIds] = useState<number[]>([]);
+  const [lastSeen, setLastSeen]   = useState<Record<string, string>>({});
 
   // FAB action sheet
   const [sheet, setSheet] = useState<Sheet>(null);
@@ -54,15 +65,66 @@ export default function CommunitiesScreen() {
     } catch {}
   }, []);
 
+  // Load per-device pins + last-seen map alongside the network data.
+  const loadLocal = useCallback(async () => {
+    try {
+      const [p, s] = await Promise.all([
+        AsyncStorage.getItem(PIN_KEY),
+        AsyncStorage.getItem(SEEN_KEY),
+      ]);
+      setPinnedIds(p ? JSON.parse(p) : []);
+      setLastSeen(s ? JSON.parse(s) : {});
+    } catch {}
+  }, []);
+
   useFocusEffect(useCallback(() => {
     load().finally(() => setLoading(false));
-  }, [load]));
+    loadLocal();
+  }, [load, loadLocal]));
 
   useEffect(() => {
     return on('newMessage', () => {
       getUnreadSummary().then(setUnreadSummary).catch(() => {});
     });
   }, []);
+
+  const togglePin = useCallback((id: number) => {
+    setPinnedIds((prev) => {
+      let next: number[];
+      if (prev.includes(id)) {
+        next = prev.filter((x) => x !== id);
+      } else if (prev.length >= MAX_PINS) {
+        Alert.alert("Pin limit reached", `You can pin up to ${MAX_PINS} groups. Unpin one first.`);
+        return prev;
+      } else {
+        next = [...prev, id];
+      }
+      AsyncStorage.setItem(PIN_KEY, JSON.stringify(next)).catch(() => {});
+      return next;
+    });
+  }, []);
+
+  // Mark a group seen "now" as the user opens it, so its unseen flag clears.
+  const markSeen = useCallback((id: number) => {
+    setLastSeen((prev) => {
+      const next = { ...prev, [String(id)]: new Date().toISOString() };
+      AsyncStorage.setItem(SEEN_KEY, JSON.stringify(next)).catch(() => {});
+      return next;
+    });
+  }, []);
+
+  const openCommunity = useCallback((c: Community) => {
+    markSeen(c.id);
+    router.push({ pathname: "/community/[id]", params: { id: String(c.id), name: c.name } });
+  }, [markSeen]);
+
+  // Unseen = the group's most recent activity is newer than the last time this
+  // device opened it (or it has never been opened but has activity).
+  const isUnseen = useCallback((c: Community): boolean => {
+    if (!c.last_activity) return false;
+    const seen = lastSeen[String(c.id)];
+    return !seen || new Date(c.last_activity).getTime() > new Date(seen).getTime();
+  }, [lastSeen]);
 
   const onRefresh = async () => {
     setRefreshing(true);
@@ -80,6 +142,24 @@ export default function CommunitiesScreen() {
     const matchesCat    = !cat || c.category === cat;
     return matchesSearch && matchesCat;
   });
+
+  // Pinned (capped, in pin order) float to the top; the rest sort by most recent
+  // activity. Both derive from the filtered set so search/category still apply.
+  const pinnedSet  = new Set(pinnedIds);
+  const pinnedList = pinnedIds
+    .map((id) => filtered.find((c) => c.id === id))
+    .filter(Boolean) as Community[];
+  const restList = filtered
+    .filter((c) => !pinnedSet.has(c.id))
+    .sort((a, b) => {
+      const ta = a.last_activity ? new Date(a.last_activity).getTime() : 0;
+      const tb = b.last_activity ? new Date(b.last_activity).getTime() : 0;
+      return tb - ta; // most recent first; quiet groups (no activity) sink
+    });
+
+  const sections: { title: string; data: Community[] }[] = [];
+  if (pinnedList.length) sections.push({ title: "Pinned", data: pinnedList });
+  if (restList.length)   sections.push({ title: pinnedList.length ? "All groups" : "", data: restList });
 
   const closeSheet = () => {
     setSheet(null);
@@ -243,19 +323,35 @@ export default function CommunitiesScreen() {
           </Text>
         </View>
       ) : (
-        <FlatList
+        <SectionList
           style={styles.list}
-          data={filtered}
+          sections={sections}
           keyExtractor={(i) => String(i.id)}
+          stickySectionHeadersEnabled={false}
+          renderSectionHeader={({ section }) =>
+            section.title ? (
+              <View style={styles.sectionHeader}>
+                {section.title === "Pinned" && (
+                  <Ionicons name="pin" size={12} color={COLORS.textMuted} style={styles.sectionPin} />
+                )}
+                <Text style={styles.sectionHeaderText}>{section.title.toUpperCase()}</Text>
+              </View>
+            ) : null
+          }
           renderItem={({ item }: { item: Community }) => {
             const unreadCount = unreadSummary.by_community[String(item.id)] ?? 0;
             const hasUnread   = unreadCount > 0;
+            const unseen      = isUnseen(item);
+            const pinned      = pinnedSet.has(item.id);
+            const highlight   = hasUnread || unseen;
             const palette     = avatarColorFor(item.name);
 
             return (
               <TouchableOpacity
                 style={styles.row}
-                onPress={() => router.push({ pathname: "/community/[id]", params: { id: String(item.id), name: item.name } })}
+                onPress={() => openCommunity(item)}
+                onLongPress={() => togglePin(item.id)}
+                delayLongPress={250}
                 activeOpacity={0.6}
               >
                 {/* Photo — circular */}
@@ -278,7 +374,7 @@ export default function CommunitiesScreen() {
 
                 {/* Content */}
                 <View style={styles.cardContent}>
-                  <Text style={[styles.cardName, hasUnread && styles.cardNameUnread]} numberOfLines={1}>
+                  <Text style={[styles.cardName, highlight && styles.cardNameUnread]} numberOfLines={1}>
                     {item.name}
                   </Text>
 
@@ -321,13 +417,16 @@ export default function CommunitiesScreen() {
                   ) : null}
                 </View>
 
-                {/* Right: unread */}
+                {/* Right: unread count / unseen dot + pin marker */}
                 <View style={styles.cardRight}>
                   {hasUnread ? (
                     <View style={styles.unreadBadge}>
                       <Text style={styles.unreadBadgeText}>{unreadCount > 9 ? "9+" : unreadCount}</Text>
                     </View>
+                  ) : unseen ? (
+                    <View style={styles.unseenDotRight} />
                   ) : null}
+                  {pinned && <Ionicons name="pin" size={13} color={COLORS.textMuted} style={styles.pinMark} />}
                 </View>
               </TouchableOpacity>
             );
@@ -550,6 +649,15 @@ const styles = StyleSheet.create({
   },
   emptyCtaText: { color: COLORS.white, fontWeight: "700", fontSize: FONTS.sm },
 
+  // Section headers (Pinned / All groups)
+  sectionHeader: {
+    flexDirection: "row", alignItems: "center", gap: 5,
+    backgroundColor: COLORS.white,
+    paddingHorizontal: 16, paddingTop: 12, paddingBottom: 4,
+  },
+  sectionPin: { transform: [{ rotate: "45deg" }] },
+  sectionHeaderText: { fontSize: 11, fontWeight: "700", color: COLORS.textMuted, letterSpacing: 0.6 },
+
   // Open list rows (WhatsApp-style: no card, hairline divider inset past avatar)
   list: { flex: 1, backgroundColor: COLORS.white },
   row: {
@@ -584,7 +692,9 @@ const styles = StyleSheet.create({
   chipText:    { fontSize: 10, fontWeight: "700" },
   chipWelfare: { backgroundColor: COLORS.primaryPale },
   chipShares:  { backgroundColor: COLORS.accentPale },
-  cardRight:   { minWidth: 24, alignItems: "center", justifyContent: "center" },
+  cardRight:   { flexDirection: "row", alignItems: "center", gap: 5, alignSelf: "center" },
+  unseenDotRight: { width: 10, height: 10, borderRadius: 5, backgroundColor: COLORS.primary },
+  pinMark:     { transform: [{ rotate: "45deg" }] },
 
   unreadBadge: {
     minWidth: 20, height: 20, borderRadius: 10,

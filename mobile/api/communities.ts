@@ -23,6 +23,9 @@ export type Community = {
   is_muted: boolean;
   join_request_status: 'PENDING' | 'APPROVED' | 'REJECTED' | null;
   created_at: string;
+  // Most recent activity in the group (message, contribution, governance…).
+  // Used to sort by recency and flag unseen activity. Nullable for quiet groups.
+  last_activity: string | null;
   // Section A governance
   join_policy:             JoinPolicy;
   invite_permission:       InvitePermission;
