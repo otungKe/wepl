@@ -244,7 +244,7 @@ export default function CommunitiesScreen() {
         </View>
       ) : (
         <FlatList
-          style={{ flex: 1 }}
+          style={styles.list}
           data={filtered}
           keyExtractor={(i) => String(i.id)}
           renderItem={({ item }: { item: Community }) => {
@@ -254,56 +254,51 @@ export default function CommunitiesScreen() {
 
             return (
               <TouchableOpacity
-                style={styles.card}
+                style={styles.row}
                 onPress={() => router.push({ pathname: "/community/[id]", params: { id: String(item.id), name: item.name } })}
-                activeOpacity={0.75}
+                activeOpacity={0.6}
               >
-                {/* Category-colored identity stripe */}
-                <View style={[styles.cardAccent, { backgroundColor: palette.text }]} />
+                {/* Photo — circular */}
+                <View style={styles.cardPhotoWrap}>
+                  {item.community_photo ? (
+                    <Image source={{ uri: item.community_photo }} style={styles.cardPhoto} resizeMode="cover" />
+                  ) : (
+                    <View style={[styles.cardPhoto, styles.cardPhotoPlaceholder, { backgroundColor: palette.bg }]}>
+                      <Text style={[styles.cardPhotoInitials, { color: palette.text }]}>
+                        {initialsFor(item.name)}
+                      </Text>
+                    </View>
+                  )}
+                  {item.is_private && (
+                    <View style={styles.privateBadge}>
+                      <Ionicons name="lock-closed" size={9} color={COLORS.white} />
+                    </View>
+                  )}
+                </View>
 
-                <View style={styles.cardInner}>
-                  {/* Photo */}
-                  <View style={styles.cardPhotoWrap}>
-                    {item.community_photo ? (
-                      <Image source={{ uri: item.community_photo }} style={styles.cardPhoto} resizeMode="cover" />
-                    ) : (
-                      <View style={[styles.cardPhoto, styles.cardPhotoPlaceholder, { backgroundColor: palette.bg }]}>
-                        <Text style={[styles.cardPhotoInitials, { color: palette.text }]}>
-                          {initialsFor(item.name)}
-                        </Text>
-                      </View>
-                    )}
-                    {item.is_private && (
-                      <View style={styles.privateBadge}>
-                        <Ionicons name="lock-closed" size={9} color={COLORS.white} />
-                      </View>
-                    )}
+                {/* Content */}
+                <View style={styles.cardContent}>
+                  <Text style={[styles.cardName, hasUnread && styles.cardNameUnread]} numberOfLines={1}>
+                    {item.name}
+                  </Text>
+
+                  {/* Meta: members + location */}
+                  <View style={styles.metaRow}>
+                    <Ionicons name="people-outline" size={13} color={COLORS.textMuted} />
+                    <Text style={styles.metaText}>
+                      {item.member_count} {item.member_count === 1 ? "member" : "members"}
+                    </Text>
+                    {item.location ? (
+                      <>
+                        <View style={styles.metaSep} />
+                        <Ionicons name="location-outline" size={13} color={COLORS.textMuted} />
+                        <Text style={styles.metaText} numberOfLines={1}>{item.location}</Text>
+                      </>
+                    ) : null}
                   </View>
 
-                  {/* Content */}
-                  <View style={styles.cardContent}>
-                    <View style={styles.cardTitleRow}>
-                      <Text style={[styles.cardName, hasUnread && styles.cardNameUnread]} numberOfLines={1}>
-                        {item.name}
-                      </Text>
-                    </View>
-
-                    {/* Meta: members + location */}
-                    <View style={styles.metaRow}>
-                      <Ionicons name="people-outline" size={13} color={COLORS.textMuted} />
-                      <Text style={styles.metaText}>
-                        {item.member_count} {item.member_count === 1 ? "member" : "members"}
-                      </Text>
-                      {item.location ? (
-                        <>
-                          <View style={styles.metaSep} />
-                          <Ionicons name="location-outline" size={13} color={COLORS.textMuted} />
-                          <Text style={styles.metaText} numberOfLines={1}>{item.location}</Text>
-                        </>
-                      ) : null}
-                    </View>
-
-                    {/* Feature chips */}
+                  {/* Feature chips — rounded */}
+                  {(item.category || item.has_welfare_fund || item.has_shares_fund) ? (
                     <View style={styles.chipRow}>
                       {item.category ? (
                         <View style={[styles.chip, { backgroundColor: palette.bg }]}>
@@ -323,24 +318,23 @@ export default function CommunitiesScreen() {
                         </View>
                       ) : null}
                     </View>
-                  </View>
+                  ) : null}
+                </View>
 
-                  {/* Right: unread + chevron */}
-                  <View style={styles.cardRight}>
-                    {hasUnread ? (
-                      <View style={styles.unreadBadge}>
-                        <Text style={styles.unreadBadgeText}>{unreadCount > 9 ? "9+" : unreadCount}</Text>
-                      </View>
-                    ) : (
-                      <Ionicons name="chevron-forward" size={16} color={COLORS.textMuted} />
-                    )}
-                  </View>
+                {/* Right: unread */}
+                <View style={styles.cardRight}>
+                  {hasUnread ? (
+                    <View style={styles.unreadBadge}>
+                      <Text style={styles.unreadBadgeText}>{unreadCount > 9 ? "9+" : unreadCount}</Text>
+                    </View>
+                  ) : null}
                 </View>
               </TouchableOpacity>
             );
           }}
           refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={COLORS.primary} />}
-          contentContainerStyle={{ paddingHorizontal: 16, paddingTop: 6, paddingBottom: 96 }}
+          ItemSeparatorComponent={() => <View style={styles.rowDivider} />}
+          contentContainerStyle={{ paddingBottom: 96 }}
           showsVerticalScrollIndicator={false}
         />
       )}
@@ -556,38 +550,26 @@ const styles = StyleSheet.create({
   },
   emptyCtaText: { color: COLORS.white, fontWeight: "700", fontSize: FONTS.sm },
 
-  // Elevated community card
-  card: {
-    flexDirection: "row",
-    backgroundColor: COLORS.surface,
-    borderRadius: 16,
-    marginBottom: 10,
-    overflow: "hidden",
-    borderWidth: 1, borderColor: COLORS.divider,
-    shadowColor: "#0B231A",
-    shadowOpacity: 0.06,
-    shadowRadius: 8,
-    shadowOffset: { width: 0, height: 2 },
-    elevation: 2,
+  // Open list rows (WhatsApp-style: no card, hairline divider inset past avatar)
+  list: { flex: 1, backgroundColor: COLORS.white },
+  row: {
+    flexDirection: "row", alignItems: "center", gap: 12,
+    paddingVertical: 11, paddingHorizontal: 16,
+    backgroundColor: COLORS.white,
   },
-  cardAccent: { width: 4 },
-  cardInner: {
-    flex: 1, flexDirection: "row", alignItems: "center", gap: 12,
-    paddingVertical: 12, paddingHorizontal: 14,
-  },
+  rowDivider: { height: StyleSheet.hairlineWidth, backgroundColor: COLORS.divider, marginLeft: 80 },
   cardPhotoWrap: { position: "relative" },
-  cardPhoto:     { width: 52, height: 52, borderRadius: RADIUS.md },
+  cardPhoto:     { width: 52, height: 52, borderRadius: 26 },
   cardPhotoPlaceholder: { justifyContent: "center", alignItems: "center" },
   cardPhotoInitials:    { fontSize: 20, fontWeight: "700" },
   privateBadge: {
-    position: "absolute", bottom: -2, right: -2,
-    width: 16, height: 16, borderRadius: 8,
+    position: "absolute", bottom: -1, right: -1,
+    width: 17, height: 17, borderRadius: 8.5,
     backgroundColor: COLORS.textMuted,
     justifyContent: "center", alignItems: "center",
     borderWidth: 1.5, borderColor: COLORS.white,
   },
-  cardContent:  { flex: 1, gap: 5 },
-  cardTitleRow: { flexDirection: "row", alignItems: "center", gap: 6 },
+  cardContent:  { flex: 1, gap: 4 },
   cardName:     { fontSize: FONTS.md, fontWeight: "600", color: COLORS.text, flexShrink: 1 },
   cardNameUnread: { fontWeight: "800" },
   metaRow:  { flexDirection: "row", alignItems: "center", gap: 4 },
@@ -596,8 +578,8 @@ const styles = StyleSheet.create({
   chipRow:  { flexDirection: "row", alignItems: "center", gap: 6, flexWrap: "wrap" },
   chip: {
     flexDirection: "row", alignItems: "center", gap: 3,
-    paddingHorizontal: 7, paddingVertical: 2,
-    borderRadius: RADIUS.sm,
+    paddingHorizontal: 8, paddingVertical: 2,
+    borderRadius: RADIUS.full,
   },
   chipText:    { fontSize: 10, fontWeight: "700" },
   chipWelfare: { backgroundColor: COLORS.primaryPale },
