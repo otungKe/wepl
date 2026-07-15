@@ -349,6 +349,72 @@ export const auth = {
   kycSubmit:  (data: FormData) => api.post('/users/kyc/', data, { headers: { 'Content-Type': 'multipart/form-data' } }),
 }
 
+// ── Device sessions (ADR-0010: "where am I logged in") ────────
+export interface UserSession {
+  sid: string
+  device_label: string
+  ip_address: string | null
+  created_at: string
+  last_seen_at: string
+  is_current: boolean
+}
+
+export const sessionsApi = {
+  list:         async () => unwrap<UserSession>((await api.get('/users/sessions/')).data),
+  revoke:       (sid: string) => api.post(`/users/sessions/${sid}/revoke/`),
+  // Signs out every session except this device; returns how many were revoked.
+  revokeOthers: async (): Promise<number> =>
+    ((await api.post('/users/sessions/revoke-others/')).data?.revoked ?? 0) as number,
+}
+
+// ── Payment methods (payout rails: M-Pesa live; card/bank modelled) ──
+export type PaymentKind = 'mpesa' | 'card' | 'bank'
+
+export interface PaymentMethod {
+  id: number
+  kind: PaymentKind
+  kind_label: string
+  label: string
+  is_default: boolean
+  status: 'active' | 'unavailable'
+  display: string
+  mpesa_phone: string
+  card_brand: string
+  card_last4: string
+  card_exp: string
+  bank_name: string
+  bank_account_last4: string
+  created_at: string
+}
+
+export const paymentMethodsApi = {
+  list:       async () => unwrap<PaymentMethod>((await api.get('/users/payment-methods/')).data),
+  // Card/bank kinds return 501 (coming soon) by design — only M-Pesa is linkable.
+  linkMpesa:  (mpesa_phone: string, opts?: { label?: string; is_default?: boolean }) =>
+    api.post('/users/payment-methods/', { kind: 'mpesa', mpesa_phone, ...opts }),
+  setDefault: (id: number) => api.post(`/users/payment-methods/${id}/default/`),
+  remove:     (id: number) => api.delete(`/users/payment-methods/${id}/`),
+}
+
+// ── Privacy preferences + data export (data rights) ──────────
+export type Visibility = 'everyone' | 'members' | 'nobody'
+
+export interface PrivacyPreferences {
+  phone_visibility: Visibility
+  photo_visibility: Visibility
+  contribution_visibility: Visibility
+  discoverable: boolean
+  show_online_status: boolean
+}
+
+export const privacyApi = {
+  get:    async () => (await api.get('/users/privacy/')).data as PrivacyPreferences,
+  update: async (patch: Partial<PrivacyPreferences>) =>
+    (await api.patch('/users/privacy/', patch)).data as PrivacyPreferences,
+  // Full self-serve export of everything WEPL holds about the user.
+  exportData: async () => (await api.get('/users/data-export/')).data,
+}
+
 // ─────────────────────────────────────────────────────────────
 // Communities
 // ─────────────────────────────────────────────────────────────

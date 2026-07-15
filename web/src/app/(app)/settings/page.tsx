@@ -1,7 +1,8 @@
 'use client'
 import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { LogOut } from 'lucide-react'
+import Link from 'next/link'
+import { LogOut, KeyRound, MonitorSmartphone, CreditCard, Lock, ChevronRight, type LucideIcon } from 'lucide-react'
 import { notificationsApi, apiError } from '@/lib/api'
 import { useAuthStore } from '@/store/auth'
 import { PageHeader } from '@/components/app/PageHeader'
@@ -19,6 +20,13 @@ const ROWS: { key: keyof Prefs; label: string; desc: string }[] = [
   { key: 'communities',   label: 'Communities & chat', desc: 'Messages and member updates' },
   { key: 'advances',      label: 'Advances & welfare', desc: 'Loan and welfare claim updates' },
   { key: 'reminders',     label: 'Reminders',          desc: 'Scheduled contribution reminders' },
+]
+
+const ACCOUNT_LINKS: { href: string; label: string; desc: string; icon: LucideIcon }[] = [
+  { href: '/change-pin',      label: 'Change PIN',      desc: 'Update the PIN you use to sign in', icon: KeyRound },
+  { href: '/sessions',        label: 'Active devices',  desc: 'See and sign out other devices',   icon: MonitorSmartphone },
+  { href: '/payment-methods', label: 'Payment methods', desc: 'Manage where payouts are sent',     icon: CreditCard },
+  { href: '/privacy',         label: 'Privacy',         desc: 'Visibility controls and your data', icon: Lock },
 ]
 
 function Toggle({ on, onClick }: { on: boolean; onClick: () => void }) {
@@ -66,6 +74,22 @@ export default function SettingsPage() {
           ))}
         </div>
       ) : null}
+
+      <h2 className="mb-3 mt-8 font-semibold text-text">Account &amp; security</h2>
+      <div className="divide-y divide-divider overflow-hidden rounded-lg border border-border bg-surface">
+        {ACCOUNT_LINKS.map(({ href, label, desc, icon: Icon }) => (
+          <Link key={href} href={href} className="flex items-center gap-3 p-4 transition-colors hover:bg-divider/40">
+            <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
+              <Icon size={17} />
+            </div>
+            <div className="min-w-0 flex-1">
+              <p className="font-medium text-text">{label}</p>
+              <p className="text-sm text-text-muted">{desc}</p>
+            </div>
+            <ChevronRight size={18} className="shrink-0 text-text-muted" />
+          </Link>
+        ))}
+      </div>
 
       <h2 className="mb-3 mt-8 font-semibold text-text">Account</h2>
       <Button variant="danger" onClick={() => { logout(); router.replace('/') }}><LogOut size={16} /> Log out</Button>
