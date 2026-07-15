@@ -130,6 +130,14 @@ def ensure_program(*, fund, program_type: str) -> Program:
     community = getattr(fund, 'community', None)
     organization = (community.organization
                     if community is not None and community.organization_id else None)
+    # Provisioning a program is a capability-gated act: the operating org must
+    # hold the capability for this program type (ADR-0026 §4). Inert for the
+    # community archetype — its kernel bundle holds all program capabilities —
+    # and for personal/open pools (organization=None resolves to the kernel);
+    # load-bearing the moment an archetype with a narrower bundle exists. Lazy
+    # import keeps models import-cycle-free (capabilities imports this module).
+    from apps.organizations.capabilities import PROGRAM_CAPABILITY, require_capability
+    require_capability(organization, PROGRAM_CAPABILITY[program_type])
     program = Program.objects.create(
         name=getattr(fund, 'title', None) or getattr(fund, 'name', '') or '',
         program_type=program_type,

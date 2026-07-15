@@ -126,3 +126,84 @@ class ProgramSpineTests(TestCase):
         again = ensure_program(fund=contribution, program_type='contribution')
         self.assertNotEqual(again.id, first.id)
         self.assertEqual(again.name, "Idem Pool")
+
+
+class CapabilityLayerTests(TestCase):
+    """The org capability layer (ADR-0026 §4): a code-defined map where the
+    archetype selects a bundle and is a ceiling that cannot be exceeded. No DB —
+    pure map invariants plus the ensure_program checkpoint."""
+
+    def test_catalogue_partitions_into_kernel_and_regulated(self):
+        from apps.organizations import capabilities as cap
+        # Kernel and regulated are disjoint and together make the catalogue.
+        self.assertEqual(cap.KERNEL & cap.REGULATED, frozenset())
+        self.assertEqual(cap.KERNEL | cap.REGULATED, cap.CAPABILITIES)
+
+    def test_every_archetype_bundle_is_within_its_ceiling_and_the_catalogue(self):
+        """The core invariant: bundle ⊆ ceiling ⊆ CAPABILITIES for all archetypes."""
+        from apps.organizations import capabilities as cap
+        for archetype in cap._ARCHETYPE:
+            bundle, ceiling = cap.bundle_for(archetype), cap.ceiling_for(archetype)
+            self.assertLessEqual(bundle, ceiling, archetype)
+            self.assertLessEqual(ceiling, cap.CAPABILITIES, archetype)
+
+    def test_community_holds_the_kernel_and_no_regulated_capability(self):
+        from apps.organizations import capabilities as cap
+        community = Organization.Archetype.COMMUNITY
+        self.assertEqual(cap.bundle_for(community), cap.KERNEL)
+        # The ceiling forbids every regulated capability outright — a chama can
+        # never be granted deposit-taking, lending or clearing.
+        self.assertEqual(cap.ceiling_for(community) & cap.REGULATED, frozenset())
+
+    def test_no_organization_resolves_to_the_kernel(self):
+        from apps.organizations import capabilities as cap
+        # Personal/open pools (no org) keep every program capability, so
+        # standalone contributions stay allowed.
+        self.assertEqual(cap.capabilities_for(None), cap.KERNEL)
+        self.assertTrue(cap.has_capability(None, "program.contribution"))
+        self.assertFalse(cap.has_capability(None, "deposit.take"))
+
+    def test_has_capability_reads_the_bundle(self):
+        from apps.organizations import capabilities as cap
+        org = Organization(name="Chama", archetype=Organization.Archetype.COMMUNITY)
+        self.assertTrue(cap.has_capability(org, "program.welfare"))
+        self.assertFalse(cap.has_capability(org, "deposit.take"))
+
+    def test_require_capability_enforces_the_ceiling(self):
+        from apps.core.ids import uuid7
+        from apps.organizations import capabilities as cap
+        # An archetype outside the map (a stand-in for a future one whose bundle
+        # doesn't include this capability) holds nothing → the guard fires.
+        rogue = Organization(name="Not A Bank", archetype="bank", uid=uuid7())
+        with self.assertRaises(cap.CapabilityError):
+            cap.require_capability(rogue, "deposit.take")
+        # Community passes for a program capability (the inert, load-bearing path).
+        community = Organization(name="Chama", archetype=Organization.Archetype.COMMUNITY)
+        cap.require_capability(community, "program.shares")  # does not raise
+
+    def test_ensure_program_rejects_an_org_without_the_capability(self):
+        """The checkpoint is real: a fund whose operating org lacks the program
+        capability is refused at provisioning."""
+        from apps.core.ids import uuid7
+        from apps.organizations import capabilities as cap
+        from apps.organizations.models import ensure_program
+
+        rogue = Organization.objects.create(
+            name="Capless Org", archetype="bank", uid=uuid7())
+
+        class _Fund:              # duck-typed fund profile, no community link
+            program_id = None
+            program = None
+            name = "Blocked"
+            def __init__(self, org):
+                self._org = org
+            @property
+            def community(self):  # ensure_program reads .community.organization
+                return type("C", (), {"organization": self._org,
+                                      "organization_id": self._org.id,
+                                      "tenant_id": None})()
+            def save(self, **kw):  # pragma: no cover - never reached
+                pass
+
+        with self.assertRaises(cap.CapabilityError):
+            ensure_program(fund=_Fund(rogue), program_type="welfare")
