@@ -73,10 +73,12 @@ class OpsUser360View(OpsAPIView):
         return Response({
             "identity": self._identity(u),
             "account_status": RestrictionService.account_status(u),
+            "contact": self._contact(u),
             "verification": self._verification(u),
             "restrictions": self._restrictions(u),
             "communities": self._communities(u),
             "financial": self._financial(u),
+            "recent_activity": self._recent_activity(u),
             "sessions": self._sessions(u),
             "audit_trail": self._audit(u),
         })
@@ -100,6 +102,9 @@ class OpsUser360View(OpsAPIView):
 
     @staticmethod
     def _identity(u):
+        # Verified identity core comes from KYC (read-only here — corrections go
+        # through the KYC re-verification flow, not a casual profile edit).
+        kyc = getattr(u, "kyc", None)
         return {
             "id": u.pk, "member_number": u.member_number,
             "phone_number": u.phone_number, "name": u.name,
@@ -107,7 +112,45 @@ class OpsUser360View(OpsAPIView):
             "tier": 1 if u.is_tier1 else 0,
             "joined": u.date_joined.isoformat(),
             "last_seen": u.last_seen.isoformat() if u.last_seen else None,
+            "given_names": kyc.given_names if kyc else "",
+            "surname": kyc.surname if kyc else "",
+            "id_number": kyc.id_number if kyc else "",
+            "date_of_birth": kyc.date_of_birth.isoformat() if (kyc and kyc.date_of_birth) else None,
+            "kra_pin": kyc.kra_pin if kyc else "",
+            "nationality": "Kenyan" if kyc else "",
         }
+
+    @staticmethod
+    def _contact(u):
+        """Editable contact / profile attributes (see OpsUserContactView)."""
+        kyc = getattr(u, "kyc", None)
+        return {
+            "phone_number": u.phone_number,   # changed via the maker-checked flow
+            "email": kyc.email if kyc else "",
+            "email_verified": bool(kyc and kyc.email_verified),
+            "physical_address": kyc.physical_address if kyc else "",
+            "county": kyc.county if kyc else "",
+            "occupation": kyc.occupation if kyc else "",
+            "source_of_income": kyc.source_of_income if kyc else "",
+            "expected_monthly_income": kyc.expected_monthly_income if kyc else "",
+            "has_kyc": kyc is not None,
+        }
+
+    @staticmethod
+    def _recent_activity(u):
+        """The customer's recent money movements (ledger financial transactions),
+        newest first — a read composition, reusing the transactions row builder."""
+        from apps.controls.engine import classify_direction
+        from apps.ledger.models import FinancialTransaction as FT
+        from .views_transactions import _row, _SELECT
+        qs = (FT.objects.filter(initiated_by=u)
+              .select_related(*_SELECT).order_by("-created_at")[:15])
+        rows = []
+        for ft in qs:
+            r = _row(ft)
+            r["direction"] = classify_direction(ft.op_type)  # PAYIN | PAYOUT | None
+            rows.append(r)
+        return rows
 
     @staticmethod
     def _verification(u):
@@ -450,3 +493,73 @@ class OpsUserRestrictionLiftView(OpsAPIView):
                       request=request, target_type="user", target_id=int(user_id),
                       metadata={"kind": r.kind, "restriction_id": r.id})
         return Response({"id": r.id, "status": r.status})
+
+
+class OpsUserContactView(OpsAPIView):
+    """POST /api/ops/users/<id>/contact/ — correct a customer's contact / profile
+    attributes: email, physical address, county, occupation, source of income and
+    expected monthly income.
+
+    These are editable support data. The VERIFIED IDENTITY CORE (legal name, ID
+    number, date of birth, KRA PIN) is deliberately NOT editable here — those are
+    verified against ID documents, so changing them routes through the KYC
+    re-verification flow (apps/verification), never a casual profile edit. The
+    login/payout phone likewise changes only through the maker-checked flow.
+
+    Changing the email clears its verified flag (the new address is unverified).
+    Every change is audited with per-field before/after. users.manage."""
+    permission_classes = [RequireCapability("users.manage")]
+
+    EDITABLE       = ("email", "physical_address", "county", "occupation",
+                      "source_of_income", "expected_monthly_income")
+    CHOICE_FIELDS  = ("county", "source_of_income", "expected_monthly_income")
+
+    def post(self, request, user_id):
+        from django.core.validators import validate_email
+        from django.core.exceptions import ValidationError as DjangoVE
+
+        u = get_object_or_404(User, pk=user_id, is_staff=False)
+        kyc = getattr(u, "kyc", None)
+        if kyc is None:
+            return Response(
+                {"detail": "This customer has no KYC profile to amend yet."},
+                status=http.HTTP_409_CONFLICT)
+
+        changes = {}
+        for field in self.EDITABLE:
+            if field not in request.data:
+                continue
+            new = (request.data.get(field) or "").strip()
+            old = getattr(kyc, field) or ""
+            if new == old:
+                continue
+            # Validation
+            if field == "email" and new:
+                try:
+                    validate_email(new)
+                except DjangoVE:
+                    return Response({"detail": "Enter a valid email address."},
+                                    status=http.HTTP_400_BAD_REQUEST)
+            if field in self.CHOICE_FIELDS and new:
+                valid = {c[0] for c in kyc._meta.get_field(field).choices}
+                if new not in valid:
+                    return Response({"detail": f"Invalid value for {field}."},
+                                    status=http.HTTP_400_BAD_REQUEST)
+            changes[field] = {"before": old, "after": new}
+
+        if not changes:
+            return Response({"detail": "No changes to apply."},
+                            status=http.HTTP_400_BAD_REQUEST)
+
+        for field, ch in changes.items():
+            setattr(kyc, field, ch["after"])
+        update_fields = list(changes.keys())
+        if "email" in changes:
+            kyc.email_verified = False           # new address must be re-verified
+            update_fields.append("email_verified")
+        kyc.save(update_fields=update_fields)
+
+        record_action(action="ops.user.contact_update", actor=request.user,
+                      request=request, target_type="user", target_id=u.pk,
+                      metadata={"changes": changes})
+        return Response({"updated": list(changes.keys())})

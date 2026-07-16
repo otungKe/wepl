@@ -1621,3 +1621,101 @@ class AccountRestrictionTests(TestCase):
         self.assertEqual(r.data["account_status"], "restricted")
         kinds = [x["kind"] for x in r.data["restrictions"]]
         self.assertIn("payout", kinds)
+
+
+class CustomerInfoAndActivityTests(TestCase):
+    """Increment 2: customer info display (identity/contact), contact/address
+    amendment (with identity core protected), and the recent money-activity
+    feed on the 360."""
+
+    def setUp(self):
+        User = get_user_model()
+        self.member = User.objects.create_user(phone_number="254700000701")
+        self.member.name = "Amina Yusuf"
+        self.member.save(update_fields=["name"])
+        self.kyc = self._kyc(self.member)
+        self.ops = make_staff("ops-c@imbank.co.ke", "operations")   # users.manage
+        self.sup = make_staff("sup-c@imbank.co.ke", "support")      # users.view
+
+    def _kyc(self, u):
+        from apps.users.models import KYCProfile
+        from datetime import date
+        return KYCProfile.objects.create(
+            user=u, given_names="Amina", surname="Yusuf", id_number="12345678",
+            date_of_birth=date(1990, 5, 1), email="amina@example.com",
+            kra_pin="A012345678Z", county="Nairobi", physical_address="12 River Rd",
+            occupation="Trader", source_of_income="business",
+            expected_monthly_income="under_250k", status="approved", email_verified=True)
+
+    # ── Display ──────────────────────────────────────────────────────────────
+    def test_360_shows_identity_and_contact(self):
+        r = op_client(self.sup).get(f"/api/ops/users/{self.member.id}/")
+        self.assertEqual(r.status_code, 200)
+        idn = r.data["identity"]
+        self.assertEqual(idn["id_number"], "12345678")
+        self.assertEqual(idn["given_names"], "Amina")
+        self.assertEqual(idn["kra_pin"], "A012345678Z")
+        self.assertEqual(idn["nationality"], "Kenyan")
+        c = r.data["contact"]
+        self.assertEqual(c["email"], "amina@example.com")
+        self.assertEqual(c["physical_address"], "12 River Rd")
+        self.assertTrue(c["email_verified"])
+
+    # ── Amend contact / address ──────────────────────────────────────────────
+    def test_contact_update_audits_and_resets_email_verification(self):
+        r = op_client(self.ops).post(
+            f"/api/ops/users/{self.member.id}/contact/",
+            {"physical_address": "99 Moi Ave", "email": "new@example.com"},
+            format="json")
+        self.assertEqual(r.status_code, 200)
+        self.kyc.refresh_from_db()
+        self.assertEqual(self.kyc.physical_address, "99 Moi Ave")
+        self.assertEqual(self.kyc.email, "new@example.com")
+        self.assertFalse(self.kyc.email_verified)   # email change → re-verify
+        from apps.audit.models import AuditEvent
+        ev = AuditEvent.objects.filter(action="ops.user.contact_update").latest("created_at")
+        self.assertEqual(ev.metadata["changes"]["physical_address"]["before"], "12 River Rd")
+
+    def test_contact_update_rejects_bad_email_and_bad_choice(self):
+        bad_email = op_client(self.ops).post(
+            f"/api/ops/users/{self.member.id}/contact/",
+            {"email": "not-an-email"}, format="json")
+        self.assertEqual(bad_email.status_code, 400)
+        bad_county = op_client(self.ops).post(
+            f"/api/ops/users/{self.member.id}/contact/",
+            {"county": "Atlantis"}, format="json")
+        self.assertEqual(bad_county.status_code, 400)
+
+    def test_contact_update_cannot_touch_identity_core(self):
+        # id_number / given_names are not in the editable set → ignored, and with
+        # nothing else changing the request is a no-op 400.
+        r = op_client(self.ops).post(
+            f"/api/ops/users/{self.member.id}/contact/",
+            {"id_number": "99999999", "given_names": "Hacker"}, format="json")
+        self.assertEqual(r.status_code, 400)
+        self.kyc.refresh_from_db()
+        self.assertEqual(self.kyc.id_number, "12345678")
+        self.assertEqual(self.kyc.given_names, "Amina")
+
+    def test_support_cannot_amend_contact(self):
+        r = op_client(self.sup).post(
+            f"/api/ops/users/{self.member.id}/contact/",
+            {"occupation": "Farmer"}, format="json")
+        self.assertEqual(r.status_code, 403)
+
+    # ── Recent money activity ────────────────────────────────────────────────
+    def test_recent_activity_lists_money_movements_newest_first(self):
+        from apps.ledger.models import FinancialTransaction as FT
+        from decimal import Decimal
+        FT.objects.create(op_type=FT.OpType.CONTRIBUTION, amount=Decimal("500"),
+                          initiated_by=self.member, state=FT.State.SUCCESS,
+                          idempotency_key="ft-contrib-1")
+        FT.objects.create(op_type=FT.OpType.DISBURSEMENT, amount=Decimal("300"),
+                          initiated_by=self.member, state=FT.State.SUCCESS,
+                          idempotency_key="ft-disb-1")
+        r = op_client(self.sup).get(f"/api/ops/users/{self.member.id}/")
+        acts = r.data["recent_activity"]
+        self.assertEqual(len(acts), 2)
+        self.assertEqual(acts[0]["op_type"], "DISBURSEMENT")   # newest first
+        self.assertEqual(acts[0]["direction"], "PAYOUT")
+        self.assertEqual(acts[1]["direction"], "PAYIN")
