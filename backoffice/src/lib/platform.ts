@@ -94,7 +94,11 @@ export interface User360 {
     open_holds: number
     active_overrides: number
   }
-  sessions: { active: number; latest_device: string | null; latest_seen: string | null }
+  sessions: {
+    active: number
+    pin_locked: boolean
+    devices: { sid: string; device_label: string; ip_address: string | null; created: string; last_seen: string }[]
+  }
   audit_trail: { action: string; actor: string; metadata: Record<string, unknown>; at: string }[]
 }
 
@@ -105,6 +109,23 @@ export const opsUsers = {
   status: (id: number | string, action: 'deactivate' | 'reactivate', reason: string, stepUpToken: string) =>
     api.post<{ id: number; is_active: boolean }>(
       `/ops/users/${id}/status/`, { action, reason }, stepUpConfig(stepUpToken)),
+  // Session control (stolen-phone response) — step-up gated server-side.
+  revokeSession: (id: number | string, sid: string, reason: string, stepUpToken: string) =>
+    api.post<{ revoked: number }>(
+      `/ops/users/${id}/sessions/revoke/`, { sid, reason }, stepUpConfig(stepUpToken)),
+  revokeAllSessions: (id: number | string, reason: string, stepUpToken: string) =>
+    api.post<{ revoked: number }>(
+      `/ops/users/${id}/sessions/revoke/`, { all: true, reason }, stepUpConfig(stepUpToken)),
+  unlockPin: (id: number | string) =>
+    api.post<{ unlocked: boolean; was_locked: boolean }>(`/ops/users/${id}/unlock-pin/`),
+  correctName: (id: number | string, name: string) =>
+    api.post<{ id: number; name: string }>(`/ops/users/${id}/profile/`, { name }),
+  addNote: (id: number | string, note: string) =>
+    api.post<{ noted: boolean }>(`/ops/users/${id}/notes/`, { note }),
+  // Maker-checked: raises an approval; a second operator executes it.
+  requestPhoneChange: (id: number | string, newPhone: string, reason: string, stepUpToken: string) =>
+    api.post<{ approval_id: number; status: string }>(
+      `/ops/users/${id}/phone-change-request/`, { new_phone: newPhone, reason }, stepUpConfig(stepUpToken)),
 }
 
 /* ── Support desk (verification requests) ────────────────────────────── */

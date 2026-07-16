@@ -161,12 +161,20 @@ class OpsUser360View(OpsAPIView):
     @staticmethod
     def _sessions(u):
         from apps.users.models import UserSession
-        active = UserSession.objects.filter(user=u, revoked_at__isnull=True)
-        latest = active.order_by("-last_seen_at").first()
+        from apps.users.services import PINService
+        active = (UserSession.objects
+                  .filter(user=u, revoked_at__isnull=True)
+                  .order_by("-last_seen_at"))
         return {
             "active": active.count(),
-            "latest_device": latest.device_label if latest else None,
-            "latest_seen": latest.last_seen_at.isoformat() if latest else None,
+            "pin_locked": PINService.is_locked(u),
+            "devices": [{
+                "sid": str(s.sid),
+                "device_label": s.device_label,
+                "ip_address": s.ip_address,
+                "created": s.created_at.isoformat(),
+                "last_seen": s.last_seen_at.isoformat(),
+            } for s in active[:10]],
         }
 
     @staticmethod
@@ -216,3 +224,143 @@ class OpsUserStatusView(OpsAPIView):
             target_type="user", target_id=u.pk, metadata={"reason": reason},
         )
         return Response({"id": u.pk, "is_active": u.is_active})
+
+
+class OpsUserSessionsRevokeView(OpsAPIView):
+    """POST /api/ops/users/<id>/sessions/revoke/ {sid} | {all: true, reason}
+    — force sign-out of one device or every device (the stolen-phone response).
+    Kills token refresh immediately via the session registry (ADR-0010).
+    Touches account access → users.manage + fresh step-up."""
+    permission_classes = [RequireCapability("users.manage"), RequireStepUp]
+
+    def post(self, request, user_id):
+        from apps.users import sessions as session_svc
+        from apps.users.models import UserSession
+
+        u = get_object_or_404(User, pk=user_id, is_staff=False)
+        reason = (request.data.get("reason") or "").strip()
+
+        if request.data.get("all"):
+            count = session_svc.revoke_all_for_user(u)
+            record_action(action="ops.user.sessions_revoke_all", actor=request.user,
+                          request=request, target_type="user", target_id=u.pk,
+                          metadata={"revoked": count, "reason": reason})
+            return Response({"revoked": count})
+
+        sid = (request.data.get("sid") or "").strip()
+        if not sid:
+            return Response({"detail": "Provide a sid or all: true."},
+                            status=http.HTTP_400_BAD_REQUEST)
+        session = UserSession.objects.filter(
+            sid=sid, user=u, revoked_at__isnull=True).first()
+        if not session:
+            return Response({"detail": "Active session not found."},
+                            status=http.HTTP_404_NOT_FOUND)
+        session_svc.revoke(session)
+        record_action(action="ops.user.session_revoke", actor=request.user,
+                      request=request, target_type="user", target_id=u.pk,
+                      metadata={"sid": sid, "device": session.device_label,
+                                "reason": reason})
+        return Response({"revoked": 1, "sid": sid})
+
+
+class OpsUserUnlockPinView(OpsAPIView):
+    """POST /api/ops/users/<id>/unlock-pin/ — clear the member's PIN lockout
+    counters so they can try again (the "locked out at the market" support
+    call). Does NOT change or reveal the PIN."""
+    permission_classes = [RequireCapability("users.manage")]
+
+    def post(self, request, user_id):
+        from apps.users.services import PINService
+
+        u = get_object_or_404(User, pk=user_id, is_staff=False)
+        was_locked = PINService.is_locked(u)
+        PINService.clear_failures(u)
+        record_action(action="ops.user.unlock_pin", actor=request.user,
+                      request=request, target_type="user", target_id=u.pk,
+                      metadata={"was_locked": was_locked})
+        return Response({"unlocked": True, "was_locked": was_locked})
+
+
+class OpsUserProfileView(OpsAPIView):
+    """POST /api/ops/users/<id>/profile/ {name} — correct the display name (a
+    typo fix is routine support work; identity documents stay the KYC module's
+    job). Audited with before/after."""
+    permission_classes = [RequireCapability("users.manage")]
+
+    def post(self, request, user_id):
+        u = get_object_or_404(User, pk=user_id, is_staff=False)
+        name = (request.data.get("name") or "").strip()
+        if not name or len(name) > 150:
+            return Response({"detail": "Provide a name (max 150 chars)."},
+                            status=http.HTTP_400_BAD_REQUEST)
+        before = u.name
+        if name == before:
+            return Response({"id": u.pk, "name": u.name})
+        u.name = name
+        u.save(update_fields=["name"])
+        record_action(action="ops.user.profile_correct", actor=request.user,
+                      request=request, target_type="user", target_id=u.pk,
+                      metadata={"field": "name", "before": before, "after": name})
+        return Response({"id": u.pk, "name": u.name})
+
+
+class OpsUserNoteView(OpsAPIView):
+    """POST /api/ops/users/<id>/notes/ {note} — attach a support note to the
+    member. Notes are audit events (append-only, actor-stamped) so they show in
+    the 360 trail and the global audit browser with zero new storage."""
+    permission_classes = [RequireCapability("users.view")]
+
+    def post(self, request, user_id):
+        u = get_object_or_404(User, pk=user_id, is_staff=False)
+        note = (request.data.get("note") or "").strip()
+        if not note or len(note) > 2000:
+            return Response({"detail": "Provide a note (max 2000 chars)."},
+                            status=http.HTTP_400_BAD_REQUEST)
+        record_action(action="ops.user.note", actor=request.user, request=request,
+                      target_type="user", target_id=u.pk, metadata={"note": note})
+        return Response({"noted": True})
+
+
+class OpsUserPhoneChangeRequestView(OpsAPIView):
+    """POST /api/ops/users/<id>/phone-change-request/ {new_phone, reason}
+    — raise a maker-checker request to change the member's phone number.
+    The phone IS the login identity and the M-Pesa payout address, i.e. the
+    SIM-swap fraud vector — never single-handed (OP-3). A second operator
+    approves from the Approvals inbox; execution swaps the number and revokes
+    every session. users.manage + step-up to request."""
+    permission_classes = [RequireCapability("users.manage"), RequireStepUp]
+
+    def post(self, request, user_id):
+        from django.core.exceptions import ValidationError
+        from . import approvals
+        from .flagged_actions import ACTION_PHONE_CHANGE
+
+        u = get_object_or_404(User, pk=user_id, is_staff=False)
+        new_phone = (request.data.get("new_phone") or "").strip()
+        reason = (request.data.get("reason") or "").strip()
+
+        import re
+        if not re.fullmatch(r"\+?254(7|1)\d{8}", new_phone):
+            return Response({"detail": "new_phone must be a valid Kenyan number (2547XXXXXXXX)."},
+                            status=http.HTTP_400_BAD_REQUEST)
+        if User.objects.filter(phone_number=new_phone).exists():
+            return Response({"detail": "That phone number already belongs to an account."},
+                            status=http.HTTP_409_CONFLICT)
+
+        try:
+            appr = approvals.require_approval(
+                ACTION_PHONE_CHANGE,
+                params={"user_id": u.pk, "old_phone": u.phone_number,
+                        "new_phone": new_phone, "reason": reason},
+                actor=request.user, reason=reason, target_id=str(u.pk))
+        except ValidationError as exc:
+            detail = "; ".join(exc.messages) if hasattr(exc, "messages") else str(exc)
+            return Response({"detail": detail}, status=http.HTTP_409_CONFLICT)
+
+        record_action(action="ops.user.phone_change_requested", actor=request.user,
+                      request=request, target_type="user", target_id=u.pk,
+                      metadata={"new_phone": new_phone, "approval_id": appr.pk,
+                                "reason": reason})
+        return Response({"approval_id": appr.pk, "status": "pending_approval"},
+                        status=http.HTTP_202_ACCEPTED)

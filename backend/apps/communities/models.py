@@ -166,6 +166,11 @@ class CommunityMembership(models.Model):
     # When True, this member gets no *push* for this community's activity (the
     # in-app record is still kept). Per-community notification mute.
     notifications_muted = models.BooleanField(default=False)
+    # Per-member pinning: a member may pin a small number of communities to the
+    # top of their list. Stored on the membership so it syncs across the member's
+    # devices (was previously per-device only). pinned_at orders the pins.
+    is_pinned = models.BooleanField(default=False)
+    pinned_at = models.DateTimeField(null=True, blank=True)
 
     class Meta:
         unique_together = ("user", "community")

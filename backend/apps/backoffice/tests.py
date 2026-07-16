@@ -1352,3 +1352,143 @@ class HealthAndAlertingTests(TestCase):
         n.refresh_from_db()
         self.assertIsNotNone(n.dismissed_at)
         self.assertEqual(op_client(self.support).get("/api/ops/notices/").data["count"], 0)
+
+
+class UserManagementOpsTests(TestCase):
+    """End-to-end user-management module (P-UM): session control, PIN unlock,
+    profile correction, notes, and the maker-checked phone change."""
+
+    def setUp(self):
+        User = get_user_model()
+        self.member = User.objects.create_user(phone_number="254700000901")
+        self.member.name = "Grace Wanjiku"
+        self.member.save(update_fields=["name"])
+        self.ops = make_staff("ops@imbank.co.ke", "operations")       # users.manage
+        self.sup = make_staff("sup@imbank.co.ke", "support")          # users.view only
+        self.checker = make_staff("chk@imbank.co.ke", "operations", "compliance")
+
+    def _session(self, label="iPhone 13", **kw):
+        from apps.users.models import UserSession
+        return UserSession.objects.create(user=self.member, device_label=label, **kw)
+
+    # ── Sessions ────────────────────────────────────────────────────────────
+    def test_360_lists_devices_and_pin_lock_state(self):
+        self._session("iPhone 13")
+        self._session("Chrome on Windows")
+        r = op_client(self.sup).get(f"/api/ops/users/{self.member.id}/")
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(r.data["sessions"]["active"], 2)
+        self.assertFalse(r.data["sessions"]["pin_locked"])
+        self.assertEqual(len(r.data["sessions"]["devices"]), 2)
+        self.assertIn("sid", r.data["sessions"]["devices"][0])
+
+    def test_revoke_one_session_requires_stepup_and_audits(self):
+        s = self._session()
+        url = f"/api/ops/users/{self.member.id}/sessions/revoke/"
+        # No step-up → blocked.
+        r0 = op_client(self.ops).post(url, {"sid": str(s.sid)}, format="json")
+        self.assertEqual(r0.status_code, 403)
+        # With step-up → revoked.
+        r = op_client(self.ops).post(url, {"sid": str(s.sid), "reason": "stolen phone"},
+                                     format="json", **stepped_up(self.ops))
+        self.assertEqual(r.status_code, 200)
+        s.refresh_from_db()
+        self.assertIsNotNone(s.revoked_at)
+        from apps.audit.models import AuditEvent
+        self.assertTrue(AuditEvent.objects.filter(
+            action="ops.user.session_revoke", target_id=str(self.member.id)).exists())
+
+    def test_revoke_all_sessions(self):
+        self._session("A"); self._session("B"); self._session("C")
+        r = op_client(self.ops).post(
+            f"/api/ops/users/{self.member.id}/sessions/revoke/",
+            {"all": True, "reason": "account takeover suspected"},
+            format="json", **stepped_up(self.ops))
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(r.data["revoked"], 3)
+        from apps.users.models import UserSession
+        self.assertEqual(UserSession.objects.filter(
+            user=self.member, revoked_at__isnull=True).count(), 0)
+
+    def test_support_cannot_revoke_sessions(self):
+        s = self._session()
+        r = op_client(self.sup).post(
+            f"/api/ops/users/{self.member.id}/sessions/revoke/",
+            {"sid": str(s.sid)}, format="json", **stepped_up(self.sup))
+        self.assertEqual(r.status_code, 403)
+
+    # ── PIN unlock ──────────────────────────────────────────────────────────
+    def test_unlock_pin_clears_lockout(self):
+        from django.core.cache import cache
+        from apps.users.services import PINService
+        cache.set(PINService._lock_key(self.member.id), True, timeout=900)
+        self.assertTrue(PINService.is_locked(self.member))
+        r = op_client(self.ops).post(f"/api/ops/users/{self.member.id}/unlock-pin/")
+        self.assertEqual(r.status_code, 200)
+        self.assertTrue(r.data["was_locked"])
+        self.assertFalse(PINService.is_locked(self.member))
+
+    # ── Profile correction + notes ──────────────────────────────────────────
+    def test_profile_name_correction_audits_before_after(self):
+        r = op_client(self.ops).post(
+            f"/api/ops/users/{self.member.id}/profile/",
+            {"name": "Grace Wanjiku Njeri"}, format="json")
+        self.assertEqual(r.status_code, 200)
+        self.member.refresh_from_db()
+        self.assertEqual(self.member.name, "Grace Wanjiku Njeri")
+        from apps.audit.models import AuditEvent
+        ev = AuditEvent.objects.filter(action="ops.user.profile_correct").latest("created_at")
+        self.assertEqual(ev.metadata["before"], "Grace Wanjiku")
+        self.assertEqual(ev.metadata["after"], "Grace Wanjiku Njeri")
+
+    def test_note_lands_in_user_audit_trail(self):
+        r = op_client(self.sup).post(
+            f"/api/ops/users/{self.member.id}/notes/",
+            {"note": "Called about a delayed payout; resolved."}, format="json")
+        self.assertEqual(r.status_code, 200)
+        r360 = op_client(self.sup).get(f"/api/ops/users/{self.member.id}/")
+        actions = [e["action"] for e in r360.data["audit_trail"]]
+        self.assertIn("ops.user.note", actions)
+
+    # ── Maker-checked phone change ──────────────────────────────────────────
+    def test_phone_change_end_to_end(self):
+        self._session("Old device")
+        url = f"/api/ops/users/{self.member.id}/phone-change-request/"
+        # Invalid number rejected.
+        bad = op_client(self.ops).post(url, {"new_phone": "12345", "reason": "sim swap"},
+                                       format="json", **stepped_up(self.ops))
+        self.assertEqual(bad.status_code, 400)
+        # Valid request → pending approval, phone unchanged.
+        r = op_client(self.ops).post(url, {"new_phone": "254711000222", "reason": "verified in-branch"},
+                                     format="json", **stepped_up(self.ops))
+        self.assertEqual(r.status_code, 202)
+        appr_id = r.data["approval_id"]
+        self.member.refresh_from_db()
+        self.assertEqual(self.member.phone_number, "254700000901")
+        # Requester cannot self-approve.
+        self_ok = op_client(self.ops).post(
+            f"/api/ops/approvals/{appr_id}/decide/", {"decision": "approve"},
+            format="json", **stepped_up(self.ops))
+        self.assertIn(self_ok.status_code, (403, 409))
+        # A second operator approves → executes: phone swapped + sessions dead.
+        ok = op_client(self.checker).post(
+            f"/api/ops/approvals/{appr_id}/decide/", {"decision": "approve"},
+            format="json", **stepped_up(self.checker))
+        self.assertEqual(ok.status_code, 200, ok.data)
+        self.member.refresh_from_db()
+        self.assertEqual(self.member.phone_number, "254711000222")
+        from apps.users.models import UserSession
+        self.assertEqual(UserSession.objects.filter(
+            user=self.member, revoked_at__isnull=True).count(), 0)
+        from apps.audit.models import AuditEvent
+        self.assertTrue(AuditEvent.objects.filter(
+            action="user.phone_changed", target_id=str(self.member.id)).exists())
+
+    def test_phone_change_rejects_taken_number(self):
+        User = get_user_model()
+        User.objects.create_user(phone_number="254711000333")
+        r = op_client(self.ops).post(
+            f"/api/ops/users/{self.member.id}/phone-change-request/",
+            {"new_phone": "254711000333", "reason": "x"},
+            format="json", **stepped_up(self.ops))
+        self.assertEqual(r.status_code, 409)

@@ -21,8 +21,13 @@ export type Community = {
   member_count: number;
   is_member: boolean;
   is_muted: boolean;
+  is_pinned: boolean;
+  status: 'active' | 'frozen' | 'archived';
   join_request_status: 'PENDING' | 'APPROVED' | 'REJECTED' | null;
   created_at: string;
+  // Most recent activity in the group (message, contribution, governance…).
+  // Used to sort by recency and flag unseen activity. Nullable for quiet groups.
+  last_activity: string | null;
   // Section A governance
   join_policy:             JoinPolicy;
   invite_permission:       InvitePermission;
@@ -107,6 +112,21 @@ export const getCommunityMembers = async (id: number): Promise<CommunityMember[]
 
 export const deleteCommunity = async (id: number) => {
   await API.delete(`communities/${id}/delete/`);
+};
+
+/** Archive (owner's orderly freeze) or unarchive a community. Returns the
+ *  updated community. Archived groups stay readable but are frozen for new
+ *  money objects / conversations. */
+export const archiveCommunity = async (id: number, archived: boolean): Promise<Community> => {
+  const r = await API.post(`communities/${id}/${archived ? "archive" : "unarchive"}/`);
+  return r.data;
+};
+
+/** Pin (or unpin) this community to the top of the caller's list. Stored on the
+ *  membership so it syncs across the member's devices. Capped server-side at 3. */
+export const pinCommunity = async (id: number, pinned: boolean): Promise<{ pinned: boolean }> => {
+  const r = await API.post(`communities/${id}/pin/`, { pinned });
+  return r.data;
 };
 
 export const getCommunityByInviteCode = async (code: string): Promise<Community> => {

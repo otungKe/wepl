@@ -113,6 +113,7 @@ export interface Community {
   total_managed: string | null
   last_activity: string | null
   pending_count: number | null
+  is_pinned: boolean
 }
 
 export interface CommunityMember {
@@ -425,6 +426,7 @@ export const communities = {
     return (r.data.results ?? r.data) as Community[]
   },
   get:       (id: number | string) => api.get<Community>(`/communities/${id}/`),
+  pin:       (id: number | string, pinned: boolean) => api.post(`/communities/${id}/pin/`, { pinned }),
   create:    (data: Record<string, unknown>) => api.post<Community>('/communities/create/', data),
   update:    (id: number | string, data: Record<string, unknown>) => api.patch<Community>(`/communities/${id}/update/`, data),
   join:      (id: number | string) => api.post(`/communities/${id}/join/`),

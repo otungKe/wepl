@@ -54,25 +54,9 @@ const CATEGORY_TONE: Record<string, 'success' | 'info' | 'warning' | 'primary' |
 const catTone = (cat?: string) => CATEGORY_TONE[(cat ?? '').toLowerCase()] ?? 'neutral'
 const catLabel = (cat?: string) => (cat ? cat.charAt(0).toUpperCase() + cat.slice(1) : '')
 
-// Pinned communities are curated per-device in localStorage — there's no backend
-// pin flag yet, so this keeps the reference's "Pinned" section honest and useful
-// without fabricating data. (Backend sync is a natural follow-up.)
-const PIN_KEY = 'wepl.pinnedCommunities'
-
-function usePinnedCommunities() {
-  const [ids, setIds] = useState<number[]>([])
-  useEffect(() => {
-    try { setIds(JSON.parse(localStorage.getItem(PIN_KEY) || '[]')) } catch { /* ignore */ }
-  }, [])
-  const toggle = useCallback((id: number) => {
-    setIds(prev => {
-      const next = prev.includes(id) ? prev.filter(x => x !== id) : [id, ...prev]
-      try { localStorage.setItem(PIN_KEY, JSON.stringify(next)) } catch { /* ignore */ }
-      return next
-    })
-  }, [])
-  return { pinnedIds: ids, toggle }
-}
+// Pinning is server-backed (community.is_pinned) so it syncs across a member's
+// devices — including with the mobile app. Capped at 3 server-side.
+const MAX_PINS = 3
 
 // ─── main page ────────────────────────────────────────────────────────────────
 
@@ -85,8 +69,25 @@ export default function CommunitiesPage() {
   const [cat, setCat]             = useState('all')
   const [joinOpen, setJoinOpen]   = useState(false)
   const router = useRouter()
-  const { pinnedIds, toggle: togglePin } = usePinnedCommunities()
   const user = useAuthStore(s => s.user)
+
+  // Server-backed pin toggle with an optimistic flip (reverts on failure).
+  const togglePin = useCallback(async (id: number) => {
+    const c = items.find(x => x.id === id)
+    if (!c) return
+    const pinning = !c.is_pinned
+    if (pinning && items.filter(x => x.is_pinned).length >= MAX_PINS) {
+      toast.error(`You can pin up to ${MAX_PINS} groups. Unpin one first.`)
+      return
+    }
+    setItems(prev => prev.map(x => (x.id === id ? { ...x, is_pinned: pinning } : x)))
+    try {
+      await communities.pin(id, pinning)
+    } catch (e) {
+      setItems(prev => prev.map(x => (x.id === id ? { ...x, is_pinned: !pinning } : x)))
+      toast.error(apiError(e))
+    }
+  }, [items])
 
   useEffect(() => {
     Promise.all([
@@ -114,10 +115,11 @@ export default function CommunitiesPage() {
     return matchesQ && matchesCat
   })
 
-  // Split into Pinned (curated) and the rest, preserving pin order.
-  const pinnedSet = new Set(pinnedIds)
-  const pinned = pinnedIds.map(id => filtered.find(c => c.id === id)).filter(Boolean) as Community[]
-  const rest = filtered.filter(c => !pinnedSet.has(c.id))
+  // Split into Pinned (server-backed) and the rest; both keep the server's
+  // recency order (the list arrives sorted by last_activity).
+  const pinnedSet = new Set(filtered.filter(c => c.is_pinned).map(c => c.id))
+  const pinned = filtered.filter(c => c.is_pinned)
+  const rest = filtered.filter(c => !c.is_pinned)
 
   // Derived stats (all from real data — no fabricated deltas)
   const growthPct = summary && summary.last_month > 0

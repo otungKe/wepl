@@ -340,6 +340,40 @@ class CommunityMuteView(APIView):
         return Response({"muted": m.notifications_muted})
 
 
+class CommunityPinView(APIView):
+    """POST /communities/<id>/pin/ {pinned: bool} — pin/unpin this community to the
+    top of the requesting member's list. Stored on the membership so it syncs
+    across the member's devices. Capped at MAX_PINS pinned communities per member."""
+    permission_classes = [IsActiveSession]
+    MAX_PINS = 3
+
+    def post(self, request, community_id):
+        from django.utils import timezone
+
+        pinned = bool(request.data.get('pinned', True))
+        m = CommunityMembership.objects.filter(
+            community_id=community_id, user=request.user, is_active=True,
+        ).first()
+        if not m:
+            return Response({"error": "You are not a member of this community."},
+                            status=status.HTTP_404_NOT_FOUND)
+
+        if pinned and not m.is_pinned:
+            current = CommunityMembership.objects.filter(
+                user=request.user, is_active=True, is_pinned=True,
+            ).count()
+            if current >= self.MAX_PINS:
+                return Response(
+                    {"error": f"You can pin up to {self.MAX_PINS} groups. Unpin one first."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+        m.is_pinned = pinned
+        m.pinned_at = timezone.now() if pinned else None
+        m.save(update_fields=['is_pinned', 'pinned_at'])
+        return Response({"pinned": m.is_pinned})
+
+
 class CommunityMembersView(APIView):
     """
     GET /communities/<id>/members/
