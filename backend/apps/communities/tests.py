@@ -368,6 +368,61 @@ class CommunityMuteTests(TestCase):
         self.assertEqual(r.status_code, 404)
 
 
+class CommunityPinTests(TestCase):
+    """Per-member pinning: endpoint toggles the flag (synced on the membership),
+    the serializer reflects it, and a member may pin at most three."""
+
+    def setUp(self):
+        self.user = make_user("254700000651")
+
+    def _make(self, name):
+        return CommunityService.create_community(self.user, {"name": name})
+
+    def test_pin_toggles_flag_and_serializer(self):
+        c = self._make("Chama")
+        r = active_client(self.user).post(
+            f"/api/communities/{c.id}/pin/", {"pinned": True}, format="json")
+        self.assertEqual(r.status_code, 200)
+        self.assertTrue(r.json()["pinned"])
+        m = CommunityMembership.objects.get(user=self.user, community=c)
+        self.assertTrue(m.is_pinned)
+        self.assertIsNotNone(m.pinned_at)
+        # Serializer reflects it
+        detail = active_client(self.user).get(f"/api/communities/{c.id}/")
+        self.assertTrue(detail.json()["is_pinned"])
+        # Unpin clears the flag + timestamp
+        r2 = active_client(self.user).post(
+            f"/api/communities/{c.id}/pin/", {"pinned": False}, format="json")
+        self.assertFalse(r2.json()["pinned"])
+        m.refresh_from_db()
+        self.assertFalse(m.is_pinned)
+        self.assertIsNone(m.pinned_at)
+
+    def test_pin_is_capped_at_three(self):
+        comms = [self._make(f"C{i}") for i in range(4)]
+        for c in comms[:3]:
+            r = active_client(self.user).post(
+                f"/api/communities/{c.id}/pin/", {"pinned": True}, format="json")
+            self.assertEqual(r.status_code, 200)
+        # The fourth pin is rejected.
+        r4 = active_client(self.user).post(
+            f"/api/communities/{comms[3].id}/pin/", {"pinned": True}, format="json")
+        self.assertEqual(r4.status_code, 400)
+        self.assertFalse(CommunityMembership.objects.get(
+            user=self.user, community=comms[3]).is_pinned)
+        # Re-pinning an already-pinned one is idempotent (not blocked by the cap).
+        again = active_client(self.user).post(
+            f"/api/communities/{comms[0].id}/pin/", {"pinned": True}, format="json")
+        self.assertEqual(again.status_code, 200)
+
+    def test_non_member_cannot_pin(self):
+        c = self._make("Chama")
+        outsider = make_user("254700000652")
+        r = active_client(outsider).post(
+            f"/api/communities/{c.id}/pin/", {"pinned": True}, format="json")
+        self.assertEqual(r.status_code, 404)
+
+
 class Sprint1SafetyTests(TestCase):
     """Communities audit Sprint 1: safe delete (CR-1), lifecycle (CR-2),
     rejoin cooling-off clock (H-1), owner-departure rule (H-2)."""

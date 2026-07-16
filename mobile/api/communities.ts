@@ -21,6 +21,7 @@ export type Community = {
   member_count: number;
   is_member: boolean;
   is_muted: boolean;
+  is_pinned: boolean;
   status: 'active' | 'frozen' | 'archived';
   join_request_status: 'PENDING' | 'APPROVED' | 'REJECTED' | null;
   created_at: string;
@@ -118,6 +119,13 @@ export const deleteCommunity = async (id: number) => {
  *  money objects / conversations. */
 export const archiveCommunity = async (id: number, archived: boolean): Promise<Community> => {
   const r = await API.post(`communities/${id}/${archived ? "archive" : "unarchive"}/`);
+  return r.data;
+};
+
+/** Pin (or unpin) this community to the top of the caller's list. Stored on the
+ *  membership so it syncs across the member's devices. Capped server-side at 3. */
+export const pinCommunity = async (id: number, pinned: boolean): Promise<{ pinned: boolean }> => {
+  const r = await API.post(`communities/${id}/pin/`, { pinned });
   return r.data;
 };
 

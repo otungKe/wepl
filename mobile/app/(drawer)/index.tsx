@@ -11,7 +11,7 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import {
   getMyCommunities, getCommunityByInviteCode, requestToJoinCommunity,
   getMyJoinRequests, PendingRequest,
-  leaveCommunity, muteCommunity, deleteCommunity, archiveCommunity,
+  leaveCommunity, muteCommunity, deleteCommunity, archiveCommunity, pinCommunity,
   Community,
 } from "../../api/communities";
 import { getUnreadSummary, UnreadSummary } from "../../api/conversations";
@@ -26,11 +26,9 @@ import { useKYCGate } from "../../hooks/useKYCGate";
 type Sheet = null | "menu" | "join";
 type JoinStep = "input" | "loading" | "preview" | "requesting" | "success";
 
-// Pinning + "last seen" are curated per-device (no backend flag yet), mirroring
-// the web reference. Pins are capped; recency + unseen use the server's
-// last_activity timestamp compared against the last time this device opened the
-// group.
-const PIN_KEY  = "wepl.pinnedCommunities";
+// Pinning is server-backed (syncs across a member's devices) — see is_pinned on
+// the Community. "Last seen" stays per-device (whether *this* device has opened
+// the group), stored locally and compared against the server's last_activity.
 const SEEN_KEY = "wepl.communityLastSeen";
 const MAX_PINS = 3;
 
@@ -70,7 +68,6 @@ export default function CommunitiesScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [search, setSearch]     = useState("");
   const [cat, setCat]           = useState<string | null>(null);
-  const [pinnedIds, setPinnedIds] = useState<number[]>([]);
   const [lastSeen, setLastSeen]   = useState<Record<string, string>>({});
   const [myPhone, setMyPhone]     = useState("");
   const [actionTarget, setActionTarget] = useState<Community | null>(null);
@@ -98,15 +95,13 @@ export default function CommunitiesScreen() {
     } catch {}
   }, []);
 
-  // Load per-device pins + last-seen map (and my phone for owner-only actions).
+  // Load the per-device last-seen map (and my phone for owner-only actions).
   const loadLocal = useCallback(async () => {
     try {
-      const [p, s, phone] = await Promise.all([
-        AsyncStorage.getItem(PIN_KEY),
+      const [s, phone] = await Promise.all([
         AsyncStorage.getItem(SEEN_KEY),
         secureStorage.getItem("phone"),
       ]);
-      setPinnedIds(p ? JSON.parse(p) : []);
       setLastSeen(s ? JSON.parse(s) : {});
       if (phone) setMyPhone(phone);
     } catch {}
@@ -123,21 +118,21 @@ export default function CommunitiesScreen() {
     });
   }, []);
 
-  const togglePin = useCallback((id: number) => {
-    setPinnedIds((prev) => {
-      let next: number[];
-      if (prev.includes(id)) {
-        next = prev.filter((x) => x !== id);
-      } else if (prev.length >= MAX_PINS) {
-        Alert.alert("Pin limit reached", `You can pin up to ${MAX_PINS} groups. Unpin one first.`);
-        return prev;
-      } else {
-        next = [...prev, id];
-      }
-      AsyncStorage.setItem(PIN_KEY, JSON.stringify(next)).catch(() => {});
-      return next;
-    });
-  }, []);
+  const togglePin = useCallback(async (c: Community) => {
+    const pinning = !c.is_pinned;
+    if (pinning && communities.filter((x) => x.is_pinned).length >= MAX_PINS) {
+      Alert.alert("Pin limit reached", `You can pin up to ${MAX_PINS} groups. Unpin one first.`);
+      return;
+    }
+    // Optimistic flip on the server-backed flag; revert if the call fails.
+    setCommunities((prev) => prev.map((x) => (x.id === c.id ? { ...x, is_pinned: pinning } : x)));
+    try {
+      await pinCommunity(c.id, pinning);
+    } catch (e: any) {
+      setCommunities((prev) => prev.map((x) => (x.id === c.id ? { ...x, is_pinned: !pinning } : x)));
+      Alert.alert("Couldn't update", e?.response?.data?.error ?? "Try again.");
+    }
+  }, [communities]);
 
   // Mark a group seen "now" as the user opens it, so its unseen flag clears.
   const markSeen = useCallback((id: number) => {
@@ -166,7 +161,7 @@ export default function CommunitiesScreen() {
   // ── Row action-sheet handlers ────────────────────────────────────────────────
   const closeActions = () => setActionTarget(null);
 
-  const onPin = (c: Community) => { togglePin(c.id); closeActions(); };
+  const onPin = (c: Community) => { togglePin(c); closeActions(); };
   const onMarkRead = (c: Community) => { markSeen(c.id); closeActions(); };
 
   const onMute = async (c: Community) => {
@@ -225,19 +220,18 @@ export default function CommunitiesScreen() {
   const archivedList = filtered.filter((c) => c.status === "archived");
   const activeList   = filtered.filter((c) => c.status !== "archived");
 
-  // Pinned (capped, in pin order) float to the top; the rest sort by most recent
-  // activity. Both derive from the active set so search/category still apply.
-  const pinnedSet  = new Set(pinnedIds);
-  const pinnedList = pinnedIds
-    .map((id) => activeList.find((c) => c.id === id))
-    .filter(Boolean) as Community[];
-  const restList = activeList
-    .filter((c) => !pinnedSet.has(c.id))
-    .sort((a, b) => {
-      const ta = a.last_activity ? new Date(a.last_activity).getTime() : 0;
-      const tb = b.last_activity ? new Date(b.last_activity).getTime() : 0;
-      return tb - ta; // most recent first; quiet groups (no activity) sink
-    });
+  // Pinned (server-backed, synced across devices) float to the top; the rest
+  // sort by most recent activity. Both derive from the active set so
+  // search/category still apply. Pinned groups also sort by recency among
+  // themselves.
+  const byRecency = (a: Community, b: Community) => {
+    const ta = a.last_activity ? new Date(a.last_activity).getTime() : 0;
+    const tb = b.last_activity ? new Date(b.last_activity).getTime() : 0;
+    return tb - ta; // most recent first; quiet groups (no activity) sink
+  };
+  const pinnedSet  = new Set(activeList.filter((c) => c.is_pinned).map((c) => c.id));
+  const pinnedList = activeList.filter((c) => c.is_pinned).sort(byRecency);
+  const restList   = activeList.filter((c) => !c.is_pinned).sort(byRecency);
 
   const sections: { title: string; data: Community[] }[] = [];
   if (pinnedList.length) sections.push({ title: "Pinned", data: pinnedList });
@@ -649,7 +643,7 @@ export default function CommunitiesScreen() {
                     <Ionicons name="checkmark-circle" size={56} color={COLORS.success} />
                     <Text style={styles.successTitle}>Request Sent!</Text>
                     <Text style={styles.successSub}>
-                      The group admin will review your request and you'll be notified once approved.
+                      The group admin will review your request and you&apos;ll be notified once approved.
                     </Text>
                     <TouchableOpacity style={styles.doneBtn} onPress={closeSheet}>
                       <Text style={styles.doneBtnText}>Done</Text>
