@@ -69,14 +69,34 @@ class OpsUser360View(OpsAPIView):
 
     def get(self, request, user_id):
         u = get_object_or_404(User, pk=user_id, is_staff=False)
+        from apps.users.services import RestrictionService
         return Response({
             "identity": self._identity(u),
+            "account_status": RestrictionService.account_status(u),
             "verification": self._verification(u),
+            "restrictions": self._restrictions(u),
             "communities": self._communities(u),
             "financial": self._financial(u),
             "sessions": self._sessions(u),
             "audit_trail": self._audit(u),
         })
+
+    @staticmethod
+    def _restrictions(u):
+        """Active restrictions first, then recent lifted/expired history."""
+        from apps.users.models import UserRestriction
+        rows = (UserRestriction.objects.filter(user=u)
+                .order_by("-created_at")[:30])
+        return [{
+            "id": r.id, "kind": r.kind, "kind_label": r.get_kind_display(),
+            "status": r.status, "is_effective": r.is_effective,
+            "reason": r.reason,
+            "effective_at": r.effective_at.isoformat(),
+            "expires_at": r.expires_at.isoformat() if r.expires_at else None,
+            "applied_by": r.applied_by_label,
+            "lifted_at": r.lifted_at.isoformat() if r.lifted_at else None,
+            "lifted_by": r.lifted_by_label,
+        } for r in rows]
 
     @staticmethod
     def _identity(u):
@@ -364,3 +384,69 @@ class OpsUserPhoneChangeRequestView(OpsAPIView):
                                 "reason": reason})
         return Response({"approval_id": appr.pk, "status": "pending_approval"},
                         status=http.HTTP_202_ACCEPTED)
+
+
+class OpsUserRestrictionApplyView(OpsAPIView):
+    """POST /api/ops/users/<id>/restrictions/ {kind, reason, expires_at?}
+    — place an account restriction. Each kind is enforced at a real chokepoint
+    (login / the money control gate). Touches account + money access →
+    users.manage + fresh step-up; a reason is mandatory; every apply is audited."""
+    permission_classes = [RequireCapability("users.manage"), RequireStepUp]
+
+    def post(self, request, user_id):
+        from django.core.exceptions import ValidationError
+        from django.utils.dateparse import parse_datetime
+        from apps.users.services import RestrictionService
+
+        u = get_object_or_404(User, pk=user_id, is_staff=False)
+        kind = (request.data.get("kind") or "").strip()
+        reason = (request.data.get("reason") or "").strip()
+
+        expires_at = None
+        raw_exp = request.data.get("expires_at")
+        if raw_exp:
+            expires_at = parse_datetime(raw_exp)
+            if expires_at is None:
+                return Response({"detail": "expires_at must be an ISO-8601 datetime."},
+                                status=http.HTTP_400_BAD_REQUEST)
+
+        try:
+            r = RestrictionService.apply(
+                u, kind, reason=reason, expires_at=expires_at,
+                actor_label=f"ops:{request.user.email}")
+        except ValidationError as exc:
+            detail = "; ".join(exc.messages) if hasattr(exc, "messages") else str(exc)
+            return Response({"detail": detail}, status=http.HTTP_400_BAD_REQUEST)
+
+        record_action(action="ops.user.restrict", actor=request.user, request=request,
+                      target_type="user", target_id=u.pk,
+                      metadata={"kind": kind, "reason": reason,
+                                "expires_at": r.expires_at.isoformat() if r.expires_at else None,
+                                "restriction_id": r.id})
+        return Response({"id": r.id, "kind": r.kind, "status": r.status},
+                        status=http.HTTP_201_CREATED)
+
+
+class OpsUserRestrictionLiftView(OpsAPIView):
+    """POST /api/ops/users/<id>/restrictions/<rid>/lift/ {reason?}
+    — lift an active restriction. users.manage + step-up; audited."""
+    permission_classes = [RequireCapability("users.manage"), RequireStepUp]
+
+    def post(self, request, user_id, restriction_id):
+        from django.core.exceptions import ValidationError
+        from apps.users.models import UserRestriction
+        from apps.users.services import RestrictionService
+
+        r = get_object_or_404(UserRestriction, pk=restriction_id, user_id=user_id)
+        try:
+            RestrictionService.lift(
+                r, reason=(request.data.get("reason") or "").strip(),
+                actor_label=f"ops:{request.user.email}")
+        except ValidationError as exc:
+            detail = "; ".join(exc.messages) if hasattr(exc, "messages") else str(exc)
+            return Response({"detail": detail}, status=http.HTTP_409_CONFLICT)
+
+        record_action(action="ops.user.restriction_lift", actor=request.user,
+                      request=request, target_type="user", target_id=int(user_id),
+                      metadata={"kind": r.kind, "restriction_id": r.id})
+        return Response({"id": r.id, "status": r.status})

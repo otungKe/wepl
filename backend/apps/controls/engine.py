@@ -185,6 +185,25 @@ def enforce_controls(*, financial_transaction, amount) -> ControlDecision | None
     if direction is None:
         return None
 
+    # Account-level restriction (ops-applied freeze / payout / payin block,
+    # Application User Management). A hard DENY at the same chokepoint as limit
+    # rules, so no money path can bypass it. Precedes rule evaluation — a frozen
+    # account is stopped regardless of limits.
+    from apps.users.services import RestrictionService
+    restriction = RestrictionService.blocks_money(
+        financial_transaction.initiated_by_id, direction)
+    if restriction is not None:
+        raise LimitExceeded(
+            f"Account restriction in force: {restriction.get_kind_display()}.",
+            context={
+                "decision": ControlDecision.Outcome.DENY,
+                "op_type": op_type, "direction": direction, "amount": str(amount),
+                "subject_user_id": financial_transaction.initiated_by_id,
+                "reason": f"account_restriction:{restriction.kind}",
+                "restriction_id": restriction.id,
+            },
+        )
+
     decision = evaluate(
         subject_user_id=financial_transaction.initiated_by_id,
         op_type=op_type, direction=direction, amount=amount,

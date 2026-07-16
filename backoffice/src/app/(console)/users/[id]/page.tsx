@@ -4,9 +4,9 @@ import Link from 'next/link'
 import { useParams, useRouter } from 'next/navigation'
 import {
   Loader2, ArrowLeft, ShieldCheck, UserX, UserCheck, Download,
-  MonitorSmartphone, LogOut, KeyRound, Pencil, StickyNote, PhoneCall,
+  MonitorSmartphone, LogOut, KeyRound, Pencil, StickyNote, PhoneCall, Ban, ShieldOff,
 } from 'lucide-react'
-import { opsUsers, type User360 } from '@/lib/platform'
+import { opsUsers, RESTRICTION_KINDS, type User360 } from '@/lib/platform'
 import { downloadCsv } from '@/lib/ops'
 import { staffFirstName } from '@/lib/staff'
 import { useCan } from '@/store/ops'
@@ -95,6 +95,28 @@ export default function User360Page() {
     }, 'Phone change requested — pending a second operator in Approvals.')
   }
 
+  const [restKind, setRestKind] = useState('freeze')
+  const [restReason, setRestReason] = useState('')
+  const [restExpiry, setRestExpiry] = useState('')
+
+  const applyRestriction = async () => {
+    if (!restReason.trim()) return
+    let token: string
+    try { token = await stepUp.request() } catch { return }
+    await run(async () => {
+      await opsUsers.applyRestriction(id, restKind, restReason.trim(),
+        restExpiry ? new Date(restExpiry).toISOString() : null, token)
+      setRestReason(''); setRestExpiry('')
+    }, 'Restriction applied.')
+  }
+
+  const liftRestriction = async (rid: number) => {
+    if (!window.confirm('Lift this restriction?')) return
+    let token: string
+    try { token = await stepUp.request() } catch { return }
+    await run(() => opsUsers.liftRestriction(id, rid, '', token), 'Restriction lifted.')
+  }
+
   if (status === 'loading') return <div className="flex justify-center py-20"><Loader2 className="h-6 w-6 animate-spin text-slate-400" /></div>
   if (status === 'error' || !data) return <p className="py-20 text-center text-sm text-slate-500">Couldn&apos;t load this member.</p>
 
@@ -110,9 +132,7 @@ export default function User360Page() {
 
       <div className="mb-1 flex flex-wrap items-center gap-3">
         <h1 className="text-xl font-semibold">{i.name || i.phone_number}</h1>
-        {i.is_active
-          ? <span className="rounded-full bg-emerald-100 px-2.5 py-0.5 text-xs font-semibold text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-400">active</span>
-          : <span className="rounded-full bg-red-100 px-2.5 py-0.5 text-xs font-semibold text-red-700 dark:bg-red-500/10 dark:text-red-400">deactivated</span>}
+        <StatusPill status={data.account_status} />
         <span className="rounded bg-slate-100 px-1.5 py-0.5 font-mono text-[11px] text-slate-500 dark:bg-slate-800">Tier {i.tier}</span>
       </div>
       <div className="mb-5 flex flex-wrap gap-x-5 gap-y-1 text-xs text-slate-400">
@@ -269,6 +289,55 @@ export default function User360Page() {
             )}
           </Card>
 
+          <Card title="Restrictions">
+            {data.restrictions.filter((r) => r.is_effective).length === 0
+              ? <p className="text-sm text-slate-400">No active restrictions.</p>
+              : (
+                <div className="space-y-1.5">
+                  {data.restrictions.filter((r) => r.is_effective).map((r) => (
+                    <div key={r.id} className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 dark:border-amber-500/30 dark:bg-amber-500/10">
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="flex items-center gap-1.5 text-xs font-semibold text-amber-700 dark:text-amber-400">
+                          <ShieldOff className="h-3.5 w-3.5" /> {r.kind_label}
+                        </span>
+                        {canManage && (
+                          <button disabled={busy} onClick={() => liftRestriction(r.id)}
+                            className="text-[11px] font-semibold text-slate-500 hover:text-emerald-600 disabled:opacity-50">
+                            Lift
+                          </button>
+                        )}
+                      </div>
+                      <p className="mt-0.5 text-[11px] text-slate-500 dark:text-slate-400">{r.reason}</p>
+                      <p className="text-[10px] text-slate-400">
+                        by {r.applied_by ? staffFirstName(r.applied_by.replace('ops:', '')) : 'ops'}
+                        {r.expires_at ? ` · until ${new Date(r.expires_at).toLocaleDateString()}` : ' · no expiry'}
+                      </p>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+            {canManage && (
+              <div className="mt-3 space-y-2 border-t border-slate-100 pt-3 dark:border-slate-800">
+                <select value={restKind} onChange={(e) => setRestKind(e.target.value)}
+                  className="w-full rounded-md border border-slate-200 px-2 py-1.5 text-sm outline-none dark:border-slate-700 dark:bg-slate-900">
+                  {RESTRICTION_KINDS.map((k) => <option key={k.value} value={k.value}>{k.label}</option>)}
+                </select>
+                <input value={restReason} onChange={(e) => setRestReason(e.target.value)} placeholder="Reason (required)"
+                  className="w-full rounded-md border border-slate-200 px-2 py-1.5 text-sm outline-none placeholder:text-slate-400 dark:border-slate-700" />
+                <label className="flex items-center gap-2 text-[11px] text-slate-500">
+                  Expires (optional)
+                  <input type="date" value={restExpiry} onChange={(e) => setRestExpiry(e.target.value)}
+                    className="flex-1 rounded-md border border-slate-200 px-2 py-1 text-xs outline-none dark:border-slate-700 dark:bg-slate-900" />
+                </label>
+                <button disabled={busy || !restReason.trim()} onClick={applyRestriction}
+                  className="flex w-full items-center justify-center gap-1.5 rounded-lg bg-amber-600 py-2 text-xs font-semibold text-white hover:bg-amber-500 disabled:opacity-50">
+                  <Ban className="h-3.5 w-3.5" /> Apply restriction
+                </button>
+              </div>
+            )}
+          </Card>
+
           {canManage && (
             <Card title="Support actions">
               <div className="space-y-3">
@@ -345,6 +414,17 @@ export default function User360Page() {
       </div>
     </div>
   )
+}
+
+function StatusPill({ status }: { status: string }) {
+  const map: Record<string, string> = {
+    active:    'bg-emerald-100 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-400',
+    restricted:'bg-amber-100 text-amber-700 dark:bg-amber-500/10 dark:text-amber-400',
+    suspended: 'bg-red-100 text-red-700 dark:bg-red-500/10 dark:text-red-400',
+    dormant:   'bg-slate-200 text-slate-600 dark:bg-slate-700 dark:text-slate-300',
+    closed:    'bg-red-100 text-red-700 dark:bg-red-500/10 dark:text-red-400',
+  }
+  return <span className={`rounded-full px-2.5 py-0.5 text-xs font-semibold ${map[status] || map.dormant}`}>{status}</span>
 }
 
 function Card({ title, children }: { title: string; children: React.ReactNode }) {

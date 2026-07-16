@@ -222,6 +222,18 @@ class PINLoginView(APIView):
 
         # Successful login — clear any previous failures
         PINService.clear_failures(user)
+
+        # Account-level login restriction (ops-applied, Application User Mgmt).
+        # Checked AFTER the PIN so it is not a user-enumeration oracle — only the
+        # account owner ever learns it is suspended.
+        from ..services import RestrictionService
+        if RestrictionService.blocks_login(user):
+            logger.warning("Login blocked by account restriction for %s", phone)
+            return Response(
+                {"error": "This account is suspended. Please contact support."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
         logger.info("PIN login successful for %s", phone)
 
         return Response({
