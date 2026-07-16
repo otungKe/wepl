@@ -71,3 +71,17 @@ def _send_via_brevo_api(api_key, from_email, to_email, subject, body):
         timeout=15,
     )
     resp.raise_for_status()
+
+
+@shared_task(queue='default')
+def expire_restrictions():
+    """Sweep account restrictions past their expiry into the EXPIRED state.
+
+    Reads already treat a past-expiry restriction as inactive, so enforcement is
+    correct without this; the sweep keeps the stored state honest (and fires the
+    lifecycle transition) for the ops directory. Runs hourly via Celery Beat."""
+    from apps.users.services import RestrictionService
+    n = RestrictionService.expire_due()
+    if n:
+        logger.info("expire_restrictions: %d restriction(s) expired.", n)
+    return {"expired": n}

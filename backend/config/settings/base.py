@@ -318,6 +318,11 @@ CELERY_BEAT_SCHEDULE = {
         'task': 'apps.reminders.tasks.fire_due_reminders',
         'schedule': crontab(minute='*/30'),
     },
+    # Sweep expired account restrictions into the EXPIRED state — hourly
+    'expire-account-restrictions': {
+        'task': 'apps.users.tasks.expire_restrictions',
+        'schedule': crontab(minute=20),
+    },
     # Notify borrowers with overdue emergency advances — runs daily at 9am EAT
     'notify-overdue-advances': {
         'task': 'apps.contributions.tasks.notify_overdue_advances',

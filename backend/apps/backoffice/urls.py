@@ -27,6 +27,7 @@ from .views_users import (
     OpsUser360View, OpsUsersListView, OpsUserStatusView,
     OpsUserSessionsRevokeView, OpsUserUnlockPinView,
     OpsUserProfileView, OpsUserNoteView, OpsUserPhoneChangeRequestView,
+    OpsUserRestrictionApplyView, OpsUserRestrictionLiftView,
 )
 from .views_verification import (
     EddCaseView, EddDecisionView, EddQueueView,
@@ -55,6 +56,8 @@ urlpatterns = [
     path("users/<int:user_id>/profile/", OpsUserProfileView.as_view()),
     path("users/<int:user_id>/notes/", OpsUserNoteView.as_view()),
     path("users/<int:user_id>/phone-change-request/", OpsUserPhoneChangeRequestView.as_view()),
+    path("users/<int:user_id>/restrictions/", OpsUserRestrictionApplyView.as_view()),
+    path("users/<int:user_id>/restrictions/<int:restriction_id>/lift/", OpsUserRestrictionLiftView.as_view()),
     path("support/requests/", SupportRequestsView.as_view()),
     path("support/requests/<int:request_id>/", SupportRequestDetailView.as_view()),
     path("support/requests/<int:request_id>/resolve/", SupportRequestResolveView.as_view()),

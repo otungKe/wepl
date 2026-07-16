@@ -77,8 +77,24 @@ export interface UserRow {
   last_seen: string | null
 }
 
+export interface Restriction {
+  id: number
+  kind: string
+  kind_label: string
+  status: 'active' | 'lifted' | 'expired'
+  is_effective: boolean
+  reason: string
+  effective_at: string
+  expires_at: string | null
+  applied_by: string
+  lifted_at: string | null
+  lifted_by: string
+}
+
 export interface User360 {
   identity: UserRow & { last_seen: string | null }
+  account_status: 'active' | 'restricted' | 'suspended' | 'dormant' | 'closed'
+  restrictions: Restriction[]
   verification: {
     kyc_status: string
     email_verified?: boolean
@@ -126,7 +142,23 @@ export const opsUsers = {
   requestPhoneChange: (id: number | string, newPhone: string, reason: string, stepUpToken: string) =>
     api.post<{ approval_id: number; status: string }>(
       `/ops/users/${id}/phone-change-request/`, { new_phone: newPhone, reason }, stepUpConfig(stepUpToken)),
+  // Account restrictions (enforced at login / the money chokepoint) — step-up gated.
+  applyRestriction: (id: number | string, kind: string, reason: string, expiresAt: string | null, stepUpToken: string) =>
+    api.post<{ id: number; kind: string; status: string }>(
+      `/ops/users/${id}/restrictions/`, { kind, reason, expires_at: expiresAt || undefined }, stepUpConfig(stepUpToken)),
+  liftRestriction: (id: number | string, restrictionId: number, reason: string, stepUpToken: string) =>
+    api.post<{ id: number; status: string }>(
+      `/ops/users/${id}/restrictions/${restrictionId}/lift/`, { reason }, stepUpConfig(stepUpToken)),
 }
+
+export const RESTRICTION_KINDS: { value: string; label: string }[] = [
+  { value: 'login', label: 'Suspend login' },
+  { value: 'freeze', label: 'Freeze all money movement' },
+  { value: 'payout', label: 'Block money out' },
+  { value: 'payin', label: 'Block money in' },
+  { value: 'community_create', label: 'Restrict community creation' },
+  { value: 'community_admin', label: 'Restrict community administration' },
+]
 
 /* ── Support desk (verification requests) ────────────────────────────── */
 
