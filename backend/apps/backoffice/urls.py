@@ -23,7 +23,11 @@ from .views_support import (
     SupportRequestDetailView, SupportRequestResolveView, SupportRequestsView,
 )
 from .views_transactions import Transaction360View, TransactionsListView
-from .views_users import OpsUser360View, OpsUsersListView, OpsUserStatusView
+from .views_users import (
+    OpsUser360View, OpsUsersListView, OpsUserStatusView,
+    OpsUserSessionsRevokeView, OpsUserUnlockPinView,
+    OpsUserProfileView, OpsUserNoteView, OpsUserPhoneChangeRequestView,
+)
 from .views_verification import (
     EddCaseView, EddDecisionView, EddQueueView,
     VerificationAssignView, VerificationCaseView, VerificationDecisionView,
@@ -46,6 +50,11 @@ urlpatterns = [
     path("users/", OpsUsersListView.as_view()),
     path("users/<int:user_id>/", OpsUser360View.as_view()),
     path("users/<int:user_id>/status/", OpsUserStatusView.as_view()),
+    path("users/<int:user_id>/sessions/revoke/", OpsUserSessionsRevokeView.as_view()),
+    path("users/<int:user_id>/unlock-pin/", OpsUserUnlockPinView.as_view()),
+    path("users/<int:user_id>/profile/", OpsUserProfileView.as_view()),
+    path("users/<int:user_id>/notes/", OpsUserNoteView.as_view()),
+    path("users/<int:user_id>/phone-change-request/", OpsUserPhoneChangeRequestView.as_view()),
     path("support/requests/", SupportRequestsView.as_view()),
     path("support/requests/<int:request_id>/", SupportRequestDetailView.as_view()),
     path("support/requests/<int:request_id>/resolve/", SupportRequestResolveView.as_view()),
