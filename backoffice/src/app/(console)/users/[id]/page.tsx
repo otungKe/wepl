@@ -5,6 +5,7 @@ import { useParams, useRouter } from 'next/navigation'
 import {
   Loader2, ArrowLeft, ShieldCheck, UserX, UserCheck, Download,
   MonitorSmartphone, LogOut, KeyRound, Pencil, StickyNote, PhoneCall, Ban, ShieldOff,
+  Fingerprint, MapPin, Mail, ArrowDownLeft, ArrowUpRight, Wallet, Check,
 } from 'lucide-react'
 import { opsUsers, RESTRICTION_KINDS, type User360 } from '@/lib/platform'
 import { downloadCsv } from '@/lib/ops'
@@ -95,6 +96,27 @@ export default function User360Page() {
     }, 'Phone change requested — pending a second operator in Approvals.')
   }
 
+  // Contact / address amendment (identity core stays KYC-governed).
+  const [editContact, setEditContact] = useState(false)
+  const [cEmail, setCEmail] = useState('')
+  const [cAddr, setCAddr] = useState('')
+  const [cOcc, setCOcc] = useState('')
+
+  const startEditContact = () => {
+    if (!data) return
+    setCEmail(data.contact.email); setCAddr(data.contact.physical_address); setCOcc(data.contact.occupation)
+    setEditContact(true)
+  }
+  const saveContact = async () => {
+    if (!data) return
+    const changes: Record<string, string> = {}
+    if (cEmail !== data.contact.email) changes.email = cEmail
+    if (cAddr !== data.contact.physical_address) changes.physical_address = cAddr
+    if (cOcc !== data.contact.occupation) changes.occupation = cOcc
+    if (Object.keys(changes).length === 0) { setEditContact(false); return }
+    await run(async () => { await opsUsers.updateContact(id, changes); setEditContact(false) }, 'Contact details updated.')
+  }
+
   const [restKind, setRestKind] = useState('freeze')
   const [restReason, setRestReason] = useState('')
   const [restExpiry, setRestExpiry] = useState('')
@@ -144,6 +166,53 @@ export default function User360Page() {
 
       <div className="grid gap-5 lg:grid-cols-3">
         <div className="space-y-5 lg:col-span-2">
+          <Card title="Identity">
+            <div className="grid grid-cols-2 gap-x-6 gap-y-2.5 text-sm sm:grid-cols-3">
+              <Field label="Legal name" value={[i.given_names, i.surname].filter(Boolean).join(' ') || i.name || '—'} />
+              <Field label="National ID" value={i.id_number || '—'} mono />
+              <Field label="KRA PIN" value={i.kra_pin || '—'} mono />
+              <Field label="Date of birth" value={i.date_of_birth ? new Date(i.date_of_birth).toLocaleDateString(undefined, { dateStyle: 'medium' }) : '—'} />
+              <Field label="Nationality" value={i.nationality || '—'} />
+              <Field label="Member no." value={i.member_number || '—'} mono />
+            </div>
+            <p className="mt-3 flex items-center gap-1.5 text-[11px] text-slate-400">
+              <Fingerprint className="h-3 w-3" /> Verified identity — changes go through KYC re-verification, not here.
+            </p>
+          </Card>
+
+          <Card title="Recent money activity">
+            {data.recent_activity.length === 0
+              ? <p className="text-sm text-slate-400">No money movements on record.</p>
+              : (
+                <div className="space-y-1">
+                  {data.recent_activity.map((a) => {
+                    const out = a.direction === 'PAYOUT'
+                    return (
+                      <Link key={a.id} href={`/transactions/${a.id}`}
+                        className="flex items-center gap-3 rounded-lg px-2 py-1.5 hover:bg-slate-50 dark:hover:bg-slate-800/60">
+                        <span className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-full ${out ? 'bg-red-100 text-red-600 dark:bg-red-500/10 dark:text-red-400' : 'bg-emerald-100 text-emerald-600 dark:bg-emerald-500/10 dark:text-emerald-400'}`}>
+                          {out ? <ArrowUpRight className="h-3.5 w-3.5" /> : <ArrowDownLeft className="h-3.5 w-3.5" />}
+                        </span>
+                        <div className="min-w-0 flex-1">
+                          <p className="truncate text-sm text-slate-700 dark:text-slate-200">
+                            {a.op_type.replace(/_/g, ' ').toLowerCase()}
+                            {a.counterparty_name ? <span className="text-slate-400"> · {a.counterparty_name}</span> : ''}
+                          </p>
+                          <p className="font-mono text-[10px] text-slate-400">{a.reference} · {new Date(a.created_at).toLocaleString()}</p>
+                        </div>
+                        <div className="text-right">
+                          <p className={`font-mono text-sm tabular-nums ${out ? 'text-red-600 dark:text-red-400' : 'text-emerald-600 dark:text-emerald-400'}`}>
+                            {out ? '−' : '+'}{a.amount}
+                          </p>
+                          <p className="text-[10px] uppercase tracking-wide text-slate-400">{a.state.toLowerCase()}</p>
+                        </div>
+                      </Link>
+                    )
+                  })}
+                </div>
+              )}
+          </Card>
+
           <Card title="Verification">
             <div className="flex flex-wrap items-center gap-x-6 gap-y-1.5 text-sm">
               <span>KYC: <b className="capitalize">{data.verification.kyc_status.replace('_', ' ')}</b></span>
@@ -242,6 +311,48 @@ export default function User360Page() {
 
         <div className="space-y-5">
           {flash && <p className="rounded-lg bg-emerald-50 px-3 py-2 text-sm text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-400">{flash}</p>}
+
+          <Card title="Contact & address">
+            {!data.contact.has_kyc ? (
+              <p className="text-sm text-slate-400">No KYC profile yet — contact details are captured at verification.</p>
+            ) : !editContact ? (
+              <>
+                <dl className="space-y-2 text-sm">
+                  <ContactRow icon={PhoneCall} label="Phone" value={data.contact.phone_number} mono />
+                  <ContactRow icon={Mail} label="Email"
+                    value={data.contact.email || '—'}
+                    badge={data.contact.email ? (data.contact.email_verified ? 'verified' : 'unverified') : undefined} />
+                  <ContactRow icon={MapPin} label="Address" value={data.contact.physical_address || '—'} />
+                  <ContactRow icon={MapPin} label="County" value={data.contact.county || '—'} />
+                  <ContactRow icon={Wallet} label="Occupation" value={data.contact.occupation || '—'} />
+                </dl>
+                {canManage && (
+                  <button onClick={startEditContact}
+                    className="mt-3 flex w-full items-center justify-center gap-1.5 rounded-lg border border-slate-200 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800">
+                    <Pencil className="h-3.5 w-3.5" /> Edit contact & address
+                  </button>
+                )}
+                <p className="mt-2 text-[10px] text-slate-400">Phone changes go through the maker-checked flow below.</p>
+              </>
+            ) : (
+              <div className="space-y-2">
+                <LabelledInput label="Email" type="email" value={cEmail} onChange={setCEmail} />
+                <LabelledInput label="Physical address" value={cAddr} onChange={setCAddr} />
+                <LabelledInput label="Occupation" value={cOcc} onChange={setCOcc} />
+                <div className="flex gap-2 pt-1">
+                  <button disabled={busy} onClick={saveContact}
+                    className="flex flex-1 items-center justify-center gap-1.5 rounded-lg bg-slate-800 py-2 text-xs font-semibold text-white hover:bg-slate-700 disabled:opacity-50 dark:bg-slate-200 dark:text-slate-900">
+                    <Check className="h-3.5 w-3.5" /> Save
+                  </button>
+                  <button onClick={() => setEditContact(false)}
+                    className="rounded-lg border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-500 hover:bg-slate-50 dark:border-slate-700 dark:hover:bg-slate-800">
+                    Cancel
+                  </button>
+                </div>
+                <p className="text-[10px] text-slate-400">Changing the email marks it unverified until re-confirmed.</p>
+              </div>
+            )}
+          </Card>
 
           <Card title={`Devices · ${data.sessions.active}`}>
             {data.sessions.pin_locked && (
@@ -413,6 +524,46 @@ export default function User360Page() {
         </div>
       </div>
     </div>
+  )
+}
+
+function Field({ label, value, mono }: { label: string; value: string; mono?: boolean }) {
+  return (
+    <div>
+      <p className="text-[11px] text-slate-400">{label}</p>
+      <p className={`text-slate-700 dark:text-slate-200 ${mono ? 'font-mono text-xs' : ''}`}>{value}</p>
+    </div>
+  )
+}
+
+function ContactRow({ icon: Icon, label, value, mono, badge }: {
+  icon: typeof Mail; label: string; value: string; mono?: boolean; badge?: string
+}) {
+  return (
+    <div className="flex items-start gap-2.5">
+      <Icon className="mt-0.5 h-3.5 w-3.5 shrink-0 text-slate-400" />
+      <div className="min-w-0 flex-1">
+        <p className="text-[11px] text-slate-400">{label}</p>
+        <p className={`flex items-center gap-1.5 text-slate-700 dark:text-slate-200 ${mono ? 'font-mono text-xs' : ''}`}>
+          <span className="truncate">{value}</span>
+          {badge && (
+            <span className={`shrink-0 rounded px-1 py-0.5 text-[9px] font-bold uppercase ${badge === 'verified' ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-400' : 'bg-amber-100 text-amber-700 dark:bg-amber-500/10 dark:text-amber-400'}`}>{badge}</span>
+          )}
+        </p>
+      </div>
+    </div>
+  )
+}
+
+function LabelledInput({ label, value, onChange, type = 'text' }: {
+  label: string; value: string; onChange: (v: string) => void; type?: string
+}) {
+  return (
+    <label className="block">
+      <span className="mb-1 block text-[11px] font-semibold text-slate-500">{label}</span>
+      <input type={type} value={value} onChange={(e) => onChange(e.target.value)}
+        className="w-full rounded-md border border-slate-200 px-2 py-1.5 text-sm outline-none placeholder:text-slate-400 dark:border-slate-700 dark:bg-slate-900" />
+    </label>
   )
 }
 

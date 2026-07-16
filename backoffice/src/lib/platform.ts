@@ -91,9 +91,31 @@ export interface Restriction {
   lifted_by: string
 }
 
+export interface MoneyActivity {
+  id: number
+  reference: string
+  op_type: string
+  state: string
+  amount: string
+  direction: 'PAYIN' | 'PAYOUT' | null
+  counterparty_name: string
+  fund: string | null
+  created_at: string
+}
+
 export interface User360 {
-  identity: UserRow & { last_seen: string | null }
+  identity: UserRow & {
+    last_seen: string | null
+    given_names: string; surname: string; id_number: string
+    date_of_birth: string | null; kra_pin: string; nationality: string
+  }
   account_status: 'active' | 'restricted' | 'suspended' | 'dormant' | 'closed'
+  contact: {
+    phone_number: string; email: string; email_verified: boolean
+    physical_address: string; county: string; occupation: string
+    source_of_income: string; expected_monthly_income: string; has_kyc: boolean
+  }
+  recent_activity: MoneyActivity[]
   restrictions: Restriction[]
   verification: {
     kyc_status: string
@@ -136,6 +158,9 @@ export const opsUsers = {
     api.post<{ unlocked: boolean; was_locked: boolean }>(`/ops/users/${id}/unlock-pin/`),
   correctName: (id: number | string, name: string) =>
     api.post<{ id: number; name: string }>(`/ops/users/${id}/profile/`, { name }),
+  // Correct contact / address / profile attributes (not the verified identity core).
+  updateContact: (id: number | string, changes: Record<string, string>) =>
+    api.post<{ updated: string[] }>(`/ops/users/${id}/contact/`, changes),
   addNote: (id: number | string, note: string) =>
     api.post<{ noted: boolean }>(`/ops/users/${id}/notes/`, { note }),
   // Maker-checked: raises an approval; a second operator executes it.
