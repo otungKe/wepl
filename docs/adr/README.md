@@ -34,6 +34,7 @@ add a new ADR that supersedes the old one (note it in both).
 | [0024](0024-fee-and-tax-postings.md) | Fee, excise-duty and withholding postings | Proposed |
 | [0025](0025-financial-account-and-pool-identity.md) | Financial-account identity and pools as first-class accounts | Accepted |
 | [0026](0026-organization-and-program-spine.md) | Organization spine — every participant is an Organization | Accepted |
+| [0027](0027-fund-ownership-treatment.md) | Fund ownership treatment — a declared, consented property of every fund | Proposed |
 
 ## Template
 
