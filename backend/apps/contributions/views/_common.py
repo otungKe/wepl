@@ -24,7 +24,7 @@ from ..models import (
 
 from ..serializers import (
     ContributionSerializer, ContributionParticipantSerializer,
-    ContributionPaymentSerializer, ContributionTransactionSerializer,
+    ContributionPaymentSerializer, ContributionTransactionSerializer, LedgerTxnSerializer,
     ROSCASlotSerializer, DisbursementRequestSerializer,
     SharesFundSerializer,
     WelfareFundSerializer, WelfareContributionSerializer, WelfareClaimSerializer,

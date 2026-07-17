@@ -58,20 +58,20 @@ class DataExportView(APIView):
         ]
 
         # Contributions the user participates in
-        from apps.contributions.models import ContributionParticipant, ContributionTransaction
+        from apps.contributions.models import ContributionParticipant
+        from apps.contributions.history import member_history_qs, transaction_type_for
         contributions = [
             {"title": pt.contribution.title, "type": pt.contribution.contribution_type,
              "is_active": pt.is_active}
             for pt in ContributionParticipant.objects.filter(user=u).select_related("contribution")
         ]
 
-        # The user's own contribution transactions
+        # The user's own money history — ledger-derived (ADR-0002/0027).
         transactions = [
             {"contribution": t.contribution.title, "amount": str(t.amount),
-             "type": t.transaction_type, "mpesa_receipt": t.mpesa_receipt,
+             "type": transaction_type_for(t.op_type), "platform_ref": t.reference,
              "date": t.created_at.isoformat()}
-            for t in ContributionTransaction.objects.filter(user=u)
-                .select_related("contribution").order_by("-created_at")[:500]
+            for t in member_history_qs(u)[:500]
         ]
 
         # Payment methods

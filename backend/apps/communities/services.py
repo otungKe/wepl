@@ -618,10 +618,12 @@ class CommunityService:
         movement. Strict on purpose: when in doubt, the community must be
         archived, never deleted."""
         from apps.contributions.models import (
-            ContributionTransaction, EmergencyAdvance, ShareHolding,
+            EmergencyAdvance, ShareHolding,
             WelfareContribution, WelfareClaim,
         )
-        if ContributionTransaction.objects.filter(
+        from apps.ledger.models import FinancialTransaction
+        # Ledger-derived: any settled money movement on a fund in this community.
+        if FinancialTransaction.objects.filter(
                 contribution__community=community).exists():
             return True
         if EmergencyAdvance.objects.filter(

@@ -385,13 +385,14 @@ class MyTransactionsView(APIView):
     permission_classes = [IsActiveSession]
 
     def get(self, request):
-        txs = ContributionTransaction.objects.filter(
-            user=request.user
-        ).select_related('user', 'contribution').order_by('-created_at')
+        # Ledger-derived history (the FinancialTransactions touching this member's
+        # owned accounts) — no longer the legacy shadow log.
+        from apps.contributions.history import member_history_qs
+        txs = member_history_qs(request.user)
         paginator = FinancialCursorPagination()
         page = paginator.paginate_queryset(txs, request)
         return paginator.get_paginated_response(
-            ContributionTransactionSerializer(page, many=True).data
+            LedgerTxnSerializer(page, many=True, context={'member': request.user}).data
         )
 
 

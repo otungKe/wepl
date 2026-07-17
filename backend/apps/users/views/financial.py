@@ -28,21 +28,18 @@ class FinancialSummaryView(APIView):
         from datetime import timedelta
 
         from apps.contributions.models import (
-            ContributionTransaction, ContributionParticipant, EmergencyAdvance,
+            ContributionParticipant, EmergencyAdvance,
         )
+        from apps.contributions.history import member_contribution_credits, member_summary
 
         user = request.user
         now  = timezone.now()
 
-        # ── Contribution sums ─────────────────────────────────────────────────
-        tx_agg = ContributionTransaction.objects.filter(user=user).aggregate(
-            total_contributed=Sum('amount', filter=Q(transaction_type='CONTRIBUTION')),
-            total_received=Sum('amount',    filter=Q(transaction_type='WITHDRAWAL')),
-            tx_count=Count('id'),
-        )
-        total_contributed = float(tx_agg['total_contributed'] or 0)
-        total_received    = float(tx_agg['total_received']    or 0)
-        tx_count          = tx_agg['tx_count'] or 0
+        # ── Contribution sums (ledger-derived — ADR-0002/0027) ────────────────
+        summary = member_summary(user)
+        total_contributed = float(summary['total_contributed'])
+        total_received    = float(summary['total_received'])
+        tx_count          = summary['tx_count']
 
         # ── Participation counts ──────────────────────────────────────────────
         participation = ContributionParticipant.objects.filter(user=user).aggregate(
@@ -72,26 +69,20 @@ class FinancialSummaryView(APIView):
             day=1, hour=0, minute=0, second=0, microsecond=0
         )
 
-        this_month_agg = ContributionTransaction.objects.filter(
-            user=user,
-            transaction_type='CONTRIBUTION',
-            created_at__gte=month_start,
-        ).aggregate(s=Sum('amount'))
-        this_month = float(this_month_agg['s'] or 0)
-
-        last_month_agg = ContributionTransaction.objects.filter(
-            user=user,
-            transaction_type='CONTRIBUTION',
-            created_at__gte=prev_month_start,
-            created_at__lt=month_start,
-        ).aggregate(s=Sum('amount'))
-        last_month = float(last_month_agg['s'] or 0)
+        # Contribution "money in" = CREDITs to the member's contribution
+        # sub-ledgers (ledger-derived), windowed by line date.
+        credits = member_contribution_credits(user)
+        this_month = float(
+            credits.filter(created_at__gte=month_start).aggregate(s=Sum('amount'))['s'] or 0)
+        last_month = float(
+            credits.filter(created_at__gte=prev_month_start, created_at__lt=month_start)
+            .aggregate(s=Sum('amount'))['s'] or 0)
 
         # ── 6-month trend ─────────────────────────────────────────────────────
         six_months_ago = month_start - timedelta(days=180)
         trend_qs = (
-            ContributionTransaction.objects
-            .filter(user=user, transaction_type='CONTRIBUTION', created_at__gte=six_months_ago)
+            credits
+            .filter(created_at__gte=six_months_ago)
             .annotate(month=TruncMonth('created_at'))
             .values('month')
             .annotate(amount=Sum('amount'))

@@ -230,6 +230,44 @@ class ContributionTransactionSerializer(serializers.ModelSerializer):
         return f"WEPL-TXN-{obj.id:06d}"
 
 
+class LedgerTxnSerializer(serializers.Serializer):
+    """A member transaction-history row rendered straight from the ledger's
+    FinancialTransaction (replaces ContributionTransactionSerializer / the legacy
+    shadow log). ``member`` in context is the party whose statement this is."""
+    id                 = serializers.IntegerField(read_only=True)
+    phone_number       = serializers.SerializerMethodField()
+    name               = serializers.SerializerMethodField()
+    contribution       = serializers.IntegerField(source='contribution_id', read_only=True)
+    contribution_title = serializers.CharField(source='contribution.title', read_only=True)
+    amount             = serializers.DecimalField(max_digits=20, decimal_places=2, read_only=True)
+    transaction_type   = serializers.SerializerMethodField()
+    note               = serializers.SerializerMethodField()
+    mpesa_receipt      = serializers.SerializerMethodField()
+    platform_ref       = serializers.SerializerMethodField()
+    created_at         = serializers.DateTimeField(read_only=True)
+
+    def get_phone_number(self, obj):
+        m = self.context.get('member')
+        return m.phone_number if m else None
+
+    def get_name(self, obj):
+        m = self.context.get('member')
+        return (m.name or None) if m else None
+
+    def get_transaction_type(self, obj):
+        from apps.contributions.history import transaction_type_for
+        return transaction_type_for(obj.op_type)
+
+    def get_note(self, obj):
+        return obj.counterparty_name or ''
+
+    def get_mpesa_receipt(self, obj):
+        return None
+
+    def get_platform_ref(self, obj):
+        return obj.reference
+
+
 # ---------------------------------------------------------------------------
 # Shares Fund
 # ---------------------------------------------------------------------------

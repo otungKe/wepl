@@ -177,10 +177,10 @@ class ContributionService:
         """
         Record an inbound member contribution.
 
-        Writes to both the legacy mutable balance fields (for backwards compat)
-        and the new immutable ledger (single source of truth going forward).
-        Uses F() expressions for all balance updates — no read-modify-write.
-        Idempotent when idempotency_key is supplied (e.g. M-Pesa receipt).
+        The immutable double-entry ledger is the single source of truth; balances
+        are always derived from journal lines (ADR-0002 — no mutable balance
+        fields). Idempotent when idempotency_key is supplied (e.g. M-Pesa
+        receipt).
         """
         if amount <= 0:
             raise ValidationError("Amount must be greater than 0")
