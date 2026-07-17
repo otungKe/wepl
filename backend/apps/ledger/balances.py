@@ -101,6 +101,19 @@ def member_fund_balance(user, fund_type: str, fund_id: int) -> Decimal:
     return (agg['c'] or Decimal('0')) - (agg['d'] or Decimal('0'))
 
 
+def economic_interest(party, fund_type: str, fund_id: int) -> Decimal:
+    """A party's *derived* economic interest in a fund (ADR-0027).
+
+    Economic interest is a view, never a stored value. Today every fund is a
+    ``debt`` claim-type, so a party's interest equals their redeemable liability
+    sub-ledger balance (``member_fund_balance``). This is the single seam where
+    equity (units × NAV) derivation plugs in when a fund graduates to unit/NAV
+    accounting — callers ask "what is X's economic interest here?" rather than
+    reading a raw account balance, so the graduation is transparent to them.
+    """
+    return member_fund_balance(party, fund_type, fund_id)
+
+
 def user_fund_balances(user, fund_type: str, fund_ids=None) -> dict:
     """{fund_id: signed balance} for one user across many funds, in one query.
 

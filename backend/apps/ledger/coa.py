@@ -163,12 +163,28 @@ def member_receivable_account(*, user, fund_id: int) -> Account:
     return acct
 
 
+def ensure_custody(*, fund_type: str, fund_id: int):
+    """Ensure a pool has a custody/legal-title anchor (ADR-0027).
+
+    Idempotent; defaults to the platform holding the pool in trust for its
+    members. Called when a pool is born so every pool answers "held by whom,
+    under what basis" — the trust-law anchor that makes collective ownership and
+    "a liability owed by whom" legally defined.
+    """
+    from .models import CustodyArrangement
+    arrangement, _ = CustodyArrangement.objects.get_or_create(
+        fund_type=fund_type, fund_id=fund_id,
+    )
+    return arrangement
+
+
 def pool_account(*, fund_type: str, fund_id: int) -> Account:
     """Resolve (get-or-create) a pool/fund **control account** (ADR-0025 Part B).
 
     A pool is a first-class ledger entity: an owner-less account (code e.g.
     ``2000-0350000``) that parents the pool's member sub-ledgers and can hold
     pool-level money (escrow, unallocated pot). Keyed on (fund_type, fund_id).
+    Its birth also anchors the pool's custody arrangement (ADR-0027).
     """
     parent_code = _FUND_PAYABLE_PARENT.get(fund_type)
     if parent_code is None:
@@ -184,6 +200,7 @@ def pool_account(*, fund_type: str, fund_id: int) -> Account:
             'tenant': _tenant_for_fund(fund_type, fund_id),
         },
     )
+    ensure_custody(fund_type=fund_type, fund_id=fund_id)
     return acct
 
 

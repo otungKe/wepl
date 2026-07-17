@@ -505,3 +505,39 @@ class ExchangeRate(models.Model):
 
     def __str__(self):
         return f"1 {self.base_currency} = {self.rate} {self.quote_currency} @ {self.effective_at:%Y-%m-%d}"
+
+
+class CustodyArrangement(models.Model):
+    """Legal-title anchor for a pool's assets (ADR-0027).
+
+    Trust law is what makes pooled money coherent: a *trustee/custodian* holds
+    legal title for the members' benefit. Recorded per pool ``(fund_type,
+    fund_id)`` — even trivially (the platform holds in trust by default) — so
+    that "collective ownership" and "a liability owed *by* whom" are legally
+    defined, and the regulatory posture of a pool is explicit rather than
+    assumed. Behaviourless anchor today; the seat the trustee/settlor/beneficiary
+    model grows from.
+    """
+    class LegalBasis(models.TextChoices):
+        TRUST = 'trust', 'Held in trust for members'
+        AGENCY = 'agency', 'Held as agent for the group'
+        OWN_FUNDS = 'own_funds', "Platform's own funds"
+
+    fund_type = models.CharField(max_length=30)
+    fund_id = models.PositiveIntegerField()
+    # The legal-title holder. A free-text label for now; generalises to a Party
+    # FK when Account.owner does (ADR-0027 organization / trust ownership).
+    trustee_label = models.CharField(max_length=200, default='Wepl (platform, in trust)')
+    legal_basis = models.CharField(
+        max_length=20, choices=LegalBasis.choices, default=LegalBasis.TRUST)
+    governing_document = models.CharField(max_length=200, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=['fund_type', 'fund_id'], name='uniq_custody_per_pool'),
+        ]
+
+    def __str__(self):
+        return f"Custody({self.fund_type}#{self.fund_id} · {self.trustee_label} · {self.legal_basis})"

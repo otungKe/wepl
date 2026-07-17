@@ -18,6 +18,8 @@ Recipe summary (DR / CR):
 """
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 from . import coa
 from .money import Money
 from .models import JournalLine
@@ -49,22 +51,68 @@ def _require_positive(m: Money, what: str) -> None:
         raise ValueError(f"{what} must be positive, got {m}")
 
 
+@dataclass(frozen=True)
+class Allocation:
+    """One beneficiary's attributed share of a contribution (ADR-0027).
+
+    ``member`` is the *owner* the value is attributed to — not necessarily the
+    payer. ``amount`` is the net credited to that member's liability sub-ledger.
+    Payment answers "who paid"; attribution answers "whose position changes",
+    and they are different questions.
+    """
+    member: object
+    amount: Money
+
+
+def attributed_contribution_lines(*, fund_type, fund_id,
+                                  allocations: list[Allocation],
+                                  fee: Money | None = None) -> list[Line]:
+    """A contribution whose ownership is *attributed* across one or more
+    beneficiaries, independent of who paid (ADR-0027).
+
+    Cash arrives in float for the gross (Σ allocations + fee); each beneficiary's
+    liability sub-ledger is credited its attributed share; the optional fee is
+    platform revenue. The single-beneficiary case (the payer owns all of it) is
+    the *same* code path with one allocation — so no recipe ever silently assumes
+    ``contributor == owner``; the identity attribution is made explicit.
+    """
+    if not allocations:
+        raise ValueError("attributed contribution needs at least one allocation")
+    currency = allocations[0].amount.currency
+    fee = fee or Money.zero(currency)
+    net_total = Money.zero(currency)
+    for alloc in allocations:
+        _require_positive(alloc.amount, "allocation amount")
+        net_total = net_total + alloc.amount            # currency-checked by Money
+    gross = net_total + fee
+    _require_positive(gross, "contribution gross")
+    lines = [Line(coa.mpesa_float_account(), DEBIT, gross.amount, note="contribution in")]
+    for alloc in allocations:
+        member_acct = coa.member_fund_account(
+            user=alloc.member, fund_type=fund_type, fund_id=fund_id)
+        lines.append(Line(member_acct, CREDIT, alloc.amount.amount, note="member contribution"))
+    if fee.is_positive:
+        lines.append(Line(coa.fee_revenue_account(), CREDIT, fee.amount, note="platform fee"))
+    return lines
+
+
 def contribution_lines(*, member, fund_type, fund_id, gross: Money,
                        fee: Money | None = None) -> list[Line]:
     """Member pays ``gross`` in (cash arrives in float). ``fee`` (optional) is
-    platform revenue; the remainder increases the member's liability balance."""
+    platform revenue; the remainder increases the member's liability balance.
+
+    This is the identity-attribution case of ``attributed_contribution_lines``:
+    the payer is the sole beneficiary. Routing it through the attributed builder
+    keeps ``contributor == owner`` an explicit choice, never an assumption
+    (ADR-0027)."""
     _require_positive(gross, "contribution amount")
     fee = fee or Money.zero(gross.currency)
     net = gross - fee
     _require_positive(net, "net contribution (gross minus fee)")
-    member_acct = coa.member_fund_account(user=member, fund_type=fund_type, fund_id=fund_id)
-    lines = [
-        Line(coa.mpesa_float_account(), DEBIT, gross.amount, note="contribution in"),
-        Line(member_acct, CREDIT, net.amount, note="member contribution"),
-    ]
-    if fee.is_positive:
-        lines.append(Line(coa.fee_revenue_account(), CREDIT, fee.amount, note="platform fee"))
-    return lines
+    return attributed_contribution_lines(
+        fund_type=fund_type, fund_id=fund_id,
+        allocations=[Allocation(member=member, amount=net)], fee=fee,
+    )
 
 
 def disbursement_lines(*, member, fund_type, fund_id, amount: Money) -> list[Line]:
