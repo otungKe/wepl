@@ -1,227 +1,227 @@
-# ADR-0027: Fund ownership treatment — a declared, consented property of every fund
+# ADR-0027: Attribution, ownership, and the two-register model
 
 - **Status:** Proposed
 - **Date:** 2026-07-16
 - **Deciders:** Ledger & fund-modelling review
+- **Supersedes draft:** an earlier draft of this ADR proposed "ownership
+  treatments" (deposit / capital / premium) as the primary abstraction. That
+  draft is replaced by this one — the first-principles review below shows those
+  are *claim-types*, not ownership, and that the missing primitives are
+  attribution and an ownership register.
 
 ## Context
 
-The ledger hardwires one interpretation of a contribution: money paid into a
-fund credits the payer's **member sub-ledger** (`coa.member_fund_account`, a
-LIABILITY under the `2000/2100/2200` payable heads), and a member's "position"
-is that credit balance. `disbursement_lines` pays it back out. This is the
-**deposit** interpretation — the platform owes the member their money — and it
-is treated as a fact of nature.
+The ledger hardwires an assumption that ordinary banking gets away with but
+community finance does not:
 
-It is not a fact of nature. It is one of several possible interpretations, and
-the wrong one for a growing set of real scenarios surfaced in review:
+> **Contributor = Owner = Ledger Position = Economic Interest.**
 
-1. **Welfare** contributions are sunk *premiums* that fund *others'* claims —
-   the contributor holds no redeemable claim. Modelling them as an individual
-   liability overstates every member's position.
-2. **Goal pools** (a family raises an open, member-set amount over a year toward
-   a shared event, then spends it collectively on multiple external expenses)
-   are jointly owned. Each member's live stake is a *pro-rata share of the net
-   pool*, not their gross contributions, and collective spending must be borne
-   pro-rata — there is no per-member recipe for this today.
-3. **External income** — a group runs a business and deposits the proceeds
-   straight into the pool. *Nobody contributed it in*, so no member sub-ledger
-   can honestly claim it by attribution. It belongs to the collective as
-   **retained earnings**, distributable to members only when the group
-   *declares* a distribution by its own rule. The ledger has no income/equity
-   representation at the pool level to hold this — only member-payable liability.
-4. **Capital** — a member's payment into an investment pool may buy an ownership
-   *share* of an enterprise (equity), not a redeemable deposit; returns come via
-   distribution, not principal withdrawal.
+Each equality is false in real community finance:
 
-Two facts about the current schema frame the decision:
+- **Contributor ≠ Owner.** Alice pays KES 10,000: 6,000 for herself, 4,000 for
+  Bob. Parents pay for children, employers for employees, sponsors for
+  beneficiaries, members settle each other's obligations, strangers give to a
+  fundraiser. The payer determines *nothing* about ownership.
+- **Owner ≠ Ledger Position.** A group business earns KES 100,000. Before the
+  group *declares* a distribution, members hold a real economic interest in the
+  retained surplus — but there is no per-member ledger balance; the ledger holds
+  one **retained-earnings** account. Their interest is *derived*, not posted.
+- **Ledger Position ≠ Economic Interest.** In a jointly-owned pool a member owns
+  a proportional interest without any individually redeemable balance — exactly
+  how a fund beneficiary, a trust beneficiary, or a street-name shareholder
+  holds value.
 
-- `Account.owner` is a FK to **User only** (`ledger/models.py:281`). An account
-  is owned by a natural person or is **owner-less** (`owner=None`). The
-  owner-less **pool control account** (ADR-0025 Part B, `coa.pool_account`,
-  parented under a LIABILITY head) already exists and is the mechanism for money
-  held collectively — but there is no way to make an account owned by an
-  **organization** as a legal counterparty (ADR-0026).
-- `fund_balance` sums *all* accounts in a fund — member sub-ledgers **and** the
-  pool control account — so a collective credit balance is already
-  representable; what is missing is (a) an income/equity flavour distinct from
-  member liability, and (b) a *declared rule* that says which interpretation a
-  given fund uses.
+These are not edge cases; they are the definition of pooled, governed money.
+The current model — contribution credits the payer's member sub-ledger as an
+individual liability — cannot express any of them.
 
-**Prior art.** Kenyan chama platforms resolve this by hardcoding *one*
-treatment per product and never maintaining an authoritative per-member
-*redeemable* balance. Malipo Circles holds pooled money in a regulated **NCBA
-trust account**, records who contributed how much (a *record*, not a redeemable
-balance), and lets elected **officials** approve withdrawals to the *chama's own
-bank account* — i.e. money is group-owned, distribution is a governed act, and
-its "circle types" (investment chama / fundraising / P2P lending) are a coarse,
-hardcoded precursor to a declared-treatment axis. Chamasoft is a record-keeper
-over the group's own bank account (custody elsewhere, entitlement crystallised
-at declared dividend); Stanbic Chama makes the *group* the legal accountholder;
-Chango / M-Changa define the pot as goal-owned from the start. None run a
-double-entry ledger-of-record that natively distinguishes individual, collective
-and organization claims. That distinction is exactly what Wepl is custodial and
-ledger-authoritative enough to need — and it carries a **compliance shadow**:
-holding individually redeemable balances edges toward deposit-taking, while
-pooled collective funds look like a trust (ADR-0026's regulated-capability
-ceiling).
+Three bodies of established practice already solve this, and we adopt their
+structure rather than re-deriving it:
+
+- **Trust law** separates three roles: **settlor** (payer) / **trustee** (legal
+  title) / **beneficiary** (economic interest). Wepl had modelled the first two
+  as one and omitted the trustee entirely.
+- **Fund accounting** separates the **transfer agent** (a register of who holds
+  how many units) from the **fund accountant** (the NAV / general ledger). Two
+  books, reconciled. Economic interest = units × NAV, *derived*.
+- **Custody / client-money** rules hold pooled cash in one **omnibus** account
+  (e.g. a regulated trust account) while beneficial entitlements live in the
+  firm's *own* register — proving each client's share of a commingled balance.
+
+Prior art in-market (Malipo Circles, Chamasoft, Stanbic Chama, Chango/M-Changa)
+all pick *one* ownership shape per product and never maintain an authoritative
+per-member *redeemable* balance in a pooled fund; Malipo holds cash in an NCBA
+trust account with official-gated distribution — the omnibus + governed-payout
+pattern. Wepl is custodial *and* ledger-authoritative, so it must model the
+distinctions they can avoid — which also carries a compliance shadow (holding
+individually redeemable balances edges toward deposit-taking; pooled collective
+funds look like a trust or a collective-investment scheme — ADR-0026's regulated
+capability ceiling).
 
 ## Decision
 
-**Ownership treatment is a declared, consented property of each fund — not an
-implicit default.** A fund declares, at creation, how a contribution into it is
-owned; that single declaration determines the contribution recipe, the
-external-income recipe, whether individual positions exist, and how "position"
-is presented. Reallocating value between owners is a first-class, governed money
-movement, never a silent mutation.
+Model value movement as **three planes**, not one linear chain, over **two
+registers** anchored to an explicit **custody/legal-title** holder. Economic
+interest is **derived, never stored**. Attribution and governance decisions are
+**events**, never a second source of truth.
 
-### 1. Three contribution treatments
+```
+POLICY   Governance / the fund's constitution
+         defines attribution & distribution rules │ authorizes events
+              │                                     │
+EVENTS   Payment ─▶ Attribution ─▶ Declaration ─(authorized)─┐
+         (append-only command log; nothing here is queried    │
+          for "who owns what")                                ▼
+STATE    ┌─ Cash / GL ledger        (shillings, double-entry) ┐  one posting
+         ├─ Ownership register      (units / sub-claims)      │  chokepoint,
+         └─ Custody / legal-title    (trustee + governing doc)┘  per-book invariant
+              │
+DERIVED  Economic Interest(party, fund) = register_share × NAV   ← a view, not a table
+```
 
-Each fund declares one `ownership_treatment`:
+### 1. Two orthogonal axes (replacing "ownership treatments")
 
-| Treatment | Contribution posts | Member position | Redeemable? | Normal account |
-|-----------|--------------------|-----------------|-------------|----------------|
-| **deposit** | `CR member sub-ledger` | their own balance | yes — it is their money | LIABILITY (`2000`-family) |
-| **capital** | `CR member capital account` (units @ NAV) | a *share* of the enterprise | no principal; exit via distribution/buy-back | EQUITY (`3100`-family, new) |
-| **premium** | `CR pool control` | **none** — it is the group's | no — sunk | LIABILITY collective (`2100`) |
+Ownership (*who*) is independent of claim-type (*what kind of claim*). The old
+draft's deposit/capital/premium are **claim-types** — the classic
+debt / equity / transfer trichotomy — not ownership.
 
-The *same* KES-1,000 contribution means three different things under three
-declared rules. `deposit` is the current behaviour and stays the default for
-contribution/ROSCA/goal-pool funds; `premium` is welfare; `capital` is
-investment pools.
+- **Owner axis:** `individual | collective | organization | trust` (extensible).
+- **Claim-type axis:**
+  - **debt** — a redeemable liability of a fixed amount ("deposit"). Owed to the
+    attributed owner. Ledger position == economic interest.
+  - **equity** — a residual, NAV-linked interest ("capital"). Held via the
+    ownership register; economic interest derived; crystallised to a liability
+    only on declared distribution/redemption.
+  - **transfer** — value relinquished, no retained claim ("premium" / expense /
+    gift). Owner keeps nothing.
 
-### 2. Instrument taxonomy (four kinds, each with its own position semantics)
+They compose: individual-debt (a savings deposit), collective-equity (an
+investment pool's retained surplus), individual-equity (a member's units),
+collective-transfer (a welfare premium into the pool), etc.
 
-Ownership treatment composes with the fund's *instrument*, which governs
-lifecycle and payout shape:
+### 2. Attribution is a first-class **event**, with a vesting lifecycle
 
-| Instrument | Treatment | Position | Collective spend |
-|------------|-----------|----------|------------------|
-| **ROSCA** | deposit | transient net (may go negative through a cycle) | n/a — pays individuals in rotation |
-| **Welfare** | premium | none | rule-based claims from the pool |
-| **Shares** | capital | units × NAV | dilutes NAV |
-| **Goal pool** | deposit | **pro-rata of net pool (refundable)** | **apportioned across members** |
+Attribution answers the first genuine economic question — *whose position
+changes* — and is reused across contributions, distributions, expense
+apportionments, sponsorships, transfers, corrections, and ownership conversions.
 
-`fund_type` generalises to carry the instrument + treatment (aligns with the
-`Program` spine, ADR-0026 §2). No `if instrument == …` branches in domain logic;
-the fund's declared treatment selects the posting recipe.
+- Shape: `Attribution{ source_payment?, allocations:[{party, amount|units, vesting}], authorized_by }`.
+- Lifecycle: `pledged → vested → posted → (reversible)`. This distinguishes a
+  revocable pledge / escrow / conditional sponsorship from an executed transfer
+  (gift-law finality) — the gap the old model skipped.
+- **Attribution is consumed into postings and then is immutable history.** It is
+  *never* queried to answer current ownership — that would create a second book
+  and break ADR-0001. The identity attribution (Alice → Alice) is still made
+  explicit, so no posting recipe ever assumes `contributor = owner`.
 
-### 3. The ownership axis — who can own a position
+### 3. Two registers, one chokepoint
 
-A ledger position may be owned by:
+- **Cash/GL ledger** (existing, unchanged): float, pool control accounts,
+  liabilities, equity/retained-earnings, income/expense. Balances derived from
+  immutable lines (ADR-0001/0002).
+- **Ownership register** (new, added only when needed — see §6): append-only
+  unit issuance / transfer / redemption per pool. Units are to this book what
+  shillings are to the ledger; it is the transfer-agent function to the GL's
+  fund-accountant function.
+- `post_journal()` generalises to `post(book, lines)` over
+  `book ∈ {cash, register}`, each with its own conservation invariant
+  (`Σdebit == Σcredit` for cash; unit-conservation for the register). One door
+  (ADR-0004), two invariants. Authorisation (ADR-0007/0009) and attribution
+  resolution happen *before* posting, so the engine only sees already-attributed,
+  already-authorised lines.
 
-- **individual** — `owner=User` member sub-ledger (existing).
-- **collective** — `owner=None` pool control account (existing, ADR-0025).
-- **organization** — an account owned by an `organizations.Organization` as a
-  legal counterparty. **Deferred**: requires generalising `Account.owner` from
-  `User` to a participant (User *or* Organization). `tenant` is a *partition*,
-  not an owner, and must not be overloaded for this. The GL representation
-  (below) lands now; the polymorphic owner lands only when a concrete
-  org-counterparty scenario exists (inter-community settlement, a registered
-  entity as a fund member). Naming it here keeps the door open without building
-  speculatively.
+### 4. Custody / legal-title is modelled explicitly
 
-### 4. External income → retained earnings → declared distribution (two stages)
+Every pool names a **trustee/custodian** (legal title) and a **governing
+document**. This is what makes "collective ownership" legally real, defines *by
+whom* a liability is owed, and fixes regulatory posture (trust vs deposit-taking
+vs CIS). Trivial to represent today (one row) but not optional.
 
-Money entering a pool from outside (business proceeds, trust-account interest)
-is **income**, not a member liability, and posts in two governed stages:
+### 5. Economic interest is derived; crystallisation bridges the books
 
-- **Stage 1 — receipt (collective).** `DR 1000 Float / CR pool retained surplus`
-  (`3200`-family, new EQUITY head, owner-less or org-owned). No member position
-  moves; the group owns it. Members hold only an *implicit* pro-rata interest.
-- **Stage 2 — declared distribution.** A separate, authorised decision:
-  `DR pool retained surplus / CR each member sub-ledger` by the fund's sharing
-  rule (`equal | pro_rata_capital | pro_rata_units | agreed_ratios`). Only now do
-  individuals gain redeemable claims. Undistributed surplus stays on `3200` as a
-  group reserve.
+`economic_interest(party, fund)` is a computed view:
+`register_share(party, fund) × NAV(fund)`. For **debt** funds the two books
+coincide (the member's liability line *is* their claim). For **equity/collective**
+funds they diverge and interest is derived. **Crystallisation** is the named
+governance event that converts a derived equity interest into a ledger liability
+(`DR retained-earnings / CR member liabilities`, split by a register-share
+snapshot) — the exact moment beneficial interest becomes a posted position. This
+is also the two-stage external-income flow: income lands collectively as retained
+earnings; a *declared* distribution crystallises it to members.
 
-Contributions are one-stage (attribution is a fact — the member paid in);
-external income is two-stage (attribution is a governance act).
+### 6. Graduation trigger — keep the complexity gated
 
-### 5. Reallocation is a governed money movement
+A collective fund starts in **contribution-share** mode (economic interest =
+pro-rata of recorded contributions; no unit register). It **graduates** to
+**unit/NAV** mode only when *both* hold: the pool carries assets that change in
+value over time **and** members enter/exit at different times — the precise
+condition under which pro-rata-of-contributions becomes unfair and NAV is
+required. ROSCAs and simple savings/welfare funds never graduate.
 
-Every move of value between owners — member→collective, collective→member
-(distribution), member→organization, apportioning a collective expense across
-members — is:
+### 7. The four commitments that prevent a rewrite
 
-- a canonical `posting_map` recipe through `post_journal()` (ADR-0004) — never
-  hand-rolled;
-- run through `enforce_controls` (ADR-0007) — it debits a redeemable claim, so
-  it is subject to the same limits/holds as a payout, including a member's
-  FREEZE/closure state;
-- **authorised** — either member consent captured at contribution time (the
-  declared treatment the member agreed to) *or* an explicit governance decision
-  (maker-checker via the approvals registry) — and **audited** (ADR-0019);
-- never silent. Converting an individual's redeemable claim into collective or
-  organization ownership is member-facing and consent-gated — this is a
-  consumer-protection rule, not only an accounting one.
+Extensibility comes from discipline, not from a perfect taxonomy:
 
-New posting-map builders (Phase target): `goal_pool_expense_lines(apportion=…)`,
-`distribute_surplus_lines(apportion=…)`, `reallocate_to_collective_lines`,
-`external_income_lines`. Existing `contribution_lines` / `disbursement_lines`
-become the `deposit`-treatment recipes.
-
-### 6. The invariant that survives all of this
-
-There is always **exactly one authoritative, ledger-derived answer** to "what is
-this participant's economic interest," replayed from immutable journal lines
-(ADR-0001/0002). Treatments change *where* that answer lives (member liability,
-member capital units, collective pool, retained surplus) and *how* it is
-presented — never whether it is derived. Units/NAV, when introduced, are
-ledger-native (issued/redeemed through `post_journal`, NAV derived from pool
-assets), never a mutable counter.
+1. **No posting recipe assumes `contributor = owner = position`** — always route
+   through an explicit attribution, even the identity map.
+2. **Model custody/legal-title now**, even trivially.
+3. **Economic interest is a derivation from day one**, even for debt funds where
+   it equals the liability.
+4. **Add the ownership register only when the graduation trigger fires.**
 
 ## Consequences
 
-- **+** Welfare, goal pools, business income and investment capital each get a
-  correct model instead of being forced into member-liability; positions stop
-  lying for three whole fund classes.
-- **+** The collective-withdrawal problem dissolves: goal-pool expenses apportion
-  across members (positions stay truthful and self-reconciling); external income
-  and its distribution are explicit, governed, two-stage flows.
-- **+** "Position" becomes honestly typed — a redeemable balance, a capital
-  stake, or "contributed to the collective, no personal claim" — and the mobile
-  / console surfaces can present each correctly.
-- **+** Consent + audit on any ownership change gives a consumer-protection and
-  compliance story competitors (group-owned-by-default) do not have to tell,
-  because they never hold individual redeemable balances.
-- **−** New EQUITY GL heads (`3100` contributed capital, `3200` retained
-  surplus) and their pool-level control accounts; `seed_coa`, reconciliation and
-  the CI coverage floor extend to cover them.
-- **−** `fund_type` must carry treatment + instrument, and funds need a
-  creation-time declaration + a member-visible disclosure at contribution —
-  new surface in fund setup and in the contribution flow.
-- **−** Organization-owned positions are named but not built; until
-  `Account.owner` is generalised, an org-counterparty claim has no first-class
-  home and must wait rather than be faked on a pseudo-User.
-- **−** Capital/units and retained-earnings distribution have real tax and
-  regulatory weight (deposit-taking vs. collective-investment posture); the
-  declared treatment is also a compliance signal, gated by the ADR-0026
-  capability ceiling — not a free settings toggle.
+- **+** Payment, attribution, ownership, economic interest and ledger position
+  are cleanly separated; sponsorships, split contributions, third-party
+  settlement and pooled beneficial ownership all become expressible.
+- **+** The architecture is the century-proven trust + transfer-agent/fund-
+  accountant model, so welfare (collective-transfer), goal pools (contribution-
+  share), investment chamas (collective-equity → units/NAV), ROSCAs (individual-
+  debt, transient) and business income (retained earnings → crystallised
+  distribution) all fit one frame.
+- **+** Consent + audit on every attribution and crystallisation gives a
+  consumer-protection and client-money story competitors avoid by never holding
+  individual redeemable balances.
+- **+** Economic interest can never drift from truth — it is a view, not a cache
+  (ADR-0002 preserved).
+- **−** A second book (ownership register) and a second invariant in the posting
+  engine, plus NAV/crystallisation machinery — deferred behind the graduation
+  trigger, but real when it lands.
+- **−** `Account.owner` must generalise from `User` to a polymorphic `Party`
+  (User | Organization | Trust) for organization/trust ownership; until then
+  those owners have no first-class home and must wait rather than be faked.
+- **−** Attribution vesting, custody/legal-title and governing documents are new
+  surfaces in fund setup and the contribution flow.
+- **−** Real tax/regulatory weight: claim-type is a compliance signal (debt =
+  deposit-taking posture; equity = CIS posture; trust custody = client-money
+  segregation), gated by the ADR-0026 capability ceiling — not a settings toggle.
 
 ## Alternatives considered
 
-- **Keep the single deposit/liability model.** Rejected — it mis-states welfare
-  (premiums as claims), cannot express jointly-owned goal pools, and has nowhere
-  to put external income except a member's sub-ledger it never funded.
-- **Do away with member positions entirely; represent all stake as shares.**
-  Rejected — it flattens the instrument axis. ROSCA needs transient per-member
-  positions; goal pools need refundable individual claims. Unitising a rotating
-  credit fund or a redeemable savings pot is the wrong instrument, and a
-  "pass-through" sub-ledger cannot carry a non-zero derived balance yet be
-  declared meaningless without either an offsetting real account (which is just
-  the collective treatment) or off-ledger truth (which ADR-0002 forbids).
-- **Distribute every external inflow to members immediately, pro-rata.**
-  Rejected — it fabricates attribution the group has not decided and pre-empts
-  the governance act. Income is collective until *declared* distributed; the
-  two-stage flow keeps the decision explicit and auditable.
-- **Overload `tenant` as the "organization owner" of collective money.**
-  Rejected — `tenant` is an isolation/partition boundary (ADR-0008), not a
-  claimant. Conflating them corrupts both RLS semantics and the meaning of a
-  balance. Organization ownership gets a real (deferred) `Account.owner`
-  generalisation instead.
-- **Copy Malipo's group-owned-by-default model.** Rejected as the *general*
-  rule — it is correct for premium/fundraising funds and is exactly our
-  `collective` treatment, but denying individually-redeemable positions to
-  deposit and goal-pool funds throws away Wepl's ledger-authoritative
-  differentiation. We adopt it as *one* declared treatment, not the only one.
+- **Keep `contributor = owner = position` (today's model).** Rejected — false for
+  split contributions, sponsorships, third-party settlement, collective pools and
+  retained earnings; it is the assumption this ADR exists to break.
+- **A single linear hierarchy `Payment → … → Governance`.** Rejected — it
+  linearises three distinct planes (events / state / policy). Governance both
+  gates events *and* supplies the rules that resolve attribution, so it wraps the
+  pipeline; it is not merely downstream.
+- **Make Economic Interest a stored, first-class value.** Rejected — it rebuilds
+  the mutable-balance anti-pattern ADR-0002 removed. Interest is derived from the
+  register × NAV.
+- **Make Attribution the standing authority on current ownership.** Rejected — a
+  second source of truth alongside the ledger breaks ADR-0001. Attribution is an
+  event consumed into postings, retained as history, never queried for state.
+- **Treat deposit/capital/premium as "ownership treatments."** Rejected — they
+  describe the *representation* of a claim (debt/equity/transfer), orthogonal to
+  *who* owns it. Conflating them hides the owner axis.
+- **Omit custody/legal-title (jump attribution → ledger).** Rejected — beneficial
+  ownership is undefined without a legal-title holder; "liability owed to whom /
+  by whom" and regulatory posture depend on it.
+- **Build full unit/NAV/crystallisation for every fund now.** Rejected — over-
+  builds a transfer agency for ROSCAs and simple chamas. Gated behind the
+  graduation trigger; the four commitments keep the door open without the cost.
+- **Copy Malipo's group-owned-by-default model wholesale.** Rejected as the
+  general rule — it is correct for collective-transfer funds (our `premium`) and
+  is one owner/claim-type combination, but denying individually-redeemable
+  positions to debt and goal-pool funds discards Wepl's ledger-authoritative
+  differentiation.
