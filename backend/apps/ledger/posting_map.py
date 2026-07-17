@@ -40,6 +40,7 @@ class Op:
     ADVANCE_REPAYMENT    = 'ADVANCE_REPAYMENT'
     SHARES_PURCHASE      = 'SHARES_PURCHASE'
     STANDING_ORDER       = 'STANDING_ORDER'
+    POOL_EXPENSE         = 'POOL_EXPENSE'
     FEE                  = 'FEE'
     ADJUSTMENT           = 'ADJUSTMENT'
 
@@ -123,6 +124,29 @@ def disbursement_lines(*, member, fund_type, fund_id, amount: Money) -> list[Lin
         Line(member_acct, DEBIT, amount.amount, note="disbursement"),
         Line(coa.mpesa_float_account(), CREDIT, amount.amount, note="cash out"),
     ]
+
+
+def pool_expense_lines(*, fund_type, fund_id,
+                       allocations: list[Allocation]) -> list[Line]:
+    """A collective pool expense apportioned across members (ADR-0027 goal-pool):
+    each member's liability sub-ledger is debited its share; cash leaves float for
+    the total. The debit-side mirror of ``attributed_contribution_lines`` — money
+    a jointly-owned pool spends is borne by members in proportion to the shares
+    the caller computed (pro-rata of position, per-capita, …)."""
+    if not allocations:
+        raise ValueError("pool expense needs at least one allocation")
+    currency = allocations[0].amount.currency
+    total = Money.zero(currency)
+    lines: list[Line] = []
+    for alloc in allocations:
+        _require_positive(alloc.amount, "expense share")
+        total = total + alloc.amount                    # currency-checked by Money
+        member_acct = coa.member_fund_account(
+            user=alloc.member, fund_type=fund_type, fund_id=fund_id)
+        lines.append(Line(member_acct, DEBIT, alloc.amount.amount, note="pool expense share"))
+    _require_positive(total, "pool expense total")
+    lines.append(Line(coa.mpesa_float_account(), CREDIT, total.amount, note="pool expense out"))
+    return lines
 
 
 def welfare_contribution_lines(*, member, fund_id, amount: Money) -> list[Line]:

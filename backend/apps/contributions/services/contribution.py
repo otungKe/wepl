@@ -1,6 +1,25 @@
 from ._common import *  # shared imports + helpers (ADR-0013 split)
 
 
+def _apportion_amount(total, weights):
+    """Split ``total`` across ``weights`` (list of ``(key, weight)``) to the cent,
+    largest-remainder so the shares sum back to ``total`` exactly. Returns
+    ``{key: Decimal share}``. Used to apportion a collective pool expense across
+    members pro-rata (weight = position) or per-capita (weight = 1)."""
+    from decimal import ROUND_DOWN
+    cent = Decimal('0.01')
+    wsum = sum((w for _, w in weights), Decimal('0'))
+    raw = {k: (total * w / wsum) for k, w in weights}
+    floored = {k: v.quantize(cent, rounding=ROUND_DOWN) for k, v in raw.items()}
+    short_cents = int(((total - sum(floored.values(), Decimal('0'))) / cent).to_integral_value())
+    # Hand the leftover cents to the largest fractional remainders first.
+    order = sorted(raw, key=lambda k: raw[k] - floored[k], reverse=True)
+    shares = dict(floored)
+    for i in range(short_cents):
+        shares[order[i % len(order)]] += cent
+    return shares
+
+
 class ContributionService:
 
     @staticmethod
@@ -298,6 +317,71 @@ class ContributionService:
                         )
                     break
 
+        return ft
+
+    @staticmethod
+    @transaction.atomic
+    def record_pool_expense(admin_user, contribution_id, amount, *,
+                            apportion='pro_rata', reason='', idempotency_key=None):
+        """Spend jointly-owned pool funds on a shared expense, apportioned across
+        the funded members (ADR-0027 goal-pool). A governance action — contribution
+        admins only. Each member's position is drawn down by their share:
+        ``pro_rata`` (∝ their current position) or ``per_capita`` (equal). Cash
+        leaves float for the total; the ledger stays balanced and reconcilable.
+        """
+        from apps.core.policy import can
+        from apps.core.ids import uuid7
+        from apps.ledger.balances import fund_member_balances
+        from django.contrib.auth import get_user_model
+
+        amount = Decimal(str(amount))
+        if amount <= 0:
+            raise ValidationError("Amount must be greater than 0")
+        contribution = Contribution.objects.select_for_update().get(id=contribution_id)
+        if not can(admin_user, "contribution.admin", contribution):
+            raise PermissionDenied("Only a contribution admin can spend pool funds.")
+
+        pool = fund_balance('contribution', contribution.id)
+        if amount > pool:
+            raise ValidationError(
+                f"Expense of {amount} exceeds the pool balance of {pool}.")
+
+        funded = [(uid, bal) for uid, bal
+                  in fund_member_balances('contribution', contribution.id).items() if bal > 0]
+        if not funded:
+            raise ValidationError("No funded members to apportion the expense across.")
+
+        if apportion == 'pro_rata':
+            weights = funded
+        elif apportion == 'per_capita':
+            weights = [(uid, Decimal('1')) for uid, _ in funded]
+        else:
+            raise ValidationError(f"Unknown apportion mode {apportion!r}.")
+
+        shares = _apportion_amount(amount, weights)
+        users = {u.id: u for u in get_user_model().objects.filter(id__in=[u for u, _ in funded])}
+        allocations = [_pm.Allocation(member=users[uid], amount=Money(str(share)))
+                       for uid, share in shares.items() if share > 0]
+
+        idem_key = idempotency_key or f"pool-expense-{contribution.id}-{uuid7()}"
+        ft, _ = create_fin_transaction(
+            idempotency_key=idem_key,
+            op_type=FinancialTransaction.OpType.DISBURSEMENT,
+            amount=amount,
+            initiated_by=admin_user,
+            counterparty_name=(reason[:120] if reason else 'Pool expense'),
+            contribution=contribution,
+            initial_state=FinancialTransaction.State.SUCCESS,
+        )
+        post_journal(
+            idempotency_key=f"je-{idem_key}",
+            op_type=_pm.Op.POOL_EXPENSE,
+            lines=_pm.pool_expense_lines(
+                fund_type='contribution', fund_id=contribution.id, allocations=allocations),
+            narration=f"Pool expense: {reason[:120]}" if reason else "Pool expense",
+            financial_transaction=ft,
+            created_by=admin_user,
+        )
         return ft
 
     @staticmethod
