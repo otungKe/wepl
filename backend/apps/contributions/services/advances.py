@@ -199,8 +199,6 @@ class EmergencyAdvanceService:
         Key fix vs. the old code:
           - Idempotency key anchored to mpesa_receipt (not wall clock).
           - Writes a dedicated ADVANCE_REPAYMENT ledger entry (entry_type=ADVANCE_REPAYMENT).
-          - Does NOT patch "the most recent ContributionTransaction" by creation time
-            (which was fragile and could corrupt the wrong row under concurrency).
           - The pool balance is credited directly — no intermediate call to contribute().
         """
         advance = EmergencyAdvance.objects.select_for_update().get(

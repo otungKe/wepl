@@ -210,34 +210,6 @@ class ContributionParticipant(models.Model):
         return f"{self.user.phone_number} -> {self.contribution.title}"
 
 
-class ContributionTransaction(models.Model):
-    TRANSACTION_TYPES = (
-        ('CONTRIBUTION', 'Contribution'),
-        ('WITHDRAWAL',   'Withdrawal'),
-        ('ADVANCE',      'Advance'),
-        ('REPAYMENT',    'Repayment'),
-    )
-    contribution     = models.ForeignKey(Contribution, on_delete=models.CASCADE, related_name='transactions')
-    user             = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE)
-    amount           = models.DecimalField(max_digits=12, decimal_places=2)
-    transaction_type = models.CharField(max_length=20, choices=TRANSACTION_TYPES)
-    note             = models.CharField(max_length=255, blank=True, null=True)
-    mpesa_receipt    = models.CharField(max_length=50, null=True, blank=True)
-    # Link to the ledger movement (book of record) so member and ops quote the
-    # same reference (WEPL-TXN-######). Nullable for legacy rows / mirror-only writes.
-    financial_transaction = models.ForeignKey(
-        'ledger.FinancialTransaction', null=True, blank=True,
-        on_delete=models.SET_NULL, related_name='contribution_transactions')
-    created_at       = models.DateTimeField(auto_now_add=True)
-
-    class Meta:
-        ordering = ['-created_at']
-        indexes = [
-            models.Index(fields=['contribution', '-created_at'], name='contrib_tx_contrib_date_idx'),
-            models.Index(fields=['user',         '-created_at'], name='contrib_tx_user_date_idx'),
-        ]
-
-
 # ---------------------------------------------------------------------------
 # Shares Fund (optional, per contribution group)
 # ---------------------------------------------------------------------------

@@ -3,7 +3,7 @@ from rest_framework import serializers
 from apps.ledger.balances import economic_interest, fund_balance
 
 from .models import (
-    Contribution, ContributionParticipant, ContributionTransaction,
+    Contribution, ContributionParticipant,
     ROSCASlot, DisbursementRequest, DisbursementVote,
     SharesFund, ShareHolding,
     WelfareFund, WelfareContribution, WelfareClaim, WelfareVote,
@@ -202,32 +202,6 @@ class ContributionParticipantSerializer(serializers.ModelSerializer):
 class ContributionPaymentSerializer(serializers.Serializer):
     contribution_id = serializers.IntegerField()
     amount          = serializers.DecimalField(max_digits=12, decimal_places=2)
-
-
-class ContributionTransactionSerializer(serializers.ModelSerializer):
-    phone_number       = serializers.CharField(source='user.phone_number', read_only=True)
-    name               = serializers.SerializerMethodField()
-    contribution_title = serializers.CharField(source='contribution.title', read_only=True)
-    platform_ref       = serializers.SerializerMethodField()
-
-    class Meta:
-        model = ContributionTransaction
-        fields = [
-            'id', 'phone_number', 'name', 'contribution', 'contribution_title',
-            'amount', 'transaction_type', 'note',
-            'mpesa_receipt', 'platform_ref',
-            'created_at',
-        ]
-
-    def get_name(self, obj):
-        return obj.user.name or None
-
-    def get_platform_ref(self, obj):
-        # Prefer the ledger movement's reference (the book of record) so members
-        # and ops quote the same handle. The FK id is on the row — no extra query.
-        if obj.financial_transaction_id:
-            return f"WEPL-TXN-{obj.financial_transaction_id:06d}"
-        return f"WEPL-TXN-{obj.id:06d}"
 
 
 class LedgerTxnSerializer(serializers.Serializer):
