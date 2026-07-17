@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from decimal import Decimal
 
-from django.db.models import Exists, OuterRef, Q, Sum
+from django.db.models import Exists, OuterRef, Q, Subquery, Sum
 
 from apps.ledger.models import FinancialTransaction, JournalLine
 
@@ -56,6 +56,21 @@ def member_history_qs(user, *, contribution=None):
     if contribution is not None:
         qs = qs.filter(contribution=contribution)
     return qs
+
+
+def contribution_history_qs(contribution):
+    """Every settled money movement on one contribution, newest first, annotated
+    with ``party_id`` — the member whose sub-ledger moved (the economic party of
+    that transaction). Used by the shared-visibility list, where each row can
+    belong to a different member.
+    """
+    owned = JournalLine.objects.filter(
+        journal__financial_transaction=OuterRef('pk'), account__owner__isnull=False)
+    return (FinancialTransaction.objects
+            .filter(Exists(owned), contribution=contribution)
+            .annotate(party_id=Subquery(owned.values('account__owner_id')[:1]))
+            .select_related('contribution')
+            .order_by('-created_at', '-id'))
 
 
 def member_contribution_credits(user):

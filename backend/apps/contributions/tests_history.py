@@ -85,3 +85,36 @@ class MemberHistoryQsTests(TestCase):
     def test_history_excludes_members_with_no_movement(self):
         stranger = User.objects.create(phone_number="+254700000943")
         self.assertEqual(member_history_qs(stranger).count(), 0)
+
+
+class ContributionHistoryQsTests(TestCase):
+    """The shared-visibility list: every member's movements on one contribution,
+    each row annotated with the party whose sub-ledger moved."""
+    def setUp(self):
+        coa.seed_chart_of_accounts()
+        self.alice = User.objects.create(phone_number="+254700000950")
+        self.bob = User.objects.create(phone_number="+254700000951")
+        from apps.communities.services import CommunityService
+        from apps.contributions.models import Contribution
+        community = CommunityService.create_community(self.alice, {"name": "Chama"})
+        self.contribution = Contribution.objects.create(
+            community=community, title="Trip", created_by=self.alice)
+
+    def _contribute(self, member, amount, key):
+        ft = FinancialTransaction.objects.create(
+            op_type=FinancialTransaction.OpType.CONTRIBUTION, amount=amount,
+            initiated_by=member, contribution=self.contribution,
+            state=FinancialTransaction.State.SUCCESS, idempotency_key=f"ft-{key}")
+        post_journal(idempotency_key=f"je-{key}", op_type=pm.Op.CONTRIBUTION,
+                     lines=pm.contribution_lines(member=member, fund_type="contribution",
+                                                 fund_id=self.contribution.id,
+                                                 gross=Money(str(amount))),
+                     financial_transaction=ft)
+        return ft
+
+    def test_shared_history_resolves_the_party_per_row(self):
+        from apps.contributions.history import contribution_history_qs
+        fa = self._contribute(self.alice, 1000, "sa")
+        fb = self._contribute(self.bob, 500, "sb")
+        rows = {ft.id: ft.party_id for ft in contribution_history_qs(self.contribution)}
+        self.assertEqual(rows, {fa.id: self.alice.id, fb.id: self.bob.id})

@@ -246,12 +246,20 @@ class LedgerTxnSerializer(serializers.Serializer):
     platform_ref       = serializers.SerializerMethodField()
     created_at         = serializers.DateTimeField(read_only=True)
 
+    def _member(self, obj):
+        # Shared-visibility lists pass a {user_id: user} map and resolve the
+        # party per row (obj.party_id); single-member lists pass a fixed member.
+        members = self.context.get('members')
+        if members is not None:
+            return members.get(getattr(obj, 'party_id', None))
+        return self.context.get('member')
+
     def get_phone_number(self, obj):
-        m = self.context.get('member')
+        m = self._member(obj)
         return m.phone_number if m else None
 
     def get_name(self, obj):
-        m = self.context.get('member')
+        m = self._member(obj)
         return (m.name or None) if m else None
 
     def get_transaction_type(self, obj):
