@@ -172,16 +172,6 @@ class DisbursementService:
             created_by=req.requested_by,
         )
 
-        # ── WITHDRAWAL record (transaction history) ───────────────────────────
-        ContributionTransaction.objects.create(
-            contribution=contribution,
-            user=req.requested_by,
-            amount=req.amount,
-            transaction_type='WITHDRAWAL',
-            note=f"Approved disbursement: {req.reason[:80]}",
-            financial_transaction=ft,
-        )
-
         # ── Notify requester ──────────────────────────────────────────────────
         _notify(
             user=req.requested_by,

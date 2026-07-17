@@ -228,22 +228,11 @@ class ContributionService:
             else f"contrib-{contribution_id}-{user.id}-manual"
         )
 
-        # ── Idempotency: if this journal was already posted, return its tx ─────
+        # ── Idempotency: if this journal was already posted, return its FT ─────
         if JournalEntry.objects.filter(idempotency_key=f"je-{idem_key}").exists():
-            return ContributionTransaction.objects.filter(
-                contribution=contribution, user=user,
-                mpesa_receipt=mpesa_receipt,
-            ).first()
+            return FinancialTransaction.objects.filter(idempotency_key=idem_key).first()
 
-        tx = ContributionTransaction.objects.create(
-            contribution=contribution,
-            user=user,
-            amount=amount,
-            transaction_type='CONTRIBUTION',
-            mpesa_receipt=mpesa_receipt or None,
-        )
-
-        # ── FinancialTransaction (orchestration) ──────────────────────────────
+        # ── FinancialTransaction (orchestration; the transaction record) ──────
         ft, _ = create_fin_transaction(
             idempotency_key=idem_key,
             op_type=FinancialTransaction.OpType.CONTRIBUTION,
@@ -253,8 +242,6 @@ class ContributionService:
             contribution=contribution,
             initial_state=FinancialTransaction.State.SUCCESS,
         )
-        tx.financial_transaction = ft
-        tx.save(update_fields=['financial_transaction'])
 
         # ── Double-entry posting — the source of truth ────────────────────────
         post_journal(
@@ -311,7 +298,7 @@ class ContributionService:
                         )
                     break
 
-        return tx
+        return ft
 
     @staticmethod
     def credit_paybill_payin(*, reference, phone, amount, receipt=None, payer_name=""):

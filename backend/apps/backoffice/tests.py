@@ -1184,18 +1184,17 @@ class IdentityAndReferenceTests(TestCase):
 
     def test_contribution_transaction_links_ft_and_mobile_ref_matches(self):
         # The mobile serializer's platform_ref must equal the FT reference (both
-        # sides quote the same handle).
-        from apps.contributions.serializers import ContributionTransactionSerializer
+        # sides quote the same handle). contribute() returns the FinancialTransaction.
+        from apps.contributions.serializers import LedgerTxnSerializer
         from apps.contributions.services import ContributionService
         from apps.contributions.tests import approve_kyc
         approve_kyc(self.member)   # contribute() requires Tier-1
         contrib = ContributionService.create_contribution(self.member, {"title": "Ref Pool"})
-        tx = ContributionService.contribute(
+        ft = ContributionService.contribute(
             self.member, contrib.id, 10, mpesa_receipt="RCPTUNIFY")
-        tx.refresh_from_db()
-        self.assertIsNotNone(tx.financial_transaction_id)
-        ref = ContributionTransactionSerializer(tx).data["platform_ref"]
-        self.assertEqual(ref, f"WEPL-TXN-{tx.financial_transaction_id:06d}")
+        ref = LedgerTxnSerializer(ft, context={'member': self.member}).data["platform_ref"]
+        self.assertEqual(ref, ft.reference)
+        self.assertEqual(ref, f"WEPL-TXN-{ft.id:06d}")
 
 
 class ExportsTests(TestCase):
