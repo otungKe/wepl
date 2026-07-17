@@ -189,8 +189,7 @@ class OpsUser360View(OpsAPIView):
         from decimal import Decimal
         from apps.contributions.models import ContributionParticipant, EmergencyAdvance
         from apps.controls.models import ControlOverride, HeldMovement
-        from apps.ledger.balances import account_balance
-        from apps.ledger.models import Account
+        from apps.ledger.balances import economic_interest
 
         positions = []
         total = Decimal("0")
@@ -198,12 +197,10 @@ class OpsUser360View(OpsAPIView):
                  .filter(user=u, is_active=True)
                  .select_related("contribution")[:20])
         for part in parts:
-            # Read-only: resolve the member's sub-ledger account if it exists (a
-            # participant who never funded has none → zero). Never get-or-create
-            # on a 360 view — a read must not mint chart-of-accounts rows.
-            acct = Account.objects.filter(
-                owner=u, fund_type="contribution", fund_id=part.contribution_id).first()
-            bal = account_balance(acct) if acct else Decimal("0")
+            # The member's economic interest in each fund via the ADR-0027 seam.
+            # Read-only and derived: a participant who never funded reads zero,
+            # and no chart-of-accounts row is minted on a GET.
+            bal = economic_interest(u, "contribution", part.contribution_id)
             total += bal
             positions.append({"contribution_id": part.contribution_id,
                               "name": part.contribution.title,

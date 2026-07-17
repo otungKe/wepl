@@ -1,6 +1,6 @@
 from rest_framework import serializers
 
-from apps.ledger.balances import fund_balance, member_fund_balance
+from apps.ledger.balances import economic_interest, fund_balance
 
 from .models import (
     Contribution, ContributionParticipant, ContributionTransaction,
@@ -69,7 +69,10 @@ class ContributionSerializer(serializers.ModelSerializer):
         bulk = self.context.get('user_balances')
         if bulk is not None:
             return str(bulk.get(obj.id, '0'))
-        return str(member_fund_balance(request.user, 'contribution', obj.id))
+        # Read through the economic-interest seam (ADR-0027): the member's stake,
+        # not a raw account balance. Equal to the liability today; graduates to
+        # units × NAV transparently. The bulk path derives the same debt interest.
+        return str(economic_interest(request.user, 'contribution', obj.id))
 
     def get_voting_label(self, obj):
         labels = {
@@ -172,7 +175,10 @@ class ContributionParticipantSerializer(serializers.ModelSerializer):
         bulk = self.context.get('member_balances')
         if bulk is not None:
             return bulk.get(obj.user_id, 0)
-        return member_fund_balance(obj.user, 'contribution', obj.contribution_id)
+        # Economic-interest seam (ADR-0027) — this member's stake in the fund,
+        # which for an attributed contribution reflects the *beneficiary*, not
+        # whoever paid.
+        return economic_interest(obj.user, 'contribution', obj.contribution_id)
 
     def get_balance(self, obj):
         """How much this member has contributed to this contribution so far."""
