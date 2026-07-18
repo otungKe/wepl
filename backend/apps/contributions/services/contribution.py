@@ -1,6 +1,25 @@
 from ._common import *  # shared imports + helpers (ADR-0013 split)
 
 
+def _apportion_amount(total, weights):
+    """Split ``total`` across ``weights`` (list of ``(key, weight)``) to the cent,
+    largest-remainder so the shares sum back to ``total`` exactly. Returns
+    ``{key: Decimal share}``. Used to apportion a collective pool expense across
+    members pro-rata (weight = position) or per-capita (weight = 1)."""
+    from decimal import ROUND_DOWN
+    cent = Decimal('0.01')
+    wsum = sum((w for _, w in weights), Decimal('0'))
+    raw = {k: (total * w / wsum) for k, w in weights}
+    floored = {k: v.quantize(cent, rounding=ROUND_DOWN) for k, v in raw.items()}
+    short_cents = int(((total - sum(floored.values(), Decimal('0'))) / cent).to_integral_value())
+    # Hand the leftover cents to the largest fractional remainders first.
+    order = sorted(raw, key=lambda k: raw[k] - floored[k], reverse=True)
+    shares = dict(floored)
+    for i in range(short_cents):
+        shares[order[i % len(order)]] += cent
+    return shares
+
+
 class ContributionService:
 
     @staticmethod
@@ -177,10 +196,10 @@ class ContributionService:
         """
         Record an inbound member contribution.
 
-        Writes to both the legacy mutable balance fields (for backwards compat)
-        and the new immutable ledger (single source of truth going forward).
-        Uses F() expressions for all balance updates — no read-modify-write.
-        Idempotent when idempotency_key is supplied (e.g. M-Pesa receipt).
+        The immutable double-entry ledger is the single source of truth; balances
+        are always derived from journal lines (ADR-0002 — no mutable balance
+        fields). Idempotent when idempotency_key is supplied (e.g. M-Pesa
+        receipt).
         """
         if amount <= 0:
             raise ValidationError("Amount must be greater than 0")
@@ -228,22 +247,11 @@ class ContributionService:
             else f"contrib-{contribution_id}-{user.id}-manual"
         )
 
-        # ── Idempotency: if this journal was already posted, return its tx ─────
+        # ── Idempotency: if this journal was already posted, return its FT ─────
         if JournalEntry.objects.filter(idempotency_key=f"je-{idem_key}").exists():
-            return ContributionTransaction.objects.filter(
-                contribution=contribution, user=user,
-                mpesa_receipt=mpesa_receipt,
-            ).first()
+            return FinancialTransaction.objects.filter(idempotency_key=idem_key).first()
 
-        tx = ContributionTransaction.objects.create(
-            contribution=contribution,
-            user=user,
-            amount=amount,
-            transaction_type='CONTRIBUTION',
-            mpesa_receipt=mpesa_receipt or None,
-        )
-
-        # ── FinancialTransaction (orchestration) ──────────────────────────────
+        # ── FinancialTransaction (orchestration; the transaction record) ──────
         ft, _ = create_fin_transaction(
             idempotency_key=idem_key,
             op_type=FinancialTransaction.OpType.CONTRIBUTION,
@@ -253,8 +261,6 @@ class ContributionService:
             contribution=contribution,
             initial_state=FinancialTransaction.State.SUCCESS,
         )
-        tx.financial_transaction = ft
-        tx.save(update_fields=['financial_transaction'])
 
         # ── Double-entry posting — the source of truth ────────────────────────
         post_journal(
@@ -311,7 +317,173 @@ class ContributionService:
                         )
                     break
 
-        return tx
+        return ft
+
+    @staticmethod
+    @transaction.atomic
+    def record_pool_expense(admin_user, contribution_id, amount, *,
+                            apportion='pro_rata', reason='', idempotency_key=None):
+        """Spend jointly-owned pool funds on a shared expense, apportioned across
+        the funded members (ADR-0027 goal-pool). A governance action — contribution
+        admins only. Each member's position is drawn down by their share:
+        ``pro_rata`` (∝ their current position) or ``per_capita`` (equal). Cash
+        leaves float for the total; the ledger stays balanced and reconcilable.
+        """
+        from apps.core.policy import can
+        from apps.core.ids import uuid7
+        from apps.ledger.balances import fund_member_balances
+        from django.contrib.auth import get_user_model
+
+        amount = Decimal(str(amount))
+        if amount <= 0:
+            raise ValidationError("Amount must be greater than 0")
+        contribution = Contribution.objects.select_for_update().get(id=contribution_id)
+        if not can(admin_user, "contribution.admin", contribution):
+            raise PermissionDenied("Only a contribution admin can spend pool funds.")
+
+        pool = fund_balance('contribution', contribution.id)
+        if amount > pool:
+            raise ValidationError(
+                f"Expense of {amount} exceeds the pool balance of {pool}.")
+
+        funded = [(uid, bal) for uid, bal
+                  in fund_member_balances('contribution', contribution.id).items() if bal > 0]
+        if not funded:
+            raise ValidationError("No funded members to apportion the expense across.")
+
+        if apportion == 'pro_rata':
+            weights = funded
+        elif apportion == 'per_capita':
+            weights = [(uid, Decimal('1')) for uid, _ in funded]
+        else:
+            raise ValidationError(f"Unknown apportion mode {apportion!r}.")
+
+        shares = _apportion_amount(amount, weights)
+        users = {u.id: u for u in get_user_model().objects.filter(id__in=[u for u, _ in funded])}
+        allocations = [_pm.Allocation(member=users[uid], amount=Money(str(share)))
+                       for uid, share in shares.items() if share > 0]
+
+        idem_key = idempotency_key or f"pool-expense-{contribution.id}-{uuid7()}"
+        ft, _ = create_fin_transaction(
+            idempotency_key=idem_key,
+            op_type=FinancialTransaction.OpType.DISBURSEMENT,
+            amount=amount,
+            initiated_by=admin_user,
+            counterparty_name=(reason[:120] if reason else 'Pool expense'),
+            contribution=contribution,
+            initial_state=FinancialTransaction.State.SUCCESS,
+        )
+        post_journal(
+            idempotency_key=f"je-{idem_key}",
+            op_type=_pm.Op.POOL_EXPENSE,
+            lines=_pm.pool_expense_lines(
+                fund_type='contribution', fund_id=contribution.id, allocations=allocations),
+            narration=f"Pool expense: {reason[:120]}" if reason else "Pool expense",
+            financial_transaction=ft,
+            created_by=admin_user,
+        )
+        return ft
+
+    @staticmethod
+    @transaction.atomic
+    def record_external_income(admin_user, contribution_id, amount, *,
+                               source='', idempotency_key=None):
+        """Record external/business proceeds into a pool (ADR-0027). Cash lands in
+        float and is owned collectively as the pool's retained surplus — no member
+        position changes until a distribution is declared. Governed: admins only.
+        """
+        from apps.core.policy import can
+        from apps.core.ids import uuid7
+
+        amount = Decimal(str(amount))
+        if amount <= 0:
+            raise ValidationError("Amount must be greater than 0")
+        contribution = Contribution.objects.select_for_update().get(id=contribution_id)
+        if not can(admin_user, "contribution.admin", contribution):
+            raise PermissionDenied("Only a contribution admin can record pool income.")
+
+        idem_key = idempotency_key or f"ext-income-{contribution.id}-{uuid7()}"
+        ft, _ = create_fin_transaction(
+            idempotency_key=idem_key,
+            op_type=FinancialTransaction.OpType.EXTERNAL_INCOME,
+            amount=amount,
+            initiated_by=admin_user,
+            counterparty_name=(source[:120] if source else 'External income'),
+            contribution=contribution,
+            initial_state=FinancialTransaction.State.SUCCESS,
+        )
+        post_journal(
+            idempotency_key=f"je-{idem_key}",
+            op_type=_pm.Op.EXTERNAL_INCOME,
+            lines=_pm.external_income_lines(fund_id=contribution.id, amount=Money(str(amount))),
+            narration=f"External income: {source[:120]}" if source else "External income",
+            financial_transaction=ft,
+            created_by=admin_user,
+        )
+        return ft
+
+    @staticmethod
+    @transaction.atomic
+    def declare_distribution(admin_user, contribution_id, amount, *,
+                             apportion='pro_rata', reason='', idempotency_key=None):
+        """Declare a distribution of a pool's retained surplus to its members
+        (ADR-0027) — the governance act that crystallises collective equity into
+        redeemable member positions, apportioned ``pro_rata`` (∝ position) or
+        ``per_capita``. Admins only; cannot exceed the retained surplus.
+        """
+        from apps.core.policy import can
+        from apps.core.ids import uuid7
+        from apps.ledger.balances import account_balance, fund_member_balances
+        from django.contrib.auth import get_user_model
+
+        amount = Decimal(str(amount))
+        if amount <= 0:
+            raise ValidationError("Amount must be greater than 0")
+        contribution = Contribution.objects.select_for_update().get(id=contribution_id)
+        if not can(admin_user, "contribution.admin", contribution):
+            raise PermissionDenied("Only a contribution admin can declare a distribution.")
+
+        surplus = account_balance(_coa.retained_surplus_account(fund_id=contribution.id))
+        if amount > surplus:
+            raise ValidationError(
+                f"Distribution of {amount} exceeds the retained surplus of {surplus}.")
+
+        funded = [(uid, bal) for uid, bal
+                  in fund_member_balances('contribution', contribution.id).items() if bal > 0]
+        if not funded:
+            raise ValidationError("No funded members to distribute to.")
+
+        if apportion == 'pro_rata':
+            weights = funded
+        elif apportion == 'per_capita':
+            weights = [(uid, Decimal('1')) for uid, _ in funded]
+        else:
+            raise ValidationError(f"Unknown apportion mode {apportion!r}.")
+
+        shares = _apportion_amount(amount, weights)
+        users = {u.id: u for u in get_user_model().objects.filter(id__in=[u for u, _ in funded])}
+        allocations = [_pm.Allocation(member=users[uid], amount=Money(str(share)))
+                       for uid, share in shares.items() if share > 0]
+
+        idem_key = idempotency_key or f"distribute-{contribution.id}-{uuid7()}"
+        ft, _ = create_fin_transaction(
+            idempotency_key=idem_key,
+            op_type=FinancialTransaction.OpType.SURPLUS_DISTRIBUTION,
+            amount=amount,
+            initiated_by=admin_user,
+            counterparty_name=(reason[:120] if reason else 'Surplus distribution'),
+            contribution=contribution,
+            initial_state=FinancialTransaction.State.SUCCESS,
+        )
+        post_journal(
+            idempotency_key=f"je-{idem_key}",
+            op_type=_pm.Op.SURPLUS_DISTRIBUTION,
+            lines=_pm.distribute_surplus_lines(fund_id=contribution.id, allocations=allocations),
+            narration=f"Surplus distribution: {reason[:120]}" if reason else "Surplus distribution",
+            financial_transaction=ft,
+            created_by=admin_user,
+        )
+        return ft
 
     @staticmethod
     def credit_paybill_payin(*, reference, phone, amount, receipt=None, payer_name=""):

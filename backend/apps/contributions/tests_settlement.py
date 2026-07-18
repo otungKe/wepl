@@ -124,7 +124,7 @@ class C2BPaybillResolveTests(TestCase):
 
     def test_open_contribution_credits_and_reconciles(self):
         from apps.ledger import coa
-        from apps.contributions.models import ContributionTransaction
+        from apps.ledger.models import FinancialTransaction
         from apps.contributions.tests import make_user, make_contribution, approve_kyc
         coa.seed_chart_of_accounts()
         owner = make_user("254712345678")
@@ -135,5 +135,6 @@ class C2BPaybillResolveTests(TestCase):
             amount=Decimal("500"), receipt="C2BR1", payer_name="JANE DOE")
         self.assertTrue(r["reconciled"])
         self.assertEqual(r["reason"], "ok")
-        self.assertTrue(ContributionTransaction.objects.filter(
-            contribution=contrib, user=owner, mpesa_receipt="C2BR1").exists())
+        self.assertTrue(FinancialTransaction.objects.filter(
+            contribution=contrib, initiated_by=owner,
+            op_type=FinancialTransaction.OpType.CONTRIBUTION).exists())

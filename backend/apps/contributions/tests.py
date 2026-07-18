@@ -12,7 +12,7 @@ from django.core.exceptions import PermissionDenied, ValidationError
 
 from apps.communities.models import Community, CommunityMembership
 from .models import (
-    Contribution, ContributionParticipant, ContributionTransaction,
+    Contribution, ContributionParticipant,
     ROSCASlot, DisbursementRequest, DisbursementVote,
     WelfareFund, WelfareClaim, EmergencyAdvance,
 )
@@ -245,12 +245,13 @@ class ContributionCoreTests(TestCase):
         self.assertEqual(found.id, c.id)
 
     def test_transaction_recorded_on_contribute(self):
+        from apps.contributions.history import member_history_qs, transaction_type_for
         c = make_contribution(self.alice)
         ContributionService.contribute(self.alice, c.id, Decimal("500"))
-        tx = ContributionTransaction.objects.filter(contribution=c, user=self.alice).first()
-        self.assertIsNotNone(tx)
-        self.assertEqual(tx.transaction_type, "CONTRIBUTION")
-        self.assertEqual(tx.amount, Decimal("500"))
+        rows = list(member_history_qs(self.alice, contribution=c))
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(transaction_type_for(rows[0].op_type), "CONTRIBUTION")
+        self.assertEqual(rows[0].amount, Decimal("500"))
 
 
 # ---------------------------------------------------------------------------
@@ -309,10 +310,9 @@ class ROSCATests(TestCase):
         for user in [self.alice, self.bob, self.carol]:
             ContributionService.contribute(user, c.id, Decimal("2000"))
         ROSCAService.mark_slot_paid(c.id, self.alice)
-        wdl = ContributionTransaction.objects.filter(
-            contribution=c, transaction_type="WITHDRAWAL"
-        )
-        self.assertTrue(wdl.exists())
+        from apps.ledger.models import FinancialTransaction
+        self.assertTrue(FinancialTransaction.objects.filter(
+            contribution=c, op_type=FinancialTransaction.OpType.ROSCA_PAYOUT).exists())
 
 
 # ---------------------------------------------------------------------------

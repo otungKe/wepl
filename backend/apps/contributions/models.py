@@ -210,34 +210,6 @@ class ContributionParticipant(models.Model):
         return f"{self.user.phone_number} -> {self.contribution.title}"
 
 
-class ContributionTransaction(models.Model):
-    TRANSACTION_TYPES = (
-        ('CONTRIBUTION', 'Contribution'),
-        ('WITHDRAWAL',   'Withdrawal'),
-        ('ADVANCE',      'Advance'),
-        ('REPAYMENT',    'Repayment'),
-    )
-    contribution     = models.ForeignKey(Contribution, on_delete=models.CASCADE, related_name='transactions')
-    user             = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE)
-    amount           = models.DecimalField(max_digits=12, decimal_places=2)
-    transaction_type = models.CharField(max_length=20, choices=TRANSACTION_TYPES)
-    note             = models.CharField(max_length=255, blank=True, null=True)
-    mpesa_receipt    = models.CharField(max_length=50, null=True, blank=True)
-    # Link to the ledger movement (book of record) so member and ops quote the
-    # same reference (WEPL-TXN-######). Nullable for legacy rows / mirror-only writes.
-    financial_transaction = models.ForeignKey(
-        'ledger.FinancialTransaction', null=True, blank=True,
-        on_delete=models.SET_NULL, related_name='contribution_transactions')
-    created_at       = models.DateTimeField(auto_now_add=True)
-
-    class Meta:
-        ordering = ['-created_at']
-        indexes = [
-            models.Index(fields=['contribution', '-created_at'], name='contrib_tx_contrib_date_idx'),
-            models.Index(fields=['user',         '-created_at'], name='contrib_tx_user_date_idx'),
-        ]
-
-
 # ---------------------------------------------------------------------------
 # Shares Fund (optional, per contribution group)
 # ---------------------------------------------------------------------------
@@ -852,3 +824,61 @@ class ContributionJoinRequest(models.Model):
 
     def __str__(self):
         return f"{self.request_type} — {self.user.phone_number} → {self.contribution.title} [{self.status}]"
+
+
+class PoolActionRequest(models.Model):
+    """A governed collective-fund action awaiting a second admin's approval
+    (ADR-0027 maker-checker). Spending pool funds or declaring a distribution
+    moves *members'* money, so it never executes on one admin's say-so — a second
+    admin must approve first. External income (money in) is benign and stays
+    direct. On approval the request executes through the ledger and records the
+    resulting FinancialTransaction.
+    """
+    class Action(models.TextChoices):
+        EXPENSE      = 'EXPENSE',      'Pool expense'
+        DISTRIBUTION = 'DISTRIBUTION', 'Surplus distribution'
+
+    class Status(models.TextChoices):
+        PENDING   = 'PENDING',   'Pending approval'
+        EXECUTED  = 'EXECUTED',  'Executed'
+        REJECTED  = 'REJECTED',  'Rejected'
+        CANCELLED = 'CANCELLED', 'Cancelled'
+
+    contribution = models.ForeignKey(
+        Contribution, on_delete=models.CASCADE, related_name='pool_actions')
+    action       = models.CharField(max_length=20, choices=Action.choices)
+    amount       = models.DecimalField(max_digits=20, decimal_places=2)
+    apportion    = models.CharField(max_length=12, default='pro_rata')
+    memo         = models.CharField(max_length=255, blank=True)
+    status       = models.CharField(max_length=12, choices=Status.choices, default=Status.PENDING)
+    requested_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name='+')
+    decided_by   = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.PROTECT, null=True, blank=True, related_name='+')
+    decision_note = models.CharField(max_length=255, blank=True)
+    # The ledger movement produced on execution (the book of record).
+    financial_transaction = models.ForeignKey(
+        'ledger.FinancialTransaction', null=True, blank=True,
+        on_delete=models.SET_NULL, related_name='+')
+    created_at   = models.DateTimeField(auto_now_add=True)
+    updated_at   = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-created_at']
+        indexes = [
+            models.Index(fields=['contribution', 'status'], name='pool_action_contrib_status_idx'),
+        ]
+
+    def __str__(self):
+        return f"{self.action} {self.amount} [{self.status}] — {self.contribution.title}"
+
+
+class PoolActionApproval(models.Model):
+    """A distinct admin's approval of a PoolActionRequest (maker-checker)."""
+    request   = models.ForeignKey(
+        PoolActionRequest, on_delete=models.CASCADE, related_name='approvals')
+    approver  = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name='+')
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        unique_together = ['request', 'approver']

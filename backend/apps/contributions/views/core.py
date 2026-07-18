@@ -385,13 +385,14 @@ class MyTransactionsView(APIView):
     permission_classes = [IsActiveSession]
 
     def get(self, request):
-        txs = ContributionTransaction.objects.filter(
-            user=request.user
-        ).select_related('user', 'contribution').order_by('-created_at')
+        # Ledger-derived history (the FinancialTransactions touching this member's
+        # owned accounts) — no longer the legacy shadow log.
+        from apps.contributions.history import member_history_qs
+        txs = member_history_qs(request.user)
         paginator = FinancialCursorPagination()
         page = paginator.paginate_queryset(txs, request)
         return paginator.get_paginated_response(
-            ContributionTransactionSerializer(page, many=True).data
+            LedgerTxnSerializer(page, many=True, context={'member': request.user}).data
         )
 
 
@@ -422,14 +423,24 @@ class ContributionTransactionsView(APIView):
             (vis == 'admins_all' and can(request.user, "contribution.admin", contribution))
         )
 
-        txs = ContributionTransaction.objects.filter(
-            contribution=contribution,
-            **({}  if see_all else {'user': request.user}),
-        ).select_related('user', 'contribution').order_by('-created_at')
+        # Ledger-derived: settled movements on this contribution (not the legacy
+        # shadow log). Shared view resolves each row's party per-FT; own view is
+        # scoped to the requester.
+        from apps.contributions.history import contribution_history_qs, member_history_qs
         paginator = FinancialCursorPagination()
-        page = paginator.paginate_queryset(txs, request)
+        if see_all:
+            txs = contribution_history_qs(contribution)
+            page = paginator.paginate_queryset(txs, request)
+            from django.contrib.auth import get_user_model
+            ids = {ft.party_id for ft in page if ft.party_id}
+            members = {u.id: u for u in get_user_model().objects.filter(id__in=ids)}
+            ctx = {'members': members}
+        else:
+            txs = member_history_qs(request.user, contribution=contribution)
+            page = paginator.paginate_queryset(txs, request)
+            ctx = {'member': request.user}
         return paginator.get_paginated_response(
-            ContributionTransactionSerializer(page, many=True, context={'request': request}).data
+            LedgerTxnSerializer(page, many=True, context=ctx).data
         )
 
 
