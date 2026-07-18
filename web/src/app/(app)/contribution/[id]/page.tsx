@@ -1,12 +1,14 @@
 'use client'
 import { useEffect, useState, useCallback } from 'react'
 import { useParams, useRouter } from 'next/navigation'
-import { Receipt, Users, Banknote, FileEdit, Plus, Smartphone, Check, X, CreditCard, ArrowUpCircle, CalendarClock, Lock } from 'lucide-react'
+import { Receipt, Users, Banknote, FileEdit, Plus, Smartphone, Check, X, CreditCard, ArrowUpCircle, ArrowDownCircle, CalendarClock, Lock, ShoppingCart, Split } from 'lucide-react'
 import {
   contributions, payments, apiError,
   type Contribution, type Transaction, type Participant, type DisbursementRequest, type ContributionAmendment,
+  type PoolActionRequest,
 } from '@/lib/api'
 import { useTier } from '@/hooks/useTier'
+import { useAuthStore } from '@/store/auth'
 import { PageHeader } from '@/components/app/PageHeader'
 import { Tabs } from '@/components/ui/Tabs'
 import { Button } from '@/components/ui/Button'
@@ -98,12 +100,14 @@ export default function ContributionDetailPage() {
         { key: 'transactions', label: 'Transactions' },
         { key: 'members', label: 'Members' },
         { key: 'disbursements', label: 'Disbursements' },
+        ...(c.is_admin ? [{ key: 'pool', label: 'Pool' }] : []),
         { key: 'amendments', label: 'Amendments' },
       ]} />
 
       {tab === 'transactions' && <TransactionsTab id={id} />}
       {tab === 'members' && <MembersTab id={id} />}
       {tab === 'disbursements' && <DisbursementsTab id={id} isAdmin={c.is_admin} />}
+      {tab === 'pool' && c.is_admin && <PoolTab id={id} />}
       {tab === 'amendments' && <AmendmentsTab id={id} />}
 
       <ContributeModal open={payOpen} onClose={() => setPayOpen(false)} contributionId={Number(id)} />
@@ -281,6 +285,141 @@ function RequestPayoutModal({ open, onClose, id, onDone }: { open: boolean; onCl
         <Textarea label="Reason" value={reason} onChange={e => setReason(e.target.value)} placeholder="What is this payout for?" />
         <Input label="Recipient phone (optional)" type="tel" value={phone} onChange={e => setPhone(e.target.value)} hint="Defaults to you." />
         <Button onClick={submit} loading={saving} fullWidth>Submit request</Button>
+      </div>
+    </Modal>
+  )
+}
+
+type PoolSheet = null | 'income' | 'expense' | 'distribute'
+
+function PoolTab({ id }: { id: string }) {
+  const myId = useAuthStore(s => s.user?.id)
+  const [items, setItems] = useState<PoolActionRequest[]>([])
+  const [loading, setLoading] = useState(true)
+  const [sheet, setSheet] = useState<PoolSheet>(null)
+  const [busy, setBusy] = useState<number | null>(null)
+
+  const load = useCallback(() => {
+    setLoading(true)
+    contributions.poolActions(id).then(setItems).catch(e => toast.error(apiError(e))).finally(() => setLoading(false))
+  }, [id])
+  useEffect(() => { load() }, [load])
+
+  async function decide(fn: Promise<unknown>, reqId: number, done: string) {
+    setBusy(reqId)
+    try { await fn; toast.success(done); load() }
+    catch (e) { toast.error(apiError(e)) } finally { setBusy(null) }
+  }
+
+  if (loading) return <div className="space-y-2">{Array.from({ length: 3 }).map((_, i) => <Skeleton key={i} className="h-24" />)}</div>
+
+  const cards: { key: PoolSheet; icon: typeof ArrowDownCircle; title: string; hint: string }[] = [
+    { key: 'income',     icon: ArrowDownCircle, title: 'Record income',       hint: 'External / business proceeds' },
+    { key: 'expense',    icon: ShoppingCart,    title: 'Propose expense',      hint: 'Spend pool — needs a 2nd admin' },
+    { key: 'distribute', icon: Split,           title: 'Propose distribution', hint: 'Share surplus — needs a 2nd admin' },
+  ]
+
+  return (
+    <div>
+      <div className="mb-5 grid gap-3 sm:grid-cols-3">
+        {cards.map(({ key, icon: Icon, title, hint }) => (
+          <button key={key} onClick={() => setSheet(key)}
+            className="flex flex-col items-start gap-2 rounded-lg border border-border bg-surface p-4 text-left transition-colors hover:border-primary/40 hover:bg-primary-bg/40">
+            <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-primary-pale text-primary"><Icon size={18} /></div>
+            <div>
+              <p className="text-sm font-semibold text-text">{title}</p>
+              <p className="text-xs text-text-muted">{hint}</p>
+            </div>
+          </button>
+        ))}
+      </div>
+
+      <p className="mb-3 text-xs font-semibold text-text-muted">COLLECTIVE-FUND ACTIVITY</p>
+      {items.length === 0 ? (
+        <EmptyState icon={Banknote} title="No pool actions yet" description="Record income, or propose an expense or distribution for a second admin to approve." />
+      ) : (
+        <div className="space-y-3">
+          {items.map(a => {
+            const mine = myId != null && a.requested_by === myId
+            return (
+              <div key={a.id} className="rounded-lg border border-border bg-surface p-4">
+                <div className="flex items-center justify-between">
+                  <p className="text-lg font-bold text-text">{formatMoney(a.amount)}</p>
+                  <Badge tone={statusTone(a.status)}>{a.status}</Badge>
+                </div>
+                <p className="mt-1 text-sm text-text-secondary">
+                  {a.action === 'EXPENSE' ? 'Pool expense' : 'Surplus distribution'} · {a.apportion === 'pro_rata' ? 'pro-rata' : 'per-capita'}
+                </p>
+                <p className="mt-1 text-xs text-text-muted">
+                  by {a.requested_by_name}{a.status === 'PENDING' ? ` · ${a.approval_count} approval(s)` : ''}{a.memo ? ` · ${a.memo}` : ''}
+                </p>
+                {a.status === 'PENDING' && (
+                  <div className="mt-3 flex gap-2">
+                    {mine ? (
+                      <Button size="sm" variant="outline" loading={busy === a.id}
+                        onClick={() => decide(contributions.cancelPoolAction(a.id), a.id, 'Withdrawn')}>Withdraw</Button>
+                    ) : (
+                      <>
+                        <Button size="sm" loading={busy === a.id}
+                          onClick={() => decide(contributions.approvePoolAction(a.id), a.id, 'Approved')}><Check size={15} /> Approve</Button>
+                        <Button size="sm" variant="outline"
+                          onClick={() => decide(contributions.rejectPoolAction(a.id), a.id, 'Rejected')}><X size={15} /> Reject</Button>
+                      </>
+                    )}
+                  </div>
+                )}
+              </div>
+            )
+          })}
+        </div>
+      )}
+      <PoolActionModal sheet={sheet} onClose={() => setSheet(null)} id={id} onDone={load} />
+    </div>
+  )
+}
+
+function PoolActionModal({ sheet, onClose, id, onDone }: {
+  sheet: PoolSheet; onClose: () => void; id: string; onDone: () => void
+}) {
+  const [amount, setAmount] = useState('')
+  const [note, setNote] = useState('')
+  const [apportion, setApportion] = useState<'pro_rata' | 'per_capita'>('pro_rata')
+  const [loading, setLoading] = useState(false)
+
+  useEffect(() => { if (sheet) { setAmount(''); setNote(''); setApportion('pro_rata') } }, [sheet])
+
+  const title = sheet === 'income' ? 'Record income' : sheet === 'expense' ? 'Propose expense' : 'Propose distribution'
+
+  async function submit() {
+    if (!amount.trim()) return
+    setLoading(true)
+    try {
+      if (sheet === 'income') { await contributions.recordExternalIncome(id, { amount, source: note }); toast.success('Income recorded') }
+      else if (sheet === 'expense') { await contributions.requestPoolExpense(id, { amount, apportion, reason: note }); toast.success('Proposed — awaiting a 2nd admin') }
+      else if (sheet === 'distribute') { await contributions.requestDistribution(id, { amount, apportion, reason: note }); toast.success('Proposed — awaiting a 2nd admin') }
+      onClose(); onDone()
+    } catch (e) { toast.error(apiError(e)) } finally { setLoading(false) }
+  }
+
+  return (
+    <Modal open={sheet !== null} onClose={onClose} title={title}>
+      <div className="space-y-3">
+        <Input label="Amount (KES)" type="number" inputMode="decimal" value={amount} onChange={e => setAmount(e.target.value)} />
+        {sheet !== 'income' && (
+          <div className="flex gap-2">
+            {(['pro_rata', 'per_capita'] as const).map(m => (
+              <button key={m} onClick={() => setApportion(m)}
+                className={`flex-1 rounded-lg border px-3 py-2 text-sm font-medium transition-colors ${apportion === m ? 'border-primary bg-primary-pale text-primary' : 'border-border text-text-secondary hover:bg-primary-bg/40'}`}>
+                {m === 'pro_rata' ? 'Pro-rata' : 'Per-capita'}
+              </button>
+            ))}
+          </div>
+        )}
+        <Input label={sheet === 'income' ? 'Source (optional)' : 'Reason (optional)'} value={note} onChange={e => setNote(e.target.value)} />
+        <div className="flex justify-end gap-2 pt-1">
+          <Button variant="outline" onClick={onClose}>Cancel</Button>
+          <Button loading={loading} disabled={!amount.trim()} onClick={submit}>{sheet === 'income' ? 'Record' : 'Propose'}</Button>
+        </div>
       </div>
     </Modal>
   )

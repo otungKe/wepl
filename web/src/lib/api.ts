@@ -452,6 +452,23 @@ export const reports = {
 // ─────────────────────────────────────────────────────────────
 // Contributions
 // ─────────────────────────────────────────────────────────────
+export interface PoolActionRequest {
+  id: number
+  contribution: number
+  action: 'EXPENSE' | 'DISTRIBUTION'
+  amount: string
+  apportion: 'pro_rata' | 'per_capita'
+  memo: string
+  status: 'PENDING' | 'EXECUTED' | 'REJECTED' | 'CANCELLED'
+  requested_by: number
+  requested_by_name: string
+  approval_count: number
+  decision_note: string
+  platform_ref: string | null
+  created_at: string
+  updated_at: string
+}
+
 export const contributions = {
   mine:      async (active = true) => unwrap<Contribution>((await api.get(`/contributions/?active=${active}`)).data),
   open:      async () => unwrap<Contribution>((await api.get('/contributions/open/')).data),
@@ -477,6 +494,17 @@ export const contributions = {
   respondInvite: (reqId: number, action: 'accept' | 'decline') => api.post(`/contributions/invitations/${reqId}/respond/`, { action }),
   // Emergency advances (admin review)
   actionAdvance: (advanceId: number, action: 'approve' | 'reject', amount?: number) => api.post(`/contributions/advances/${advanceId}/action/`, { action, ...(amount != null ? { amount } : {}) }),
+  // Collective-fund actions (ADR-0027) — expense & distribution are maker-checked
+  poolActions: async (id: number | string) => unwrap<PoolActionRequest>((await api.get(`/contributions/${id}/pool-actions/`)).data),
+  recordExternalIncome: (id: number | string, data: { amount: number | string; source?: string }) =>
+    api.post(`/contributions/${id}/external-income/`, data),
+  requestPoolExpense: (id: number | string, data: { amount: number | string; apportion?: string; reason?: string }) =>
+    api.post<PoolActionRequest>(`/contributions/${id}/pool-expense/`, data),
+  requestDistribution: (id: number | string, data: { amount: number | string; apportion?: string; reason?: string }) =>
+    api.post<PoolActionRequest>(`/contributions/${id}/distribute/`, data),
+  approvePoolAction: (reqId: number) => api.post<PoolActionRequest>(`/contributions/pool-actions/${reqId}/approve/`),
+  rejectPoolAction: (reqId: number, reason?: string) => api.post(`/contributions/pool-actions/${reqId}/reject/`, { reason }),
+  cancelPoolAction: (reqId: number) => api.post(`/contributions/pool-actions/${reqId}/cancel/`),
 }
 
 // ─────────────────────────────────────────────────────────────
