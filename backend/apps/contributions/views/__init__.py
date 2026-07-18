@@ -7,6 +7,7 @@ because every view class is re-exported here.
 from .core import ContributionCreateView, MyContributionsView, CommunityContributionsView, OpenContributionsView, DiscoverCampaignsView, ContributionDetailView, ContributionByInviteView, JoinContributionView, LeaveContributionView, ContributionCloseView, ContributionReopenView, ContributionArchiveView, ContributionUpdateView, ContributionDeleteView, ContributionParticipantsView, ContributeView, MyTransactionsView, ContributionTransactionsView
 from .rosca import ROSCARotationView, ROSCAAdvanceSlotView
 from .disbursement import DisbursementRequestListCreateView, DisbursementVoteView, DisbursementCancelView
+from .pools import PoolExpenseView, ExternalIncomeView, SurplusDistributionView
 from .shares import CommunitySharesFundView, CommunitySharesContributeView
 from .welfare import WelfareClaimVoteView, WelfareFundView, WelfareContributeView, WelfareClaimListCreateView, WelfareActivityView
 from .advances import AdvanceListCreateView, AdvanceActionView, MyAdvancesView
@@ -35,6 +36,9 @@ __all__ = [
     "ContributionTransactionsView",
     "ROSCARotationView",
     "ROSCAAdvanceSlotView",
+    "PoolExpenseView",
+    "ExternalIncomeView",
+    "SurplusDistributionView",
     "DisbursementRequestListCreateView",
     "DisbursementVoteView",
     "DisbursementCancelView",

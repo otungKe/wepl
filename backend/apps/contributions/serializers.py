@@ -1,3 +1,5 @@
+from decimal import Decimal
+
 from rest_framework import serializers
 
 from apps.ledger.balances import economic_interest, fund_balance
@@ -202,6 +204,26 @@ class ContributionParticipantSerializer(serializers.ModelSerializer):
 class ContributionPaymentSerializer(serializers.Serializer):
     contribution_id = serializers.IntegerField()
     amount          = serializers.DecimalField(max_digits=12, decimal_places=2)
+
+
+class PoolExpenseSerializer(serializers.Serializer):
+    """Request body for spending pool funds on a shared expense (ADR-0027)."""
+    amount    = serializers.DecimalField(max_digits=20, decimal_places=2, min_value=Decimal('0.01'))
+    apportion = serializers.ChoiceField(choices=['pro_rata', 'per_capita'], default='pro_rata')
+    reason    = serializers.CharField(required=False, allow_blank=True, default='')
+
+
+class ExternalIncomeSerializer(serializers.Serializer):
+    """Request body for recording external/business proceeds into a pool."""
+    amount = serializers.DecimalField(max_digits=20, decimal_places=2, min_value=Decimal('0.01'))
+    source = serializers.CharField(required=False, allow_blank=True, default='')
+
+
+class SurplusDistributionSerializer(serializers.Serializer):
+    """Request body for declaring a distribution of a pool's retained surplus."""
+    amount    = serializers.DecimalField(max_digits=20, decimal_places=2, min_value=Decimal('0.01'))
+    apportion = serializers.ChoiceField(choices=['pro_rata', 'per_capita'], default='pro_rata')
+    reason    = serializers.CharField(required=False, allow_blank=True, default='')
 
 
 class LedgerTxnSerializer(serializers.Serializer):
