@@ -286,6 +286,14 @@ class Account(models.Model):
         settings.AUTH_USER_MODEL, null=True, blank=True,
         on_delete=models.PROTECT, related_name='ledger_accounts',
     )
+    # A ledger position may instead be owned by an Organization as a legal
+    # counterparty (ADR-0027 ownership axis: individual / collective / org). At
+    # most one of owner / owner_org is set; both null = a GL account or an
+    # owner-less pool control account.
+    owner_org = models.ForeignKey(
+        'organizations.Organization', null=True, blank=True,
+        on_delete=models.PROTECT, related_name='ledger_accounts',
+    )
     # Generic link to the owning fund, stored as primitives to avoid circular
     # FK imports and to keep the ledger independent of fund-type schemas.
     # fund_type ∈ {'', 'contribution', 'welfare', 'shares', ...}
@@ -307,6 +315,7 @@ class Account(models.Model):
             models.Index(fields=['type'],                        name='ledger_acct_type_idx'),
             models.Index(fields=['fund_type', 'fund_id'],        name='ledger_acct_fund_idx'),
             models.Index(fields=['owner', 'fund_type', 'fund_id'], name='ledger_acct_owner_fund_idx'),
+            models.Index(fields=['owner_org', 'fund_type', 'fund_id'], name='ledger_acct_ownerorg_fund_idx'),
         ]
         constraints = [
             # Structured identity of a sub-ledger — one account per member-fund.
@@ -317,12 +326,23 @@ class Account(models.Model):
                 fields=['owner', 'fund_type', 'fund_id'],
                 condition=Q(owner__isnull=False),
                 name='ledger_acct_owner_fund_uniq'),
-            # A pool/fund control account (ADR-0025 Part B): owner-less, one per
-            # (fund_type, fund_id). Excludes GL accounts (fund_type = '').
+            # One organization sub-ledger per (org, fund) — the org-owned analogue
+            # of the member sub-ledger (ADR-0027).
+            models.UniqueConstraint(
+                fields=['owner_org', 'fund_type', 'fund_id'],
+                condition=Q(owner_org__isnull=False),
+                name='ledger_acct_ownerorg_fund_uniq'),
+            # A pool/fund control account (ADR-0025 Part B): owner-LESS (neither a
+            # member nor an org), one per (fund_type, fund_id). Excludes GL
+            # accounts (fund_type = '').
             models.UniqueConstraint(
                 fields=['fund_type', 'fund_id'],
-                condition=Q(owner__isnull=True) & ~Q(fund_type=''),
+                condition=Q(owner__isnull=True) & Q(owner_org__isnull=True) & ~Q(fund_type=''),
                 name='ledger_acct_pool_uniq'),
+            # A position has at most one owner — a member OR an organization.
+            models.CheckConstraint(
+                condition=~(Q(owner__isnull=False) & Q(owner_org__isnull=False)),
+                name='ledger_acct_single_owner'),
         ]
 
     def save(self, *args, **kwargs):

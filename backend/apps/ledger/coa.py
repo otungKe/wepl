@@ -87,6 +87,12 @@ def code_for_fund(fund_type: str, fund_id: int, owner_id: int) -> str:
     return sub_ledger_code(gl, fund_id, owner_id)
 
 
+def org_sub_ledger_code(gl_code: str, fund_id: int, org_id: int) -> str:
+    """An organization sub-ledger, e.g. ``2000-0350000-O000000012`` — the ``O``
+    marker keeps org ids in a namespace separate from member ids (ADR-0027)."""
+    return f"{pool_code(gl_code, fund_id)}-O{int(org_id):0{MEMBER_CODE_WIDTH}d}"
+
+
 @transaction.atomic
 def seed_chart_of_accounts() -> dict[str, Account]:
     """
@@ -224,6 +230,29 @@ def pool_account(*, fund_type: str, fund_id: int) -> Account:
         },
     )
     ensure_custody(fund_type=fund_type, fund_id=fund_id)
+    return acct
+
+
+def org_fund_account(*, org, fund_type: str, fund_id: int) -> Account:
+    """Resolve (get-or-create) an ORGANIZATION's sub-ledger LIABILITY account for
+    a fund — the org-owned analogue of ``member_fund_account`` (ADR-0027 ownership
+    axis). Keyed on the structured identity (owner_org, fund_type, fund_id) and
+    parented under the pool control account, exactly like a member sub-ledger.
+    """
+    parent_code = _FUND_PAYABLE_PARENT.get(fund_type)
+    if parent_code is None:
+        raise ValueError(f"Unknown fund_type {fund_type!r} for org sub-ledger resolution.")
+    pool = pool_account(fund_type=fund_type, fund_id=fund_id)
+    acct, _ = Account.objects.get_or_create(
+        owner_org=org, fund_type=fund_type, fund_id=fund_id,
+        defaults={
+            'code':      org_sub_ledger_code(parent_code, fund_id, org.pk),
+            'name':      f"{org.name} · {fund_type} #{fund_id}",
+            'type':      Account.Type.LIABILITY,
+            'parent':    pool,
+            'tenant':    _tenant_for_fund(fund_type, fund_id),
+        },
+    )
     return acct
 
 

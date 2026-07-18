@@ -128,6 +128,23 @@ def disbursement_lines(*, member, fund_type, fund_id, amount: Money) -> list[Lin
     ]
 
 
+def reallocate_to_org_lines(*, member, org, fund_type, fund_id,
+                            amount: Money) -> list[Line]:
+    """Transfer a member's position in a fund to an organization (ADR-0027
+    ownership reallocation): debit the member's sub-ledger, credit the org's. A
+    pure change of *who owns the claim* — no cash moves, and since both are
+    fund liabilities the pool total is unchanged. A governed money movement (it
+    removes a member's redeemable claim), so it runs through post_journal like
+    any other."""
+    _require_positive(amount, "reallocation amount")
+    member_acct = coa.member_fund_account(user=member, fund_type=fund_type, fund_id=fund_id)
+    org_acct = coa.org_fund_account(org=org, fund_type=fund_type, fund_id=fund_id)
+    return [
+        Line(member_acct, DEBIT, amount.amount, note="reallocate to org"),
+        Line(org_acct, CREDIT, amount.amount, note="org position"),
+    ]
+
+
 def pool_expense_lines(*, fund_type, fund_id,
                        allocations: list[Allocation]) -> list[Line]:
     """A collective pool expense apportioned across members (ADR-0027 goal-pool):

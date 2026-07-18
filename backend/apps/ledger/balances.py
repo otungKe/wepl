@@ -101,6 +101,18 @@ def member_fund_balance(user, fund_type: str, fund_id: int) -> Decimal:
     return (agg['c'] or Decimal('0')) - (agg['d'] or Decimal('0'))
 
 
+def org_fund_balance(org, fund_type: str, fund_id: int) -> Decimal:
+    """An organization's signed sub-ledger balance in a fund (0 if none).
+
+    The org-owned analogue of ``member_fund_balance`` (ADR-0027). Read-only —
+    never creates an Account. Org sub-ledgers are LIABILITY (credit-normal).
+    """
+    agg = AccountBalance.objects.filter(
+        account__owner_org=org, account__fund_type=fund_type, account__fund_id=fund_id,
+    ).aggregate(d=Sum('debit_total'), c=Sum('credit_total'))
+    return (agg['c'] or Decimal('0')) - (agg['d'] or Decimal('0'))
+
+
 def economic_interest(party, fund_type: str, fund_id: int) -> Decimal:
     """A party's *derived* economic interest in a fund (ADR-0027).
 
