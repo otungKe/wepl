@@ -111,6 +111,23 @@ export type DisbursementRequest = {
   executed_at: string | null;
 };
 
+export type PoolActionRequest = {
+  id: number;
+  contribution: number;
+  action: 'EXPENSE' | 'DISTRIBUTION';
+  amount: string;
+  apportion: 'pro_rata' | 'per_capita';
+  memo: string;
+  status: 'PENDING' | 'EXECUTED' | 'REJECTED' | 'CANCELLED';
+  requested_by: number;
+  requested_by_name: string;
+  approval_count: number;
+  decision_note: string;
+  platform_ref: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
 export type ShareHolding = {
   id: number;
   phone_number: string;
@@ -493,6 +510,57 @@ export const voteDisbursement = async (
 
 export const cancelDisbursementRequest = async (requestId: number): Promise<DisbursementRequest> => {
   const r = await API.post(`contributions/disbursements/${requestId}/cancel/`);
+  return r.data;
+};
+
+// ---------------------------------------------------------------------------
+// Collective-fund actions (ADR-0027) — pool expense & surplus distribution are
+// maker-checked; external income (money in) is a direct admin action.
+// ---------------------------------------------------------------------------
+
+export const recordExternalIncome = async (
+  contributionId: number,
+  data: { amount: number | string; source?: string }
+): Promise<{ reference: string; id: number }> => {
+  const r = await API.post(`contributions/${contributionId}/external-income/`, data);
+  return r.data;
+};
+
+export const requestPoolExpense = async (
+  contributionId: number,
+  data: { amount: number | string; apportion?: string; reason?: string }
+): Promise<PoolActionRequest> => {
+  const r = await API.post(`contributions/${contributionId}/pool-expense/`, data);
+  return r.data;
+};
+
+export const requestDistribution = async (
+  contributionId: number,
+  data: { amount: number | string; apportion?: string; reason?: string }
+): Promise<PoolActionRequest> => {
+  const r = await API.post(`contributions/${contributionId}/distribute/`, data);
+  return r.data;
+};
+
+export const getPoolActions = async (contributionId: number): Promise<PoolActionRequest[]> => {
+  const r = await API.get(`contributions/${contributionId}/pool-actions/`);
+  return r.data.results ?? r.data;
+};
+
+export const approvePoolAction = async (requestId: number): Promise<PoolActionRequest> => {
+  const r = await API.post(`contributions/pool-actions/${requestId}/approve/`);
+  return r.data;
+};
+
+export const rejectPoolAction = async (
+  requestId: number, reason?: string
+): Promise<PoolActionRequest> => {
+  const r = await API.post(`contributions/pool-actions/${requestId}/reject/`, { reason });
+  return r.data;
+};
+
+export const cancelPoolAction = async (requestId: number): Promise<PoolActionRequest> => {
+  const r = await API.post(`contributions/pool-actions/${requestId}/cancel/`);
   return r.data;
 };
 
