@@ -9,7 +9,8 @@ from .views import (
     ContributionDeleteView, ContributionUpdateView,
     ROSCARotationView, ROSCAAdvanceSlotView,
     DisbursementRequestListCreateView, DisbursementVoteView, DisbursementCancelView,
-    PoolExpenseView, ExternalIncomeView, SurplusDistributionView,
+    ExternalIncomeView, PoolExpenseRequestView, SurplusDistributionRequestView,
+    PoolActionListView, PoolActionApproveView, PoolActionRejectView, PoolActionCancelView,
     CommunitySharesFundView, CommunitySharesContributeView,
     WelfareClaimVoteView,
     WelfareFundView, WelfareContributeView, WelfareClaimListCreateView, WelfareActivityView,
@@ -47,10 +48,14 @@ urlpatterns = [
     path('<int:contribution_id>/rosca/',              ROSCARotationView.as_view()),
     path('<int:contribution_id>/rosca/advance/',      ROSCAAdvanceSlotView.as_view()),
 
-    # Collective-fund admin actions (ADR-0027)
-    path('<int:contribution_id>/pool-expense/',       PoolExpenseView.as_view()),
+    # Collective-fund admin actions (ADR-0027) — maker-checked spend + distribution
     path('<int:contribution_id>/external-income/',    ExternalIncomeView.as_view()),
-    path('<int:contribution_id>/distribute/',         SurplusDistributionView.as_view()),
+    path('<int:contribution_id>/pool-expense/',       PoolExpenseRequestView.as_view()),
+    path('<int:contribution_id>/distribute/',         SurplusDistributionRequestView.as_view()),
+    path('<int:contribution_id>/pool-actions/',       PoolActionListView.as_view()),
+    path('pool-actions/<int:request_id>/approve/',    PoolActionApproveView.as_view()),
+    path('pool-actions/<int:request_id>/reject/',     PoolActionRejectView.as_view()),
+    path('pool-actions/<int:request_id>/cancel/',     PoolActionCancelView.as_view()),
 
     # Disbursement
     path('<int:contribution_id>/disbursements/',      DisbursementRequestListCreateView.as_view()),

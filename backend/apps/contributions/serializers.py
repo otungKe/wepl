@@ -13,6 +13,7 @@ from .models import (
     StandingOrder, StandingOrderSlot,
     ContributionAmendment, ContributionAmendmentVote,
     ContributionJoinRequest,
+    PoolActionRequest,
 )
 
 
@@ -224,6 +225,29 @@ class SurplusDistributionSerializer(serializers.Serializer):
     amount    = serializers.DecimalField(max_digits=20, decimal_places=2, min_value=Decimal('0.01'))
     apportion = serializers.ChoiceField(choices=['pro_rata', 'per_capita'], default='pro_rata')
     reason    = serializers.CharField(required=False, allow_blank=True, default='')
+
+
+class PoolActionRequestSerializer(serializers.ModelSerializer):
+    requested_by_name = serializers.SerializerMethodField()
+    approval_count    = serializers.SerializerMethodField()
+    platform_ref      = serializers.SerializerMethodField()
+
+    class Meta:
+        model  = PoolActionRequest
+        fields = [
+            'id', 'contribution', 'action', 'amount', 'apportion', 'memo',
+            'status', 'requested_by', 'requested_by_name', 'approval_count',
+            'decision_note', 'platform_ref', 'created_at', 'updated_at',
+        ]
+
+    def get_requested_by_name(self, obj):
+        return obj.requested_by.name or obj.requested_by.phone_number
+
+    def get_approval_count(self, obj):
+        return obj.approvals.count()
+
+    def get_platform_ref(self, obj):
+        return obj.financial_transaction.reference if obj.financial_transaction_id else None
 
 
 class LedgerTxnSerializer(serializers.Serializer):
