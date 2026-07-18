@@ -58,6 +58,10 @@ class FinancialTransaction(models.Model):
         WELFARE_CONTRIBUTION = 'WELFARE_CONTRIBUTION', 'Welfare Contribution'
         WELFARE_CLAIM        = 'WELFARE_CLAIM',        'Welfare Claim Disbursement'
         SHARES_PURCHASE      = 'SHARES_PURCHASE',      'Shares Purchase'
+        # Collective / institutional (ADR-0027) — not member cash movements, so
+        # outside the member PAYIN/PAYOUT limit sets.
+        EXTERNAL_INCOME      = 'EXTERNAL_INCOME',      'External Income into Pool'
+        SURPLUS_DISTRIBUTION = 'SURPLUS_DISTRIBUTION', 'Retained Surplus Distribution'
 
     VALID_TRANSITIONS = {
         State.PENDING:    frozenset({State.PROCESSING, State.FAILED}),

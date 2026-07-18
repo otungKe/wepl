@@ -32,6 +32,7 @@ MEMBER_CONTRIB_PAYABLE = '2000'
 WELFARE_PAYABLE      = '2100'
 SHARES_PAYABLE       = '2200'
 OPENING_BALANCE_EQUITY = '3000'
+RETAINED_SURPLUS     = '3200'
 FEE_REVENUE          = '4000'
 INTEREST_INCOME      = '4100'
 
@@ -44,6 +45,7 @@ _GL_ACCOUNTS = {
     WELFARE_PAYABLE:        ('Welfare Payable',             Account.Type.LIABILITY),
     SHARES_PAYABLE:         ('Shares Payable',              Account.Type.LIABILITY),
     OPENING_BALANCE_EQUITY: ('Opening Balance Equity',      Account.Type.EQUITY),
+    RETAINED_SURPLUS:       ('Retained Surplus',            Account.Type.EQUITY),
     FEE_REVENUE:            ('Fee Revenue',                 Account.Type.INCOME),
     INTEREST_INCOME:        ('Interest Income',             Account.Type.INCOME),
 }
@@ -176,6 +178,27 @@ def ensure_custody(*, fund_type: str, fund_id: int):
         fund_type=fund_type, fund_id=fund_id,
     )
     return arrangement
+
+
+def retained_surplus_account(*, fund_id: int) -> Account:
+    """Resolve (get-or-create) a pool's **retained-surplus** control account
+    (ADR-0027). Owner-less EQUITY account (code e.g. ``3200-0000042``) holding a
+    pool's collectively-owned surplus — external income lands here and stays until
+    a distribution is declared. Keyed on ``fund_type='retained'`` so it never
+    collides with the LIABILITY pool control account for the same fund id.
+    """
+    gl = gl_account(RETAINED_SURPLUS)
+    acct, _ = Account.objects.get_or_create(
+        owner=None, fund_type='retained', fund_id=fund_id,
+        defaults={
+            'code':   pool_code(RETAINED_SURPLUS, fund_id),
+            'name':   f"Pool #{fund_id} · retained surplus",
+            'type':   gl.type,
+            'parent': gl,
+            'tenant': _tenant_for_fund('contribution', fund_id),
+        },
+    )
+    return acct
 
 
 def pool_account(*, fund_type: str, fund_id: int) -> Account:

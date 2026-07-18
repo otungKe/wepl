@@ -41,6 +41,8 @@ class Op:
     SHARES_PURCHASE      = 'SHARES_PURCHASE'
     STANDING_ORDER       = 'STANDING_ORDER'
     POOL_EXPENSE         = 'POOL_EXPENSE'
+    EXTERNAL_INCOME      = 'EXTERNAL_INCOME'
+    SURPLUS_DISTRIBUTION = 'SURPLUS_DISTRIBUTION'
     FEE                  = 'FEE'
     ADJUSTMENT           = 'ADJUSTMENT'
 
@@ -147,6 +149,39 @@ def pool_expense_lines(*, fund_type, fund_id,
     _require_positive(total, "pool expense total")
     lines.append(Line(coa.mpesa_float_account(), CREDIT, total.amount, note="pool expense out"))
     return lines
+
+
+def external_income_lines(*, fund_id, amount: Money) -> list[Line]:
+    """Business / external proceeds into a pool (ADR-0027): cash arrives in float
+    and is owned *collectively* as the pool's retained surplus. No member position
+    changes — attribution to individuals is a separate, declared act."""
+    _require_positive(amount, "external income")
+    return [
+        Line(coa.mpesa_float_account(), DEBIT, amount.amount, note="external income in"),
+        Line(coa.retained_surplus_account(fund_id=fund_id), CREDIT, amount.amount,
+             note="retained surplus"),
+    ]
+
+
+def distribute_surplus_lines(*, fund_id, allocations: list[Allocation]) -> list[Line]:
+    """A declared distribution of retained surplus to members (ADR-0027): draws
+    down the collective equity and *crystallises* it into each member's redeemable
+    contribution position by the declared share. The exact moment a derived
+    beneficial interest becomes a posted liability."""
+    if not allocations:
+        raise ValueError("distribution needs at least one allocation")
+    currency = allocations[0].amount.currency
+    total = Money.zero(currency)
+    credits: list[Line] = []
+    for alloc in allocations:
+        _require_positive(alloc.amount, "distribution share")
+        total = total + alloc.amount                    # currency-checked by Money
+        member_acct = coa.member_fund_account(
+            user=alloc.member, fund_type='contribution', fund_id=fund_id)
+        credits.append(Line(member_acct, CREDIT, alloc.amount.amount, note="surplus distribution"))
+    _require_positive(total, "distribution total")
+    return [Line(coa.retained_surplus_account(fund_id=fund_id), DEBIT, total.amount,
+                 note="distribute surplus")] + credits
 
 
 def welfare_contribution_lines(*, member, fund_id, amount: Money) -> list[Line]:
