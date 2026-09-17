@@ -183,13 +183,21 @@ class PaymentOpsService:
     def _apply_success(cls, ft: FT, *, actor_label: str = "") -> dict:
         """Finalise a confirmed payout exactly as the B2C callback would. The rail
         status query carries no receipt, so it finalises without one."""
-        from apps.contributions.settlement import on_payout_settled
+        from apps.core.events import emit_event
         try:
             ft.transition_to(FT.State.SUCCESS)
         except TransitionError:
             ft.refresh_from_db()
             return cls._result("noop", ft, "Already resolved by a concurrent update.")
-        on_payout_settled(ft, "")
+        # Discovery → one durable settlement event (ADR-0028); the inline
+        # settlement consumer propagates it (advance domain + notify). Atomic with
+        # the transition (this method is @transaction.atomic).
+        emit_event(
+            'payment.settled',
+            aggregate_key=f'ft:{ft.id}',
+            dedup_key=f'payment.settled:ft={ft.id}',
+            body={'ft_id': ft.id, 'receipt': ''},
+        )
         cls._settle_intent(ft, success=True)
         logger.info("FinOps: payout FT %s healed to SUCCESS by %s", ft.id, actor_label or "ops")
         return cls._result("healed_success", ft, "Payout confirmed and finalised.")
@@ -199,15 +207,21 @@ class PaymentOpsService:
     def _apply_failure(cls, ft: FT, *, reason: str, actor_label: str = "") -> dict:
         """Fail the payout and restore reserved funds via the reversal path the
         B2C failure callback uses."""
-        from apps.ledger.posting import reverse_financial_transaction
-        from apps.contributions.settlement import on_payout_failed
+        from apps.core.events import emit_event
         try:
             ft.transition_to(FT.State.FAILED, failure_reason=reason)
         except TransitionError:
             ft.refresh_from_db()
             return cls._result("noop", ft, "Already resolved by a concurrent update.")
-        reverse_financial_transaction(ft, note=reason)   # idempotent; no-op if nothing posted
-        on_payout_failed(ft)
+        # Discovery → one durable failure event (ADR-0028); the inline settlement
+        # consumer restores the reserved funds (ledger reversal) + resets the
+        # domain object. Atomic with the transition.
+        emit_event(
+            'payment.failed',
+            aggregate_key=f'ft:{ft.id}',
+            dedup_key=f'payment.failed:ft={ft.id}',
+            body={'ft_id': ft.id, 'reason': reason},
+        )
         cls._settle_intent(ft, success=False, reason=reason)
         logger.warning("FinOps: payout FT %s failed by %s — %s", ft.id, actor_label or "ops", reason)
         return cls._result("healed_failed", ft, reason)
