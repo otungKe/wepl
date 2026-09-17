@@ -4,9 +4,11 @@ from django.db import transaction
 from django.test import TestCase, override_settings
 from unittest.mock import patch
 
-from apps.core.events import emit
-from apps.core.models import OutboxEvent
-from apps.core.tasks import process_outbox
+from apps.core.events import (
+    emit, register_inline_consumer, _INLINE_CONSUMERS,
+)
+from apps.core.models import OutboxDelivery, OutboxEvent
+from apps.core.tasks import process_inline_deliveries, process_outbox
 from apps.notifications.models import Notification
 
 User = get_user_model()
@@ -104,3 +106,83 @@ class RelayFailureTests(TestCase):
         self.assertEqual(ev.status, OutboxEvent.Status.DEAD)
         self.assertEqual(ev.attempts, 5)
         self.assertIn("downstream down", ev.last_error)
+
+
+class InlineDeliveryTests(TestCase):
+    """The ADR-0029 Stage 2 inline_atomic lane: per-consumer delivery rows,
+    delivered independently of the notification (enqueue) lane."""
+
+    def setUp(self):
+        # A fake idempotent inline consumer on a dedicated event type. Registered
+        # per-test and torn down so the module-global registry never leaks.
+        self.calls = []
+        register_inline_consumer(
+            "test.inline", {"inline_event"},
+            lambda event: self.calls.append(event.id),
+        )
+        self.addCleanup(lambda: _INLINE_CONSUMERS.pop("test.inline", None))
+
+    def _emit_inline(self, **over):
+        kwargs = dict(user_id=1, title="T", message="M", dedup_key="dk-1")
+        kwargs.update(over)
+        emit("inline_event", **kwargs)
+
+    def test_emit_fans_out_a_delivery_row_per_inline_consumer(self):
+        self._emit_inline()
+        ev = OutboxEvent.objects.get()
+        d = OutboxDelivery.objects.get()
+        self.assertEqual(d.outbox_event_id, ev.id)
+        self.assertEqual(d.consumer_name, "test.inline")
+        self.assertEqual(d.status, OutboxDelivery.Status.PENDING)
+
+    def test_non_matching_event_type_creates_no_delivery(self):
+        # A different event type has no inline subscriber → no delivery rows
+        # (and the notification lane is unaffected).
+        emit("some_other_event", user_id=1, title="T", message="M")
+        self.assertEqual(OutboxDelivery.objects.count(), 0)
+
+    def test_relay_runs_handler_and_marks_processed(self):
+        self._emit_inline()
+        result = process_inline_deliveries()
+        self.assertEqual(result, {"processed": 1, "dead": 0})
+        d = OutboxDelivery.objects.get()
+        self.assertEqual(d.status, OutboxDelivery.Status.PROCESSED)
+        self.assertIsNotNone(d.processed_at)
+        self.assertEqual(len(self.calls), 1)
+
+    def test_redelivery_reruns_the_idempotent_handler(self):
+        self._emit_inline()
+        process_inline_deliveries()
+        d = OutboxDelivery.objects.get()
+        # Simulate at-least-once redelivery.
+        OutboxDelivery.objects.filter(pk=d.pk).update(status=OutboxDelivery.Status.PENDING)
+        process_inline_deliveries()
+        d.refresh_from_db()
+        self.assertEqual(d.status, OutboxDelivery.Status.PROCESSED)
+        # The handler ran again (delivery is at-least-once); real consumers dedupe
+        # on their idempotency key (post_journal), so the *effect* is once.
+        self.assertEqual(len(self.calls), 2)
+
+    def test_failing_handler_dead_letters_after_max_attempts(self):
+        _INLINE_CONSUMERS.pop("test.inline", None)
+        register_inline_consumer(
+            "test.inline", {"inline_event"},
+            lambda event: (_ for _ in ()).throw(RuntimeError("consumer boom")),
+        )
+        self._emit_inline()
+        for _ in range(5):
+            process_inline_deliveries(max_attempts=5)
+            d = OutboxDelivery.objects.get()
+            if d.status == OutboxDelivery.Status.DEAD:
+                break
+        d = OutboxDelivery.objects.get()
+        self.assertEqual(d.status, OutboxDelivery.Status.DEAD)
+        self.assertEqual(d.attempts, 5)
+        self.assertIn("consumer boom", d.last_error)
+
+    def test_notification_lane_untouched_when_no_inline_consumer(self):
+        # With no inline consumer for this type, a plain notification emit creates
+        # zero delivery rows — the enqueue lane is the only lane exercised.
+        emit("test_event", user_id=1, title="T", message="M")
+        self.assertEqual(OutboxDelivery.objects.count(), 0)
+        self.assertEqual(OutboxEvent.objects.filter(event_type="test_event").count(), 1)
