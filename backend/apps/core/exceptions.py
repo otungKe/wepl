@@ -1,19 +1,41 @@
 """
-Central DRF exception handler + shared domain exceptions.
+Central DRF exception handler + shared *platform* exceptions + a renderer registry.
 
-Custom exceptions
+Platform exceptions (owned by Core)
+-----------------------------------
+TransitionError    — state-machine transition_to() illegal edge / lost concurrent
+    UPDATE race.  Maps to 409.  Raised by ledger, payments and verification state
+    machines alike — a cross-cutting mechanism with no single business owner.
+
+RateLimitError     — service-layer rate-limit breach (OTP, SMS, …).  Maps to 429.
+
+ServiceUnavailable — a hard infrastructure dependency is transiently down (e.g. the
+    OTP store).  Maps to 503 with a Retry-After hint.
+
+These stay in Core because they are cross-cutting mechanisms, not domain concepts.
+*Business* exceptions (KYC gating, control holds/denials) live in their owning app
+and register their own renderer via ``register_exception_renderer`` from that app's
+``AppConfig.ready()`` — so Core imports no business app and names no domain concept
+(ADR-0031, the same registry discipline as ``apps.core.policy``).
+
+Renderer registry
 -----------------
-TransitionError  — raised by state machine transition_to() when a transition is
-    illegal (wrong graph) or lost a concurrent UPDATE race.  Maps to 409.
+An app maps its exception to an HTTP response by registering a renderer::
 
-RateLimitError   — raised by services when a client has exceeded a rate limit
-    (OTP requests, SMS, etc.).  Maps to 429.  Keeps services free of HTTP
-    concerns while giving the view layer the right status code for free.
+    from apps.core.exceptions import register_exception_renderer
+    register_exception_renderer(MyError, lambda exc: Response(..., status=...))
+
+``before_drf=True`` runs the renderer *before* DRF's default handler — needed for a
+structured ``PermissionDenied`` subclass whose envelope DRF would otherwise flatten.
 
 Exception handler
 -----------------
-Converts Django's PermissionDenied and ValidationError into clean DRF
-JSON responses so views never need bare try/except blocks for these cases.
+custom_exception_handler resolves, in order:
+  1. registered before-DRF renderers,
+  2. DRF's own exceptions,
+  3. Django-native built-ins (PermissionDenied / ValidationError / Http404),
+  4. registered after-DRF renderers (Core primitives + business apps),
+  5. otherwise → Django's 500 handler (so real bugs surface in Sentry).
 
 Register in settings:
     REST_FRAMEWORK = {
@@ -21,15 +43,16 @@ Register in settings:
     }
 
 Response shapes:
-    403  {"error": "<message>"}         — PermissionDenied
-    400  {"error": "<message>"}         — ValidationError (single message)
-    400  {"errors": ["msg1", "msg2"]}   — ValidationError (multiple messages)
-    404  {"error": "Not found."}        — Http404
-    409  {"error": "<message>"}         — TransitionError (state machine conflict)
-    429  {"error": "<message>"}         — RateLimitError
-    503  {"error": "<message>"}         — ServiceUnavailable (dependency outage)
-    All other exceptions fall through to Django's 500 handler (and Sentry).
+    400  {"error": "<message>"} / {"errors": [...]}   — ValidationError
+    403  {"error": "<message>"}                        — PermissionDenied
+    404  {"error": "Not found."}                       — Http404
+    409  {"error": "<message>"}                        — TransitionError
+    429  {"error": "<message>"}                        — RateLimitError
+    503  {"error": "<message>"}                        — ServiceUnavailable
+    (business apps register their own shapes, e.g. KYC 403, control 422/409)
 """
+from typing import Callable
+
 from django.core.exceptions import PermissionDenied, ValidationError
 from django.http import Http404
 
@@ -38,38 +61,16 @@ from rest_framework.response import Response
 from rest_framework.views import exception_handler as drf_default_handler
 
 
-class KYCRequired(PermissionDenied):
-    """
-    Raised when a Tier-0 (identity-verified but not KYC-approved) user attempts a
-    Tier-1 (full-access) action. A subclass of Django's PermissionDenied so it can
-    be raised from services, Celery tasks and WS consumers (like the policy layer),
-    but the handler renders a *structured* 403 the client can branch on:
-
-        {"code": "KYC_REQUIRED", "message": "...", "next_step": "/kyc/start"}
-
-    See apps/users/tiers.py (AccessPolicy) and ADR-0022.
-    """
-    code = 'KYC_REQUIRED'
-    default_message = 'Complete identity verification to unlock all platform features.'
-    next_step = '/kyc/start'
-
-    def __init__(self, message=None, next_step=None):
-        self.message = message or self.default_message
-        if next_step:
-            self.next_step = next_step
-        super().__init__(self.message)
-
-
 class TransitionError(Exception):
     """
-    Raised by FinancialTransaction.transition_to() when:
-      - The requested transition is not allowed by VALID_TRANSITIONS for the
-        current state (programming error or client abuse), or
-      - The UPDATE WHERE state=<current> returned 0 rows because a concurrent
+    Raised by a state machine's transition_to() when:
+      - the requested transition is not allowed for the current state
+        (programming error or client abuse), or
+      - the UPDATE WHERE state=<current> returned 0 rows because a concurrent
         worker already advanced the state (race condition).
 
-    Kept separate from ValidationError so callers can distinguish between
-    a domain validation failure (400) and a concurrency conflict (409).
+    Kept separate from ValidationError so callers can distinguish a domain
+    validation failure (400) from a concurrency conflict (409).
     """
 
 
@@ -94,116 +95,100 @@ class ServiceUnavailable(Exception):
     """
 
 
-class LimitExceeded(Exception):
-    """
-    Raised by the controls layer (apps.controls) at the posting chokepoint when a
-    money movement breaches a configured limit and the rule action is DENY.
-
-    Maps to HTTP 422 Unprocessable Entity — the request was well-formed but a
-    business control rejected it before any journal was written. Carries a
-    ``context`` dict describing the blocked movement (recorded for review).
-    """
-    def __init__(self, message, context=None):
-        super().__init__(message)
-        self.context = context or {}
+# ── Renderer registry (ADR-0031) ─────────────────────────────────────────────
+# (exc_type, renderer(exc) -> Response, before_drf). Business apps append their own
+# from AppConfig.ready(); Core registers only its own platform primitives (below).
+Renderer = Callable[[Exception], Response]
+_EXCEPTION_RENDERERS: list[tuple[type, Renderer, bool]] = []
 
 
-class ControlHeld(Exception):
+def register_exception_renderer(exc_type: type, renderer: Renderer, *,
+                                before_drf: bool = False) -> None:
+    """Register a Response renderer for ``exc_type``.
+
+    Called from an app's ``AppConfig.ready()`` so Core needs no knowledge of the
+    app's exceptions. ``before_drf`` runs the renderer ahead of DRF's default
+    handler (for a structured exception DRF would otherwise flatten). More
+    specific types should register before broader ones, since the first
+    ``isinstance`` match in registration order wins.
     """
-    Raised by the controls layer when a money movement trips a rule whose action
-    is HOLD (e.g. velocity/anomaly). The movement is not posted; it is flagged for
-    manual review. Maps to HTTP 409 Conflict so the client knows the request is
-    parked rather than permanently rejected. Carries a ``context`` dict.
-    """
-    def __init__(self, message, context=None):
-        super().__init__(message)
-        self.context = context or {}
+    _EXCEPTION_RENDERERS.append((exc_type, renderer, before_drf))
+
+
+def _render_registered(exc, *, before_drf: bool):
+    for exc_type, renderer, flag in _EXCEPTION_RENDERERS:
+        if flag == before_drf and isinstance(exc, exc_type):
+            return renderer(exc)
+    return None
 
 
 def custom_exception_handler(exc, context):
     """
-    Augments DRF's default handler to also handle Django-native exceptions
-    that DRF does not convert by default.
+    Augments DRF's default handler with a renderer registry and the Django-native
+    exceptions DRF does not convert by default.
     """
-    # KYCRequired → 403 with the structured tier envelope. Handled BEFORE DRF's
-    # default handler, which would otherwise convert this Django PermissionDenied
-    # subclass into a generic {"detail": ...} 403 and swallow the envelope.
-    if isinstance(exc, KYCRequired):
-        return Response(
-            {'code': exc.code, 'message': exc.message, 'next_step': exc.next_step},
-            status=status.HTTP_403_FORBIDDEN,
-        )
+    # 1. Registered before-DRF renderers (e.g. a structured PermissionDenied
+    #    subclass whose envelope DRF's default handler would otherwise flatten).
+    rendered = _render_registered(exc, before_drf=True)
+    if rendered is not None:
+        return rendered
 
-    # Let DRF handle its own exceptions first (e.g. rest_framework.exceptions.*)
+    # 2. Let DRF handle its own exceptions first (e.g. rest_framework.exceptions.*,
+    #    and Django's PermissionDenied / Http404 which DRF also converts).
     response = drf_default_handler(exc, context)
     if response is not None:
         return response
 
-    # Django PermissionDenied → 403
+    # 3. Django-native built-ins DRF may not have converted.
     if isinstance(exc, PermissionDenied):
         return Response(
             {'error': str(exc) or 'You do not have permission to perform this action.'},
             status=status.HTTP_403_FORBIDDEN,
         )
 
-    # Django ValidationError → 400
     if isinstance(exc, ValidationError):
-        # ValidationError can carry a single message or a list
+        # ValidationError can carry a single message or a list.
         if hasattr(exc, 'message_dict'):
-            # Field-keyed errors from model clean() — rare in service layer
             return Response(exc.message_dict, status=status.HTTP_400_BAD_REQUEST)
         elif hasattr(exc, 'messages') and len(exc.messages) > 1:
-            return Response(
-                {'errors': exc.messages},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+            return Response({'errors': exc.messages}, status=status.HTTP_400_BAD_REQUEST)
         else:
             msg = exc.message if hasattr(exc, 'message') else str(exc)
             return Response({'error': msg}, status=status.HTTP_400_BAD_REQUEST)
 
-    # Http404 → 404
     if isinstance(exc, Http404):
         return Response({'error': 'Not found.'}, status=status.HTTP_404_NOT_FOUND)
 
-    # TransitionError → 409 Conflict
-    # In practice these are caught internally (tasks/webhooks), but if one
-    # escapes to a view the client should know it's a concurrency conflict.
-    if isinstance(exc, TransitionError):
-        return Response({'error': str(exc)}, status=status.HTTP_409_CONFLICT)
+    # 4. Registered after-DRF renderers (Core primitives + business apps).
+    rendered = _render_registered(exc, before_drf=False)
+    if rendered is not None:
+        return rendered
 
-    # RateLimitError → 429 Too Many Requests
-    if isinstance(exc, RateLimitError):
-        return Response({'error': str(exc)}, status=status.HTTP_429_TOO_MANY_REQUESTS)
-
-    # ServiceUnavailable → 503 (transient dependency outage, e.g. OTP store down)
-    if isinstance(exc, ServiceUnavailable):
-        resp = Response(
-            {'error': str(exc) or 'Service temporarily unavailable. Please try again shortly.'},
-            status=status.HTTP_503_SERVICE_UNAVAILABLE,
-        )
-        resp['Retry-After'] = '30'
-        return resp
-
-    # Controls (Phase 3): durably record the blocked movement to the review queue.
-    # This runs AFTER the service's @transaction.atomic has rolled back, so the
-    # record persists even though the FinancialTransaction did not. Best-effort —
-    # a recording failure must never mask the original control response.
-    if isinstance(exc, (LimitExceeded, ControlHeld)):
-        try:
-            from apps.controls.review import record_blocked_movement
-            record_blocked_movement(exc)
-        except Exception:  # pragma: no cover - audit must not break the response
-            import logging
-            logging.getLogger(__name__).exception("Failed to record held/denied movement")
-
-    # LimitExceeded → 422 (control rejected the movement before posting)
-    if isinstance(exc, LimitExceeded):
-        return Response({'error': str(exc)}, status=status.HTTP_422_UNPROCESSABLE_ENTITY)
-
-    # ControlHeld → 409 (movement parked for manual review)
-    if isinstance(exc, ControlHeld):
-        return Response({'error': str(exc)}, status=status.HTTP_409_CONFLICT)
-
-    # Everything else: let Django's 500 handler deal with it.
-    # This ensures real bugs surface in Sentry rather than being swallowed as 400s.
+    # 5. Everything else: let Django's 500 handler deal with it, so real bugs
+    #    surface in Sentry rather than being swallowed as 400s.
     return None
+
+
+# ── Core registers its own platform primitives ───────────────────────────────
+def _render_transition_error(exc):
+    # In practice caught internally (tasks/webhooks); if one escapes to a view the
+    # client should know it's a concurrency conflict.
+    return Response({'error': str(exc)}, status=status.HTTP_409_CONFLICT)
+
+
+def _render_rate_limit_error(exc):
+    return Response({'error': str(exc)}, status=status.HTTP_429_TOO_MANY_REQUESTS)
+
+
+def _render_service_unavailable(exc):
+    resp = Response(
+        {'error': str(exc) or 'Service temporarily unavailable. Please try again shortly.'},
+        status=status.HTTP_503_SERVICE_UNAVAILABLE,
+    )
+    resp['Retry-After'] = '30'
+    return resp
+
+
+register_exception_renderer(TransitionError, _render_transition_error)
+register_exception_renderer(RateLimitError, _render_rate_limit_error)
+register_exception_renderer(ServiceUnavailable, _render_service_unavailable)

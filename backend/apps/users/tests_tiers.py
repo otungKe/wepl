@@ -11,7 +11,8 @@ from django.contrib.auth import get_user_model
 from django.test import TestCase, override_settings
 from rest_framework.test import APIRequestFactory
 
-from apps.core.exceptions import KYCRequired, custom_exception_handler
+from apps.core.exceptions import custom_exception_handler
+from apps.users.exceptions import KYCRequired
 from apps.users.models import KYCProfile
 from apps.users.permissions import RequiresTier1
 from apps.users.tiers import AccessPolicy
