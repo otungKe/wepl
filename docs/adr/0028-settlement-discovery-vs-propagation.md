@@ -4,7 +4,8 @@
 - **Date:** 2026-09-17
 - **Deciders:** Money-movement architecture review
 - **Relates to:** builds on the outbox (ADR-0006) and the payment aggregate
-  (ADR-0014); is the settlement contract the `FinancialTransaction` decomposition
+  (ADR-0014); consumes the generalized event log (ADR-0029) as its delivery
+  substrate; is the settlement contract the `FinancialTransaction` decomposition
   will be built against.
 
 ## Context
@@ -118,7 +119,9 @@ sweep leaves open today.
 ### 3. Three prerequisites, in order
 
 This decomposition is not free; it depends on three changes to the eventing
-substrate, and they must land before (or with) the settlement event:
+substrate, and they must land before (or with) the settlement event. Prerequisites
+1 and 2 are specified in **ADR-0029 (generalized outbox event log)**, which this
+ADR consumes as its delivery substrate:
 
 1. **Generalize the outbox payload beyond the notification shape.** A domain event
    is `(event_type, aggregate, payload: JSON primitives)`. Notification fields
