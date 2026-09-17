@@ -1573,7 +1573,7 @@ class AccountRestrictionTests(TestCase):
     # ── Enforcement: money chokepoint ────────────────────────────────────────
     def test_freeze_denies_money_at_control_chokepoint(self):
         from django.core.exceptions import ValidationError as _ignored  # noqa
-        from apps.core.exceptions import LimitExceeded
+        from apps.controls.exceptions import LimitExceeded
         from apps.controls.engine import enforce_controls
         from apps.ledger.models import FinancialTransaction as FT
         from apps.users.services import RestrictionService
