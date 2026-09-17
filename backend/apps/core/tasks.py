@@ -88,3 +88,76 @@ def process_outbox(max_events: int = 500, max_attempts: int = 5) -> dict:
     if processed or dead:
         logger.info("process_outbox: processed=%d dead=%d", processed, dead)
     return {'processed': processed, 'dead': dead}
+
+
+@shared_task(queue='financial')
+def process_inline_deliveries(max_deliveries: int = 500, max_attempts: int = 5) -> dict:
+    """Deliver OutboxDelivery rows to inline (financial-grade) consumers
+    (ADR-0029 Stage 2, the ``inline_atomic`` lane).
+
+    Each delivery is claimed with ``select_for_update(skip_locked=True)`` and its
+    consumer's handler is run *synchronously inside the same transaction that acks
+    the row* — so the handler's effect (e.g. a journal posting) and the delivery
+    ack commit together. Handlers must be idempotent (money dedupes via
+    ``post_journal``'s idempotency key), because a crash between the handler and
+    the ack re-delivers the row. Independent per-delivery attempts/dead-letter:
+    one consumer's failure never touches another's rows or the notification lane.
+    """
+    from .events import _INLINE_CONSUMERS
+    from .models import OutboxDelivery
+
+    processed = 0
+    dead = 0
+
+    for _ in range(max_deliveries):
+        with transaction.atomic():
+            delivery = (
+                OutboxDelivery.objects
+                .select_for_update(skip_locked=True)
+                .filter(status=OutboxDelivery.Status.PENDING)
+                .select_related('outbox_event')
+                .order_by('id')
+                .first()
+            )
+            if delivery is None:
+                break
+
+            try:
+                consumer = _INLINE_CONSUMERS.get(delivery.consumer_name)
+                if consumer is None:
+                    # A delivery row for a consumer this worker doesn't have
+                    # registered (mid-deploy skew, or a removed consumer). Fail it
+                    # so it retries — a rolling deploy resolves it, and it never
+                    # silently vanishes.
+                    raise RuntimeError(
+                        f"No inline consumer registered for '{delivery.consumer_name}'")
+                consumer.handler(delivery.outbox_event)
+                delivery.status = OutboxDelivery.Status.PROCESSED
+                delivery.processed_at = timezone.now()
+                delivery.save(update_fields=['status', 'processed_at'])
+                processed += 1
+            except Exception as exc:
+                delivery.attempts += 1
+                delivery.last_error = str(exc)[:1000]
+                if delivery.attempts >= max_attempts:
+                    delivery.status = OutboxDelivery.Status.DEAD
+                    dead += 1
+                    logger.error(
+                        "process_inline_deliveries: delivery %s (%s) dead-lettered "
+                        "after %d attempts: %s",
+                        delivery.id, delivery.consumer_name, delivery.attempts, exc,
+                    )
+                else:
+                    logger.warning(
+                        "process_inline_deliveries: delivery %s (%s) failed "
+                        "(attempt %d): %s",
+                        delivery.id, delivery.consumer_name, delivery.attempts, exc,
+                    )
+                delivery.save(update_fields=['attempts', 'last_error', 'status'])
+
+    if dead:
+        _alert(f"Inline delivery dead-lettered {dead} row(s)", {'dead': dead})
+
+    if processed or dead:
+        logger.info("process_inline_deliveries: processed=%d dead=%d", processed, dead)
+    return {'processed': processed, 'dead': dead}

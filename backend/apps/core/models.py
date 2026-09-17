@@ -50,6 +50,53 @@ class OutboxEvent(models.Model):
         return f"Outbox-{self.id} [{self.event_type}] {self.status}"
 
 
+class OutboxDelivery(models.Model):
+    """One delivery of an OutboxEvent to one *inline* consumer (ADR-0029 Stage 2).
+
+    The enqueue lane (notifications) is delivered by ``process_outbox`` via the
+    ``domain_event`` signal and is NOT tracked here. Each ``inline_atomic`` consumer
+    instead gets its own delivery row so it retries and dead-letters
+    *independently* — a stuck or failing financial consumer never blocks, rolls
+    back, or is rolled back by another consumer or the notification lane.
+
+    A delivery is claimed and its handler run synchronously inside one transaction
+    that also acks the row, so at-least-once delivery × an idempotent handler
+    (e.g. ``post_journal`` on its idempotency key) yields exactly-once effect.
+    """
+    class Status(models.TextChoices):
+        PENDING   = 'PENDING',   'Pending'
+        PROCESSED = 'PROCESSED', 'Processed'
+        DEAD      = 'DEAD',      'Dead-lettered'
+
+    outbox_event  = models.ForeignKey(
+        OutboxEvent, on_delete=models.CASCADE, related_name='deliveries',
+    )
+    consumer_name = models.CharField(max_length=128, db_index=True)
+    status        = models.CharField(
+        max_length=10, choices=Status.choices, default=Status.PENDING,
+    )
+    attempts      = models.PositiveIntegerField(default=0)
+    last_error    = models.TextField(blank=True)
+    created_at    = models.DateTimeField(auto_now_add=True)
+    processed_at  = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        constraints = [
+            # One delivery per (event, consumer): fan-out is idempotent and a
+            # consumer can never be double-fed for the same event.
+            models.UniqueConstraint(
+                fields=['outbox_event', 'consumer_name'],
+                name='uniq_delivery_per_event_consumer'),
+        ]
+        indexes = [
+            # The relay claim: oldest PENDING first.
+            models.Index(fields=['status', 'created_at'], name='outbox_delivery_status_idx'),
+        ]
+
+    def __str__(self):
+        return f"Delivery-{self.id} [{self.consumer_name}] {self.status}"
+
+
 class WorkerHeartbeat(models.Model):
     """Liveness stamp for a scheduled (beat) task — OP-2 System Health.
 
