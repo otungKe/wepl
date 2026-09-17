@@ -36,6 +36,30 @@ class EmitDurabilityTests(TestCase):
         self.assertEqual(OutboxEvent.objects.count(), 0)
 
 
+class EnvelopeTests(TestCase):
+    """The ADR-0029 envelope wraps the body without disturbing existing callers."""
+
+    def test_notification_callers_get_blank_envelope_defaults(self):
+        # An existing-shape emit() (no envelope kwargs) stores blank keys, a
+        # populated occurred_at, and schema_version 1 — zero behaviour change.
+        _emit(user_id=42)
+        ev = OutboxEvent.objects.get()
+        self.assertEqual(ev.aggregate_key, "")
+        self.assertEqual(ev.dedup_key, "")
+        self.assertEqual(ev.schema_version, 1)
+        self.assertIsNotNone(ev.occurred_at)
+        # The body is unchanged — still the notification fields.
+        self.assertEqual(ev.payload["user_id"], 42)
+
+    def test_envelope_fields_are_stored_when_provided(self):
+        _emit(aggregate_key="payment:123", dedup_key="payment.settled:ft=123",
+              schema_version=2)
+        ev = OutboxEvent.objects.get()
+        self.assertEqual(ev.aggregate_key, "payment:123")
+        self.assertEqual(ev.dedup_key, "payment.settled:ft=123")
+        self.assertEqual(ev.schema_version, 2)
+
+
 @override_settings(CELERY_TASK_ALWAYS_EAGER=True, CELERY_TASK_EAGER_PROPAGATES=True)
 class RelayDeliveryTests(TestCase):
     def setUp(self):
