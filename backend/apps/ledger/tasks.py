@@ -5,8 +5,8 @@ All outgoing M-Pesa B2C payments are dispatched through here, so that:
   - DB transactions are never held open while HTTP calls are in-flight
   - State transitions are atomic (UPDATE WHERE state = current)
   - Retries are idempotent via FinancialTransaction.idempotency_key
-  - Failures post a reversing journal (reverse_financial_transaction) so pool
-    balances stay correct
+  - Failures emit a durable payment.failed event (ADR-0028); the inline
+    settlement consumer posts the reversing journal so pool balances stay correct
   - The B2C async result (from B2CResultView) handles SUCCESS/FAILED resolution
 
 P1-07 fix: _handle_payout_failure is now called ONLY from on_failure (after
@@ -198,12 +198,22 @@ def recover_stale_processing_transactions() -> dict:
                     ft.id,
                 )
                 try:
-                    from apps.core.exceptions import TransitionError
-                    ft.transition_to(FinancialTransaction.State.SUCCESS)
-                    # Trigger the same success handler the B2C callback would use
-                    from apps.contributions.settlement import on_payout_settled
+                    from django.db import transaction
+
+                    from apps.core.events import emit_event
                     receipt = ft.mpesa_receipt or ""
-                    on_payout_settled(ft, receipt)
+                    # Discovery → one durable settlement event (ADR-0028); the
+                    # inline settlement consumer propagates it. Atomic with the
+                    # transition (same posture as the B2C callback), so a won
+                    # transition always carries its event.
+                    with transaction.atomic():
+                        ft.transition_to(FinancialTransaction.State.SUCCESS)
+                        emit_event(
+                            'payment.settled',
+                            aggregate_key=f'ft:{ft.id}',
+                            dedup_key=f'payment.settled:ft={ft.id}',
+                            body={'ft_id': ft.id, 'receipt': receipt},
+                        )
                     recovered += 1
                 except Exception:
                     logger.exception("STALE-RECOVER: success-transition failed for FT-%s", ft.id)
@@ -319,26 +329,32 @@ def _query_safaricom_status(ft) -> str:
 def _handle_payout_failure(ft, reason: str) -> None:
     """
     On B2C failure (called from on_failure after all retries, or for hard errors):
-      1. Write a REVERSAL_CREDIT to restore the reserved pool funds.
-      2. Transition FT to FAILED.
-      3. Update the linked domain object so admins/users can see the failure
-         and retry if appropriate.
+    transition FT to FAILED and, atomically, emit one durable ``payment.failed``
+    event (ADR-0028). The inline settlement consumer then restores the reserved
+    pool funds (ledger reversal) and resets the linked domain object so admins /
+    users can see the failure and retry if appropriate.
+
+    Emitting inside the transition's transaction means a won transition always
+    carries its event (no lost reversal); a lost race (already terminal) is a
+    no-op — the winning witness already emitted.
     """
+    from django.db import transaction
+
+    from apps.core.events import emit_event
     from apps.ledger.models import FinancialTransaction
-    from apps.ledger.posting import reverse_financial_transaction
 
     try:
-        reverse_financial_transaction(ft, note=reason[:500])  # restore reserved funds
-    except Exception:
-        logger.exception("_handle_payout_failure: could not reverse journal for FT %s", ft.id)
-
-    try:
-        ft.transition_to(FinancialTransaction.State.FAILED, failure_reason=reason[:500])
+        with transaction.atomic():
+            ft.transition_to(
+                FinancialTransaction.State.FAILED, failure_reason=reason[:500])
+            emit_event(
+                'payment.failed',
+                aggregate_key=f'ft:{ft.id}',
+                dedup_key=f'payment.failed:ft={ft.id}',
+                body={'ft_id': ft.id, 'reason': reason[:500]},
+            )
     except TransitionError:
-        pass  # already transitioned by another path
-
-    from apps.contributions.settlement import on_payout_failed
-    on_payout_failed(ft)
+        pass  # already finalised by another path (idempotent)
 
 
 
