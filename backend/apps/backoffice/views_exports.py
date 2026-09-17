@@ -15,9 +15,14 @@ from django.http import StreamingHttpResponse
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 
+from apps.ledger import money_activity
+
 from .audit import record_action
 from .permissions import RequireCapability
 from .views import OpsAPIView
+
+# Rows fetched (and prefetched) per chunk while streaming an export.
+_EXPORT_CHUNK = 500
 
 MAX_EXPORT_ROWS = 100_000
 
@@ -77,13 +82,19 @@ class TransactionsExportView(OpsAPIView):
                   "fund", "mpesa_receipt", "idempotency_key"]
 
         def rows():
-            for ft in qs.iterator():
+            # chunk_size is REQUIRED with .iterator() once the queryset carries a
+            # prefetch (filter_transactions prefetches payment_intents for the
+            # money-activity seam) — Django prefetches per chunk, keeping the
+            # export streaming rather than loading everything.
+            for ft in qs.iterator(chunk_size=_EXPORT_CHUNK):
                 fund_label, _ = _fund_of(ft)
                 yield [
                     ft.id, ft.created_at.isoformat(), ft.op_type, ft.state, ft.amount,
                     ft.initiated_by.phone_number if ft.initiated_by_id else "",
                     ft.recipient_phone, ft.counterparty_name,
-                    fund_label or "", ft.mpesa_receipt or "",
+                    fund_label or "",
+                    # Rail via the seam (ADR-0030); prefetched per chunk above.
+                    money_activity.for_financial_transaction(ft).rail.receipt or "",
                     ft.idempotency_key,
                 ]
 
