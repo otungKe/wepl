@@ -1,6 +1,6 @@
 # ADR-0030: Decompose FinancialTransaction
 
-- **Status:** Proposed
+- **Status:** Accepted (2026-09-17)
 - **Date:** 2026-09-17
 - **Deciders:** Money-movement architecture review
 - **Relates to:** dissolves the orchestration object into the ledger posting

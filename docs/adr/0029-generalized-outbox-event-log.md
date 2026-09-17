@@ -1,6 +1,6 @@
 # ADR-0029: Generalize the outbox from notification queue to domain event log
 
-- **Status:** Proposed
+- **Status:** Accepted (2026-09-17)
 - **Date:** 2026-09-17
 - **Deciders:** Money-movement architecture review
 - **Relates to:** generalizes the transactional outbox (ADR-0006); is the substrate

@@ -1,6 +1,6 @@
 # ADR-0031: Core is a platform layer — the registry contract
 
-- **Status:** Proposed
+- **Status:** Accepted (2026-09-17)
 - **Date:** 2026-09-17
 - **Deciders:** Architecture review — Core boundary
 - **Relates to:** generalizes the authorization registry (ADR-0009) into a Core-wide
