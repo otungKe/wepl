@@ -36,29 +36,43 @@ def emit(event_type: str, *, user_id: int, title: str, message: str,
          community_id: int | None = None,
          conversation_id: int | None = None,
          contribution_id: int | None = None,
-         join_request_id: int | None = None) -> None:
+         join_request_id: int | None = None,
+         aggregate_key: str = '',
+         dedup_key: str = '',
+         schema_version: int = 1) -> None:
     """
-    Emit a domain event durably (transactional outbox, ADR-0006).
+    Emit a domain event durably (transactional outbox, ADR-0006/ADR-0029).
 
     Writes an OutboxEvent row in the CURRENT transaction — atomic with the state
     change when called inside an ``atomic`` block, so a rolled-back transaction
     discards the event (no phantoms) and a process/broker crash never loses it.
     The ``process_outbox`` relay delivers it at-least-once to consumers.
 
-    Signature is unchanged from the previous on_commit/signal implementation, so
-    all ~30 call sites are untouched. Payload values must be JSON-serialisable
-    primitives (IDs, strings, numbers) — never ORM objects.
+    The row carries an **envelope** (aggregate_key, dedup_key, occurred_at,
+    schema_version — ADR-0029) around the **body** in ``payload``. The
+    notification fields are the body of notification-shaped events; the envelope
+    kwargs are optional and default to blank, so all existing (~30) call sites are
+    untouched (Stage 1 is additive, zero behaviour change). Payload values must be
+    JSON-serialisable primitives (IDs, strings, numbers) — never ORM objects.
 
     Args:
         event_type: Identifies the event (maps to Notification.notification_type).
         user_id: Primary recipient of the resulting notification.
         title / message: Notification text.
         *_id: Optional FK hints for deep-linking.
+        aggregate_key: Envelope — orders/locks events per subject (e.g.
+            ``"payment:123"``). Blank for notification events.
+        dedup_key: Envelope — business dedup handle; money consumers dedupe on it
+            (Stage 2). Blank for notification events.
+        schema_version: Envelope — body schema version for this event_type.
     """
     from .models import OutboxEvent
 
     OutboxEvent.objects.create(
         event_type=event_type,
+        aggregate_key=aggregate_key,
+        dedup_key=dedup_key,
+        schema_version=schema_version,
         payload={
             'user_id':         user_id,
             'title':           title,

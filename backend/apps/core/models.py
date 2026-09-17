@@ -7,6 +7,7 @@ delivers events at-least-once to consumers, so an event is never lost in the gap
 between COMMIT and dispatch.
 """
 from django.db import models
+from django.utils import timezone
 
 
 class OutboxEvent(models.Model):
@@ -16,7 +17,21 @@ class OutboxEvent(models.Model):
         DEAD      = 'DEAD',      'Dead-lettered'
 
     event_type   = models.CharField(max_length=64, db_index=True)
+    # The typed body of the event (event-type-specific JSON primitives). For
+    # notification-shaped events this holds the notification fields; other event
+    # types carry their own shape. Wrapped by the envelope below (ADR-0029).
     payload      = models.JSONField(default=dict)
+
+    # ── Envelope (ADR-0029) ────────────────────────────────────────────────
+    # Routing/identity metadata common to every event, independent of the body.
+    # aggregate_key orders/locks events per subject; dedup_key is the business
+    # dedup handle (money consumers dedupe on it — Stage 2). Both blank for
+    # notification events, whose dedup stays on the outbox row id for now.
+    aggregate_key  = models.CharField(max_length=128, blank=True, default='', db_index=True)
+    dedup_key      = models.CharField(max_length=128, blank=True, default='', db_index=True)
+    occurred_at    = models.DateTimeField(default=timezone.now)
+    schema_version = models.PositiveSmallIntegerField(default=1)
+
     status       = models.CharField(
         max_length=10, choices=Status.choices, default=Status.PENDING,
     )
