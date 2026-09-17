@@ -20,6 +20,7 @@ from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from rest_framework.response import Response
 
+from apps.ledger import money_activity
 from apps.ledger.models import FinancialTransaction
 
 from .permissions import RequireCapability
@@ -246,11 +247,10 @@ class Transaction360View(OpsAPIView):
                 "trigger_type": ft.context_type,
                 "trigger_id": ft.context_id,
             },
-            "rail": {
-                "mpesa_checkout_id": ft.mpesa_checkout_id,
-                "mpesa_conversation_id": ft.mpesa_conversation_id,
-                "mpesa_receipt": ft.mpesa_receipt,
-            },
+            # Rail dimension via the money-activity seam (ADR-0030): reads the
+            # linked PaymentIntent, falling back to FT's mpesa_* columns. Same
+            # response shape; source of truth shifts to the intent.
+            "rail": self._rail(ft),
             "controls": self._controls(ft),
             # The accounting truth of THIS movement — which accounts were debited
             # and credited. Shown to anyone who may view the transaction: a
@@ -259,6 +259,15 @@ class Transaction360View(OpsAPIView):
             "journal": self._journal(ft),
         }
         return Response(payload)
+
+    @staticmethod
+    def _rail(ft):
+        rail = money_activity.for_financial_transaction(ft).rail
+        return {
+            "mpesa_checkout_id": rail.checkout_id or None,
+            "mpesa_conversation_id": rail.conversation_id or None,
+            "mpesa_receipt": rail.receipt or None,
+        }
 
     @staticmethod
     def _controls(ft):
