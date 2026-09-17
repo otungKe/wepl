@@ -1,9 +1,11 @@
 """Inbound callback views consume normalised CallbackEvents (P1-04)."""
 from decimal import Decimal
+from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
 from rest_framework.test import APITestCase
 
+from apps.core.models import OutboxDelivery, OutboxEvent
 from apps.ledger.models import FinancialTransaction
 from apps.ledger.writer import create_fin_transaction
 from apps.mpesa.models import MpesaSTKRequest
@@ -100,3 +102,47 @@ class B2CResultViewTests(APITestCase):
             "provider_ref": "", "success": True,
         }, format="json")
         self.assertEqual(resp.status_code, 200)
+
+    # ── Settlement cutover (ADR-0028): the callback emits a durable event and
+    #    defers propagation to the inline consumer instead of finalising inline. ──
+
+    def test_success_emits_settlement_event_and_delivery(self):
+        self.client.post(self.URL, {
+            "provider_ref": "AG_1", "success": True, "receipt": "NLJ7RT61SV",
+        }, format="json")
+        ev = OutboxEvent.objects.get(event_type="payment.settled")
+        self.assertEqual(ev.payload, {"ft_id": self.ft.id, "receipt": "NLJ7RT61SV"})
+        self.assertEqual(ev.dedup_key, f"payment.settled:ft={self.ft.id}")
+        self.assertEqual(ev.aggregate_key, f"ft:{self.ft.id}")
+        # Fanned out to the inline settlement consumer.
+        self.assertTrue(
+            OutboxDelivery.objects.filter(
+                outbox_event=ev, consumer_name="contributions.settlement").exists())
+
+    def test_failure_emits_failure_event(self):
+        self.client.post(self.URL, {
+            "provider_ref": "AG_1", "success": False, "code": "2001",
+            "result_desc": "insufficient funds",
+        }, format="json")
+        ev = OutboxEvent.objects.get(event_type="payment.failed")
+        self.assertEqual(ev.payload["ft_id"], self.ft.id)
+        self.assertIn("2001", ev.payload["reason"])
+
+    def test_success_does_not_finalise_inline(self):
+        # Propagation is the consumer's job now — the callback must not call the
+        # settlement functions synchronously.
+        with patch("apps.contributions.settlement.on_payout_settled") as m:
+            self.client.post(self.URL, {
+                "provider_ref": "AG_1", "success": True, "receipt": "R",
+            }, format="json")
+        m.assert_not_called()
+
+    def test_duplicate_callback_emits_only_once(self):
+        # First callback wins the transition and emits; a duplicate loses the race
+        # (FT already SUCCESS) and emits nothing.
+        for _ in range(2):
+            self.client.post(self.URL, {
+                "provider_ref": "AG_1", "success": True, "receipt": "NLJ7RT61SV",
+            }, format="json")
+        self.assertEqual(
+            OutboxEvent.objects.filter(event_type="payment.settled").count(), 1)
