@@ -90,13 +90,19 @@ def _row(ft):
         "counterparty_name": ft.counterparty_name,
         "fund": fund_label,
         "community_id": community.id if community else None,
-        "mpesa_receipt": ft.mpesa_receipt,
+        # Via the money-activity seam (ADR-0030) — reads the linked PaymentIntent,
+        # falling back to FT's column. Callers prefetch `payment_intents`, so this
+        # costs no extra query per row.
+        "mpesa_receipt": money_activity.for_financial_transaction(ft).rail.receipt or None,
         "created_at": ft.created_at.isoformat(),
     }
 
 
 _SELECT = ("initiated_by", "contribution__community",
            "welfare_fund__community", "shares_fund__community")
+# Rail dimension is read through the money-activity seam (ADR-0030); prefetching
+# keeps that one query per page rather than one per row.
+_PREFETCH = ("payment_intents",)
 
 
 def filter_transactions(params):
@@ -105,7 +111,8 @@ def filter_transactions(params):
     state, op_type, free-text q, date range, amount range, fund/pool, and the
     ledger account a movement touched. The registry only ever returns what the
     filters ask for (paginated), never the whole table."""
-    qs = FinancialTransaction.objects.select_related(*_SELECT)
+    qs = (FinancialTransaction.objects.select_related(*_SELECT)
+          .prefetch_related(*_PREFETCH))
     if params.get("state") and params["state"] != "all":
         qs = qs.filter(state=params["state"])
     if params.get("op_type"):
@@ -210,7 +217,8 @@ class Transaction360View(OpsAPIView):
 
     def get(self, request, tx_id):
         ft = get_object_or_404(
-            FinancialTransaction.objects.select_related(*_SELECT), pk=tx_id)
+            FinancialTransaction.objects.select_related(*_SELECT)
+            .prefetch_related(*_PREFETCH), pk=tx_id)
         fund_label, community = _fund_of(ft)
 
         payload = {

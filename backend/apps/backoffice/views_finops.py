@@ -17,6 +17,7 @@ from django.utils import timezone
 from rest_framework import status as http
 from rest_framework.response import Response
 
+from apps.ledger import money_activity
 from apps.ledger.models import FinancialTransaction as FT
 from apps.payments.ops import PAYOUT_OP_TYPES, PaymentOpsService
 
@@ -42,10 +43,14 @@ class FinopsQueuesView(OpsAPIView):
         cutoff = timezone.now() - timedelta(minutes=minutes)
 
         payouts = FT.objects.filter(op_type__in=PAYOUT_OP_TYPES)
+        # prefetch payment_intents: _finops_row reads the rail via the
+        # money-activity seam (ADR-0030), so this keeps it one query, not per row.
         stuck = (payouts.filter(state__in=_OPEN, created_at__lte=cutoff)
-                 .select_related(*_SELECT).order_by("created_at"))
+                 .select_related(*_SELECT).prefetch_related("payment_intents")
+                 .order_by("created_at"))
         failed = (payouts.filter(state=FT.State.FAILED)
-                  .select_related(*_SELECT).order_by("-updated_at")[:100])
+                  .select_related(*_SELECT).prefetch_related("payment_intents")
+                  .order_by("-updated_at")[:100])
 
         # Pay-ins are MpesaSTKRequest rows, auto-requeried by poll_mpesa_stk_status.
         from apps.mpesa.models import MpesaSTKRequest
@@ -141,6 +146,7 @@ def _finops_row(ft) -> dict:
         **_row(ft),
         "updated_at": ft.updated_at.isoformat(),
         "failure_reason": ft.failure_reason,
-        "conversation_id": ft.mpesa_conversation_id,
+        # Via the money-activity seam (ADR-0030); prefetched by the callers above.
+        "conversation_id": money_activity.for_financial_transaction(ft).rail.conversation_id or None,
         "recipient_phone": ft.recipient_phone,
     }
