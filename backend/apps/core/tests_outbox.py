@@ -5,7 +5,7 @@ from django.test import TestCase, override_settings
 from unittest.mock import patch
 
 from apps.core.events import (
-    emit, register_inline_consumer, _INLINE_CONSUMERS,
+    emit, emit_event, register_inline_consumer, _INLINE_CONSUMERS,
 )
 from apps.core.models import OutboxDelivery, OutboxEvent
 from apps.core.tasks import process_inline_deliveries, process_outbox
@@ -186,3 +186,38 @@ class InlineDeliveryTests(TestCase):
         emit("test_event", user_id=1, title="T", message="M")
         self.assertEqual(OutboxDelivery.objects.count(), 0)
         self.assertEqual(OutboxEvent.objects.filter(event_type="test_event").count(), 1)
+
+
+class GeneralEventTests(TestCase):
+    """emit_event() writes a non-notification fact; the notification lane skips it."""
+
+    def test_emit_event_stores_body_and_envelope_without_notification_fields(self):
+        emit_event("payment.settled", aggregate_key="ft:5",
+                   dedup_key="payment.settled:ft=5", body={"ft_id": 5, "receipt": "R1"})
+        ev = OutboxEvent.objects.get()
+        self.assertEqual(ev.event_type, "payment.settled")
+        self.assertEqual(ev.aggregate_key, "ft:5")
+        self.assertEqual(ev.dedup_key, "payment.settled:ft=5")
+        self.assertEqual(ev.payload, {"ft_id": 5, "receipt": "R1"})
+        self.assertNotIn("user_id", ev.payload)
+
+    def test_emit_event_with_no_inline_consumer_creates_no_delivery(self):
+        # An event type nothing subscribes to → no delivery rows.
+        emit_event("some.unsubscribed.fact", body={"x": 1})
+        self.assertEqual(OutboxDelivery.objects.count(), 0)
+
+
+@override_settings(CELERY_TASK_ALWAYS_EAGER=True, CELERY_TASK_EAGER_PROPAGATES=True)
+class NotificationGuardTests(TestCase):
+    """The enqueue relay fires the signal for every event; the notification
+    receiver must skip general (non-notification) facts that carry no user_id."""
+
+    def test_general_event_produces_no_notification(self):
+        emit_event("payment.settled", body={"ft_id": 7, "receipt": "R"})
+        result = process_outbox()
+        # The event is delivered by the enqueue relay (marked PROCESSED) but the
+        # notification receiver skips it — no Notification row is created.
+        self.assertEqual(result["processed"], 1)
+        ev = OutboxEvent.objects.get()
+        self.assertEqual(ev.status, OutboxEvent.Status.PROCESSED)
+        self.assertEqual(Notification.objects.count(), 0)

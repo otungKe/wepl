@@ -68,6 +68,21 @@ def inline_consumers_for(event_type: str) -> list[InlineConsumer]:
     return [c for c in _INLINE_CONSUMERS.values() if event_type in c.event_types]
 
 
+def _fan_out_inline(event) -> None:
+    """Create one OutboxDelivery row per subscribed inline consumer, in the SAME
+    transaction as the event (ADR-0029 Stage 2) — so the delivery obligation is as
+    durable as the fact, with no unbounded relay scan. No inline consumers for this
+    event type → no rows."""
+    from .models import OutboxDelivery
+
+    consumers = inline_consumers_for(event.event_type)
+    if consumers:
+        OutboxDelivery.objects.bulk_create(
+            [OutboxDelivery(outbox_event=event, consumer_name=c.name)
+             for c in consumers]
+        )
+
+
 def emit(event_type: str, *, user_id: int, title: str, message: str,
          community_id: int | None = None,
          conversation_id: int | None = None,
@@ -102,7 +117,7 @@ def emit(event_type: str, *, user_id: int, title: str, message: str,
             (Stage 2). Blank for notification events.
         schema_version: Envelope — body schema version for this event_type.
     """
-    from .models import OutboxDelivery, OutboxEvent
+    from .models import OutboxEvent
 
     event = OutboxEvent.objects.create(
         event_type=event_type,
@@ -119,19 +134,39 @@ def emit(event_type: str, *, user_id: int, title: str, message: str,
             'join_request_id': join_request_id,
         },
     )
+    # The enqueue lane (notifications) delivers this via process_outbox; inline
+    # consumers (if any subscribe to this event_type) get their own delivery rows.
+    _fan_out_inline(event)
 
-    # Fan out one delivery row per subscribed inline consumer, in the SAME
-    # transaction as the event (ADR-0029 Stage 2) — so the delivery obligation is
-    # as durable as the fact itself, with no unbounded relay scan. The enqueue
-    # lane (notifications) is unaffected; it is still delivered by process_outbox
-    # via the domain_event signal. With no inline consumers registered this is a
-    # no-op — zero behaviour change.
-    consumers = inline_consumers_for(event_type)
-    if consumers:
-        OutboxDelivery.objects.bulk_create(
-            [OutboxDelivery(outbox_event=event, consumer_name=c.name)
-             for c in consumers]
-        )
+
+def emit_event(event_type: str, *, aggregate_key: str = '', dedup_key: str = '',
+               body: dict | None = None, schema_version: int = 1):
+    """Emit a general (non-notification) domain fact durably (ADR-0029).
+
+    Unlike ``emit()``, this carries **no notification fields** — its ``payload`` is
+    just the typed body. The notification lane skips it (``dispatch_notification``
+    ignores events without a ``user_id``), so only inline consumers subscribed to
+    ``event_type`` act on it. This is the general form money events use, e.g.::
+
+        emit_event('payment.settled', aggregate_key=f'ft:{ft.id}',
+                   dedup_key=f'payment.settled:ft={ft.id}',
+                   body={'ft_id': ft.id, 'receipt': receipt})
+
+    Written in the CURRENT transaction (atomic with the state change), like
+    ``emit()``. Body values must be JSON-serialisable primitives — never ORM
+    objects. Returns the created OutboxEvent.
+    """
+    from .models import OutboxEvent
+
+    event = OutboxEvent.objects.create(
+        event_type=event_type,
+        aggregate_key=aggregate_key,
+        dedup_key=dedup_key,
+        schema_version=schema_version,
+        payload=body or {},
+    )
+    _fan_out_inline(event)
+    return event
 
 
 def requeue_outbox_event(event_id: int):
