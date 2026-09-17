@@ -6,7 +6,7 @@ from django.test import TestCase
 
 from apps.controls.engine import classify_direction, enforce_controls, evaluate
 from apps.controls.models import ControlDecision, LimitRule
-from apps.core.exceptions import ControlHeld, LimitExceeded
+from apps.controls.exceptions import ControlHeld, LimitExceeded
 from apps.ledger.coa import seed_chart_of_accounts
 from apps.ledger.models import Account, FinancialTransaction, JournalEntry, JournalLine
 from apps.ledger.posting import Line, post_journal

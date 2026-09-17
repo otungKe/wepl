@@ -7,6 +7,7 @@ delivers events at-least-once to consumers, so an event is never lost in the gap
 between COMMIT and dispatch.
 """
 from django.db import models
+from django.utils import timezone
 
 
 class OutboxEvent(models.Model):
@@ -16,7 +17,21 @@ class OutboxEvent(models.Model):
         DEAD      = 'DEAD',      'Dead-lettered'
 
     event_type   = models.CharField(max_length=64, db_index=True)
+    # The typed body of the event (event-type-specific JSON primitives). For
+    # notification-shaped events this holds the notification fields; other event
+    # types carry their own shape. Wrapped by the envelope below (ADR-0029).
     payload      = models.JSONField(default=dict)
+
+    # ── Envelope (ADR-0029) ────────────────────────────────────────────────
+    # Routing/identity metadata common to every event, independent of the body.
+    # aggregate_key orders/locks events per subject; dedup_key is the business
+    # dedup handle (money consumers dedupe on it — Stage 2). Both blank for
+    # notification events, whose dedup stays on the outbox row id for now.
+    aggregate_key  = models.CharField(max_length=128, blank=True, default='', db_index=True)
+    dedup_key      = models.CharField(max_length=128, blank=True, default='', db_index=True)
+    occurred_at    = models.DateTimeField(default=timezone.now)
+    schema_version = models.PositiveSmallIntegerField(default=1)
+
     status       = models.CharField(
         max_length=10, choices=Status.choices, default=Status.PENDING,
     )
@@ -33,6 +48,53 @@ class OutboxEvent(models.Model):
 
     def __str__(self):
         return f"Outbox-{self.id} [{self.event_type}] {self.status}"
+
+
+class OutboxDelivery(models.Model):
+    """One delivery of an OutboxEvent to one *inline* consumer (ADR-0029 Stage 2).
+
+    The enqueue lane (notifications) is delivered by ``process_outbox`` via the
+    ``domain_event`` signal and is NOT tracked here. Each ``inline_atomic`` consumer
+    instead gets its own delivery row so it retries and dead-letters
+    *independently* — a stuck or failing financial consumer never blocks, rolls
+    back, or is rolled back by another consumer or the notification lane.
+
+    A delivery is claimed and its handler run synchronously inside one transaction
+    that also acks the row, so at-least-once delivery × an idempotent handler
+    (e.g. ``post_journal`` on its idempotency key) yields exactly-once effect.
+    """
+    class Status(models.TextChoices):
+        PENDING   = 'PENDING',   'Pending'
+        PROCESSED = 'PROCESSED', 'Processed'
+        DEAD      = 'DEAD',      'Dead-lettered'
+
+    outbox_event  = models.ForeignKey(
+        OutboxEvent, on_delete=models.CASCADE, related_name='deliveries',
+    )
+    consumer_name = models.CharField(max_length=128, db_index=True)
+    status        = models.CharField(
+        max_length=10, choices=Status.choices, default=Status.PENDING,
+    )
+    attempts      = models.PositiveIntegerField(default=0)
+    last_error    = models.TextField(blank=True)
+    created_at    = models.DateTimeField(auto_now_add=True)
+    processed_at  = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        constraints = [
+            # One delivery per (event, consumer): fan-out is idempotent and a
+            # consumer can never be double-fed for the same event.
+            models.UniqueConstraint(
+                fields=['outbox_event', 'consumer_name'],
+                name='uniq_delivery_per_event_consumer'),
+        ]
+        indexes = [
+            # The relay claim: oldest PENDING first.
+            models.Index(fields=['status', 'created_at'], name='outbox_delivery_status_idx'),
+        ]
+
+    def __str__(self):
+        return f"Delivery-{self.id} [{self.consumer_name}] {self.status}"
 
 
 class WorkerHeartbeat(models.Model):

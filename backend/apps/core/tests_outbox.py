@@ -4,9 +4,11 @@ from django.db import transaction
 from django.test import TestCase, override_settings
 from unittest.mock import patch
 
-from apps.core.events import emit
-from apps.core.models import OutboxEvent
-from apps.core.tasks import process_outbox
+from apps.core.events import (
+    emit, emit_event, register_inline_consumer, _INLINE_CONSUMERS,
+)
+from apps.core.models import OutboxDelivery, OutboxEvent
+from apps.core.tasks import process_inline_deliveries, process_outbox
 from apps.notifications.models import Notification
 
 User = get_user_model()
@@ -34,6 +36,30 @@ class EmitDurabilityTests(TestCase):
                 raise ValueError("boom")
         # The event row was discarded with the rolled-back transaction (no phantom).
         self.assertEqual(OutboxEvent.objects.count(), 0)
+
+
+class EnvelopeTests(TestCase):
+    """The ADR-0029 envelope wraps the body without disturbing existing callers."""
+
+    def test_notification_callers_get_blank_envelope_defaults(self):
+        # An existing-shape emit() (no envelope kwargs) stores blank keys, a
+        # populated occurred_at, and schema_version 1 — zero behaviour change.
+        _emit(user_id=42)
+        ev = OutboxEvent.objects.get()
+        self.assertEqual(ev.aggregate_key, "")
+        self.assertEqual(ev.dedup_key, "")
+        self.assertEqual(ev.schema_version, 1)
+        self.assertIsNotNone(ev.occurred_at)
+        # The body is unchanged — still the notification fields.
+        self.assertEqual(ev.payload["user_id"], 42)
+
+    def test_envelope_fields_are_stored_when_provided(self):
+        _emit(aggregate_key="payment:123", dedup_key="payment.settled:ft=123",
+              schema_version=2)
+        ev = OutboxEvent.objects.get()
+        self.assertEqual(ev.aggregate_key, "payment:123")
+        self.assertEqual(ev.dedup_key, "payment.settled:ft=123")
+        self.assertEqual(ev.schema_version, 2)
 
 
 @override_settings(CELERY_TASK_ALWAYS_EAGER=True, CELERY_TASK_EAGER_PROPAGATES=True)
@@ -80,3 +106,118 @@ class RelayFailureTests(TestCase):
         self.assertEqual(ev.status, OutboxEvent.Status.DEAD)
         self.assertEqual(ev.attempts, 5)
         self.assertIn("downstream down", ev.last_error)
+
+
+class InlineDeliveryTests(TestCase):
+    """The ADR-0029 Stage 2 inline_atomic lane: per-consumer delivery rows,
+    delivered independently of the notification (enqueue) lane."""
+
+    def setUp(self):
+        # A fake idempotent inline consumer on a dedicated event type. Registered
+        # per-test and torn down so the module-global registry never leaks.
+        self.calls = []
+        register_inline_consumer(
+            "test.inline", {"inline_event"},
+            lambda event: self.calls.append(event.id),
+        )
+        self.addCleanup(lambda: _INLINE_CONSUMERS.pop("test.inline", None))
+
+    def _emit_inline(self, **over):
+        kwargs = dict(user_id=1, title="T", message="M", dedup_key="dk-1")
+        kwargs.update(over)
+        emit("inline_event", **kwargs)
+
+    def test_emit_fans_out_a_delivery_row_per_inline_consumer(self):
+        self._emit_inline()
+        ev = OutboxEvent.objects.get()
+        d = OutboxDelivery.objects.get()
+        self.assertEqual(d.outbox_event_id, ev.id)
+        self.assertEqual(d.consumer_name, "test.inline")
+        self.assertEqual(d.status, OutboxDelivery.Status.PENDING)
+
+    def test_non_matching_event_type_creates_no_delivery(self):
+        # A different event type has no inline subscriber → no delivery rows
+        # (and the notification lane is unaffected).
+        emit("some_other_event", user_id=1, title="T", message="M")
+        self.assertEqual(OutboxDelivery.objects.count(), 0)
+
+    def test_relay_runs_handler_and_marks_processed(self):
+        self._emit_inline()
+        result = process_inline_deliveries()
+        self.assertEqual(result, {"processed": 1, "dead": 0})
+        d = OutboxDelivery.objects.get()
+        self.assertEqual(d.status, OutboxDelivery.Status.PROCESSED)
+        self.assertIsNotNone(d.processed_at)
+        self.assertEqual(len(self.calls), 1)
+
+    def test_redelivery_reruns_the_idempotent_handler(self):
+        self._emit_inline()
+        process_inline_deliveries()
+        d = OutboxDelivery.objects.get()
+        # Simulate at-least-once redelivery.
+        OutboxDelivery.objects.filter(pk=d.pk).update(status=OutboxDelivery.Status.PENDING)
+        process_inline_deliveries()
+        d.refresh_from_db()
+        self.assertEqual(d.status, OutboxDelivery.Status.PROCESSED)
+        # The handler ran again (delivery is at-least-once); real consumers dedupe
+        # on their idempotency key (post_journal), so the *effect* is once.
+        self.assertEqual(len(self.calls), 2)
+
+    def test_failing_handler_dead_letters_after_max_attempts(self):
+        _INLINE_CONSUMERS.pop("test.inline", None)
+        register_inline_consumer(
+            "test.inline", {"inline_event"},
+            lambda event: (_ for _ in ()).throw(RuntimeError("consumer boom")),
+        )
+        self._emit_inline()
+        for _ in range(5):
+            process_inline_deliveries(max_attempts=5)
+            d = OutboxDelivery.objects.get()
+            if d.status == OutboxDelivery.Status.DEAD:
+                break
+        d = OutboxDelivery.objects.get()
+        self.assertEqual(d.status, OutboxDelivery.Status.DEAD)
+        self.assertEqual(d.attempts, 5)
+        self.assertIn("consumer boom", d.last_error)
+
+    def test_notification_lane_untouched_when_no_inline_consumer(self):
+        # With no inline consumer for this type, a plain notification emit creates
+        # zero delivery rows — the enqueue lane is the only lane exercised.
+        emit("test_event", user_id=1, title="T", message="M")
+        self.assertEqual(OutboxDelivery.objects.count(), 0)
+        self.assertEqual(OutboxEvent.objects.filter(event_type="test_event").count(), 1)
+
+
+class GeneralEventTests(TestCase):
+    """emit_event() writes a non-notification fact; the notification lane skips it."""
+
+    def test_emit_event_stores_body_and_envelope_without_notification_fields(self):
+        emit_event("payment.settled", aggregate_key="ft:5",
+                   dedup_key="payment.settled:ft=5", body={"ft_id": 5, "receipt": "R1"})
+        ev = OutboxEvent.objects.get()
+        self.assertEqual(ev.event_type, "payment.settled")
+        self.assertEqual(ev.aggregate_key, "ft:5")
+        self.assertEqual(ev.dedup_key, "payment.settled:ft=5")
+        self.assertEqual(ev.payload, {"ft_id": 5, "receipt": "R1"})
+        self.assertNotIn("user_id", ev.payload)
+
+    def test_emit_event_with_no_inline_consumer_creates_no_delivery(self):
+        # An event type nothing subscribes to → no delivery rows.
+        emit_event("some.unsubscribed.fact", body={"x": 1})
+        self.assertEqual(OutboxDelivery.objects.count(), 0)
+
+
+@override_settings(CELERY_TASK_ALWAYS_EAGER=True, CELERY_TASK_EAGER_PROPAGATES=True)
+class NotificationGuardTests(TestCase):
+    """The enqueue relay fires the signal for every event; the notification
+    receiver must skip general (non-notification) facts that carry no user_id."""
+
+    def test_general_event_produces_no_notification(self):
+        emit_event("payment.settled", body={"ft_id": 7, "receipt": "R"})
+        result = process_outbox()
+        # The event is delivered by the enqueue relay (marked PROCESSED) but the
+        # notification receiver skips it — no Notification row is created.
+        self.assertEqual(result["processed"], 1)
+        ev = OutboxEvent.objects.get()
+        self.assertEqual(ev.status, OutboxEvent.Status.PROCESSED)
+        self.assertEqual(Notification.objects.count(), 0)

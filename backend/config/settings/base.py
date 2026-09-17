@@ -288,6 +288,13 @@ CELERY_BEAT_SCHEDULE = {
         'task': 'apps.core.tasks.process_outbox',
         'schedule': 10.0,  # every 10 seconds
     },
+    # Inline (financial-grade) delivery relay — deliver OutboxDelivery rows to
+    # inline_atomic consumers, e.g. the settlement consumer (ADR-0029 Stage 2).
+    # Dormant until a consumer's events are emitted; no rows → no-op.
+    'process-inline-deliveries': {
+        'task': 'apps.core.tasks.process_inline_deliveries',
+        'schedule': 10.0,  # every 10 seconds
+    },
     # Runs 3× daily; only fires orders whose next_run_at has elapsed
     'execute-due-standing-orders': {
         'task': 'apps.contributions.tasks.execute_due_standing_orders',

@@ -16,7 +16,7 @@ from decimal import Decimal
 from django.db.models import Count, Sum
 from django.utils import timezone
 
-from apps.core.exceptions import ControlHeld, LimitExceeded
+from apps.controls.exceptions import ControlHeld, LimitExceeded
 from apps.ledger.models import FinancialTransaction
 
 from .models import ControlDecision, ControlOverride, LimitRule

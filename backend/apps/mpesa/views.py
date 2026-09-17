@@ -389,43 +389,60 @@ class B2CResultView(APIView):
             )
             return Response({"ResultCode": 0, "ResultDesc": "Accepted"})
 
+        from apps.core.events import emit_event
+
         if event.success:
             receipt = event.receipt or ""
 
+            # Discovery: claim the FT transition and, atomically, emit ONE durable
+            # settlement event (ADR-0028). Winning the PROCESSING→SUCCESS race is
+            # the "I discovered it" signal; the inline settlement consumer then
+            # propagates (advance domain + notify) exactly once. Emitting inside
+            # the same transaction as the transition guarantees a won transition
+            # always carries its event — closing the SUCCESS-but-unpropagated gap.
             try:
-                ft.transition_to(
-                    FinancialTransaction.State.SUCCESS,
-                    mpesa_receipt=receipt or None,
-                )
+                with transaction.atomic():
+                    ft.transition_to(
+                        FinancialTransaction.State.SUCCESS,
+                        mpesa_receipt=receipt or None,
+                    )
+                    # Capture the recipient's registered M-Pesa name if disclosed.
+                    if event.counterparty_name and not ft.counterparty_name:
+                        ft.counterparty_name = event.counterparty_name
+                        ft.save(update_fields=["counterparty_name"])
+                    emit_event(
+                        'payment.settled',
+                        aggregate_key=f'ft:{ft.id}',
+                        dedup_key=f'payment.settled:ft={ft.id}',
+                        body={'ft_id': ft.id, 'receipt': receipt},
+                    )
             except TransitionError:
+                # Another witness already finalised this payout (idempotent).
                 logger.warning(
                     "B2CResultView: FT %s already transitioned — conversation_id=%s",
                     ft.id, conversation_id,
                 )
                 return Response({"ResultCode": 0, "ResultDesc": "Accepted"})
 
-            # Capture the recipient's registered M-Pesa name if Daraja disclosed it.
-            if event.counterparty_name and not ft.counterparty_name:
-                ft.counterparty_name = event.counterparty_name
-                ft.save(update_fields=["counterparty_name"])
-
-            from apps.contributions.settlement import on_payout_settled
-            on_payout_settled(ft, receipt)
-
         else:
             err = f"B2C ResultCode {event.code}: {event.result_desc}"
             logger.error(
                 "B2CResultView: B2C failed for FT %s — %s", ft.id, err
             )
+            # Discovery: claim FAILED and emit one durable failure event; the
+            # consumer restores the reserved funds (ledger reversal) and resets the
+            # domain object. Atomic with the transition (as above).
             try:
-                ft.transition_to(FinancialTransaction.State.FAILED, failure_reason=err)
+                with transaction.atomic():
+                    ft.transition_to(FinancialTransaction.State.FAILED, failure_reason=err)
+                    emit_event(
+                        'payment.failed',
+                        aggregate_key=f'ft:{ft.id}',
+                        dedup_key=f'payment.failed:ft={ft.id}',
+                        body={'ft_id': ft.id, 'reason': err},
+                    )
             except TransitionError:
                 pass
-
-            from apps.contributions.settlement import on_payout_failed
-            from apps.ledger.posting import reverse_financial_transaction
-            reverse_financial_transaction(ft, note=err)  # restore reserved funds
-            on_payout_failed(ft)
 
         return Response({"ResultCode": 0, "ResultDesc": "Accepted"})
 

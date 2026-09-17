@@ -28,7 +28,7 @@ derived property on User; call sites stay unchanged.
 """
 from django.conf import settings
 
-from apps.core.exceptions import KYCRequired
+from apps.users.exceptions import KYCRequired
 
 
 class AccessPolicy:
