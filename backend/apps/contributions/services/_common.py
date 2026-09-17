@@ -27,7 +27,7 @@ from apps.core.policy import require
 from django.utils import timezone
 
 from ..models import (
-    Contribution, ContributionParticipant, ContributionTransaction,
+    Contribution, ContributionParticipant,
     SharesFund, ShareHolding,
     ROSCASlot, DisbursementRequest, DisbursementVote,
     WelfareFund, WelfareContribution, WelfareClaim, WelfareVote,
@@ -103,7 +103,7 @@ __all__ = [
     "AuditService", "require", "ActivityService", "Activity", "AccessPolicy", "FinancialPermissions",
     "logger", "_dn", "_notify", "_emit_event", "_compute_next_run",
     # models
-    "Contribution", "ContributionParticipant", "ContributionTransaction",
+    "Contribution", "ContributionParticipant",
     "SharesFund", "ShareHolding", "ROSCASlot", "DisbursementRequest",
     "DisbursementVote", "WelfareFund", "WelfareContribution", "WelfareClaim",
     "WelfareVote", "EmergencyAdvance", "StandingOrder", "StandingOrderSlot",

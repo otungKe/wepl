@@ -15,10 +15,12 @@ from .standing_orders import StandingOrderService
 from .amendments import AmendmentService
 from .join_requests import ContributionJoinRequestService
 from .shares import SharesService
+from .pool_governance import PoolGovernanceService
 
 __all__ = [
     "ContributionService", "ROSCAService", "DisbursementService",
     "WelfareService", "EmergencyAdvanceService", "StandingOrderService",
     "AmendmentService", "ContributionJoinRequestService", "SharesService",
+    "PoolGovernanceService",
     "_notify", "_dn", "_compute_next_run",
 ]

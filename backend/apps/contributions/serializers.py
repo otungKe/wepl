@@ -1,9 +1,11 @@
+from decimal import Decimal
+
 from rest_framework import serializers
 
-from apps.ledger.balances import fund_balance, member_fund_balance
+from apps.ledger.balances import economic_interest, fund_balance
 
 from .models import (
-    Contribution, ContributionParticipant, ContributionTransaction,
+    Contribution, ContributionParticipant,
     ROSCASlot, DisbursementRequest, DisbursementVote,
     SharesFund, ShareHolding,
     WelfareFund, WelfareContribution, WelfareClaim, WelfareVote,
@@ -11,6 +13,7 @@ from .models import (
     StandingOrder, StandingOrderSlot,
     ContributionAmendment, ContributionAmendmentVote,
     ContributionJoinRequest,
+    PoolActionRequest,
 )
 
 
@@ -69,7 +72,10 @@ class ContributionSerializer(serializers.ModelSerializer):
         bulk = self.context.get('user_balances')
         if bulk is not None:
             return str(bulk.get(obj.id, '0'))
-        return str(member_fund_balance(request.user, 'contribution', obj.id))
+        # Read through the economic-interest seam (ADR-0027): the member's stake,
+        # not a raw account balance. Equal to the liability today; graduates to
+        # units × NAV transparently. The bulk path derives the same debt interest.
+        return str(economic_interest(request.user, 'contribution', obj.id))
 
     def get_voting_label(self, obj):
         labels = {
@@ -172,7 +178,10 @@ class ContributionParticipantSerializer(serializers.ModelSerializer):
         bulk = self.context.get('member_balances')
         if bulk is not None:
             return bulk.get(obj.user_id, 0)
-        return member_fund_balance(obj.user, 'contribution', obj.contribution_id)
+        # Economic-interest seam (ADR-0027) — this member's stake in the fund,
+        # which for an attributed contribution reflects the *beneficiary*, not
+        # whoever paid.
+        return economic_interest(obj.user, 'contribution', obj.contribution_id)
 
     def get_balance(self, obj):
         """How much this member has contributed to this contribution so far."""
@@ -198,30 +207,93 @@ class ContributionPaymentSerializer(serializers.Serializer):
     amount          = serializers.DecimalField(max_digits=12, decimal_places=2)
 
 
-class ContributionTransactionSerializer(serializers.ModelSerializer):
-    phone_number       = serializers.CharField(source='user.phone_number', read_only=True)
-    name               = serializers.SerializerMethodField()
-    contribution_title = serializers.CharField(source='contribution.title', read_only=True)
-    platform_ref       = serializers.SerializerMethodField()
+class PoolExpenseSerializer(serializers.Serializer):
+    """Request body for spending pool funds on a shared expense (ADR-0027)."""
+    amount    = serializers.DecimalField(max_digits=20, decimal_places=2, min_value=Decimal('0.01'))
+    apportion = serializers.ChoiceField(choices=['pro_rata', 'per_capita'], default='pro_rata')
+    reason    = serializers.CharField(required=False, allow_blank=True, default='')
+
+
+class ExternalIncomeSerializer(serializers.Serializer):
+    """Request body for recording external/business proceeds into a pool."""
+    amount = serializers.DecimalField(max_digits=20, decimal_places=2, min_value=Decimal('0.01'))
+    source = serializers.CharField(required=False, allow_blank=True, default='')
+
+
+class SurplusDistributionSerializer(serializers.Serializer):
+    """Request body for declaring a distribution of a pool's retained surplus."""
+    amount    = serializers.DecimalField(max_digits=20, decimal_places=2, min_value=Decimal('0.01'))
+    apportion = serializers.ChoiceField(choices=['pro_rata', 'per_capita'], default='pro_rata')
+    reason    = serializers.CharField(required=False, allow_blank=True, default='')
+
+
+class PoolActionRequestSerializer(serializers.ModelSerializer):
+    requested_by_name = serializers.SerializerMethodField()
+    approval_count    = serializers.SerializerMethodField()
+    platform_ref      = serializers.SerializerMethodField()
 
     class Meta:
-        model = ContributionTransaction
+        model  = PoolActionRequest
         fields = [
-            'id', 'phone_number', 'name', 'contribution', 'contribution_title',
-            'amount', 'transaction_type', 'note',
-            'mpesa_receipt', 'platform_ref',
-            'created_at',
+            'id', 'contribution', 'action', 'amount', 'apportion', 'memo',
+            'status', 'requested_by', 'requested_by_name', 'approval_count',
+            'decision_note', 'platform_ref', 'created_at', 'updated_at',
         ]
 
-    def get_name(self, obj):
-        return obj.user.name or None
+    def get_requested_by_name(self, obj):
+        return obj.requested_by.name or obj.requested_by.phone_number
+
+    def get_approval_count(self, obj):
+        return obj.approvals.count()
 
     def get_platform_ref(self, obj):
-        # Prefer the ledger movement's reference (the book of record) so members
-        # and ops quote the same handle. The FK id is on the row — no extra query.
-        if obj.financial_transaction_id:
-            return f"WEPL-TXN-{obj.financial_transaction_id:06d}"
-        return f"WEPL-TXN-{obj.id:06d}"
+        return obj.financial_transaction.reference if obj.financial_transaction_id else None
+
+
+class LedgerTxnSerializer(serializers.Serializer):
+    """A member transaction-history row rendered straight from the ledger's
+    FinancialTransaction (replaces ContributionTransactionSerializer / the legacy
+    shadow log). ``member`` in context is the party whose statement this is."""
+    id                 = serializers.IntegerField(read_only=True)
+    phone_number       = serializers.SerializerMethodField()
+    name               = serializers.SerializerMethodField()
+    contribution       = serializers.IntegerField(source='contribution_id', read_only=True)
+    contribution_title = serializers.CharField(source='contribution.title', read_only=True)
+    amount             = serializers.DecimalField(max_digits=20, decimal_places=2, read_only=True)
+    transaction_type   = serializers.SerializerMethodField()
+    note               = serializers.SerializerMethodField()
+    mpesa_receipt      = serializers.SerializerMethodField()
+    platform_ref       = serializers.SerializerMethodField()
+    created_at         = serializers.DateTimeField(read_only=True)
+
+    def _member(self, obj):
+        # Shared-visibility lists pass a {user_id: user} map and resolve the
+        # party per row (obj.party_id); single-member lists pass a fixed member.
+        members = self.context.get('members')
+        if members is not None:
+            return members.get(getattr(obj, 'party_id', None))
+        return self.context.get('member')
+
+    def get_phone_number(self, obj):
+        m = self._member(obj)
+        return m.phone_number if m else None
+
+    def get_name(self, obj):
+        m = self._member(obj)
+        return (m.name or None) if m else None
+
+    def get_transaction_type(self, obj):
+        from apps.contributions.history import transaction_type_for
+        return transaction_type_for(obj.op_type)
+
+    def get_note(self, obj):
+        return obj.counterparty_name or ''
+
+    def get_mpesa_receipt(self, obj):
+        return None
+
+    def get_platform_ref(self, obj):
+        return obj.reference
 
 
 # ---------------------------------------------------------------------------

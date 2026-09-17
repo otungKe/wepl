@@ -16,7 +16,7 @@ logger = logging.getLogger(__name__)
 MAX_SINGLE_CONTRIBUTION = Decimal('1000000')
 
 from ..models import (
-    Contribution, ContributionParticipant, ContributionTransaction,
+    Contribution, ContributionParticipant,
     DisbursementRequest,
     WelfareFund, WelfareClaim, EmergencyAdvance, SharesFund, ShareHolding,
     StandingOrder, ContributionAmendment, ContributionJoinRequest,
@@ -24,7 +24,7 @@ from ..models import (
 
 from ..serializers import (
     ContributionSerializer, ContributionParticipantSerializer,
-    ContributionPaymentSerializer, ContributionTransactionSerializer,
+    ContributionPaymentSerializer, LedgerTxnSerializer,
     ROSCASlotSerializer, DisbursementRequestSerializer,
     SharesFundSerializer,
     WelfareFundSerializer, WelfareContributionSerializer, WelfareClaimSerializer,

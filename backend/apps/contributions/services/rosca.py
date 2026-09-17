@@ -68,15 +68,6 @@ class ROSCAService:
         current_slot.payout_amount = payout_amount
         current_slot.save()
 
-        # Legacy transaction record
-        tx = ContributionTransaction.objects.create(
-            contribution=contribution,
-            user=current_slot.participant.user,
-            amount=payout_amount,
-            transaction_type='WITHDRAWAL',
-            note=f"ROSCA payout — cycle {current_slot.cycle_number}, slot {current_slot.slot_order}",
-        )
-
         idem_key = f"rosca-payout-{contribution.id}-cycle{current_slot.cycle_number}-slot{current_slot.slot_order}"
         ft, _ = create_fin_transaction(
             idempotency_key=idem_key,
@@ -89,8 +80,6 @@ class ROSCAService:
             context_id=current_slot.id,
             initial_state=FinancialTransaction.State.SUCCESS,
         )
-        tx.financial_transaction = ft
-        tx.save(update_fields=['financial_transaction'])
         # Double-entry posting (P0-05): payout draws the recipient's pool share.
         post_journal(
             idempotency_key=f"je-{idem_key}",

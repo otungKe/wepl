@@ -2,7 +2,6 @@ from django.contrib import admin
 from .models import (
     Contribution,
     ContributionParticipant,
-    ContributionTransaction,
     ROSCASlot,
     DisbursementRequest,
     DisbursementVote,
@@ -28,12 +27,6 @@ class ContributionAdmin(admin.ModelAdmin):
 class ContributionParticipantAdmin(admin.ModelAdmin):
     list_display = ('user', 'contribution', 'is_active', 'joined_at')
     list_filter = ('is_active',)
-
-
-@admin.register(ContributionTransaction)
-class ContributionTransactionAdmin(admin.ModelAdmin):
-    list_display = ('user', 'contribution', 'amount', 'transaction_type', 'note', 'created_at')
-    list_filter = ('transaction_type',)
 
 
 @admin.register(ROSCASlot)

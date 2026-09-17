@@ -58,6 +58,10 @@ class FinancialTransaction(models.Model):
         WELFARE_CONTRIBUTION = 'WELFARE_CONTRIBUTION', 'Welfare Contribution'
         WELFARE_CLAIM        = 'WELFARE_CLAIM',        'Welfare Claim Disbursement'
         SHARES_PURCHASE      = 'SHARES_PURCHASE',      'Shares Purchase'
+        # Collective / institutional (ADR-0027) — not member cash movements, so
+        # outside the member PAYIN/PAYOUT limit sets.
+        EXTERNAL_INCOME      = 'EXTERNAL_INCOME',      'External Income into Pool'
+        SURPLUS_DISTRIBUTION = 'SURPLUS_DISTRIBUTION', 'Retained Surplus Distribution'
 
     VALID_TRANSITIONS = {
         State.PENDING:    frozenset({State.PROCESSING, State.FAILED}),
@@ -282,6 +286,14 @@ class Account(models.Model):
         settings.AUTH_USER_MODEL, null=True, blank=True,
         on_delete=models.PROTECT, related_name='ledger_accounts',
     )
+    # A ledger position may instead be owned by an Organization as a legal
+    # counterparty (ADR-0027 ownership axis: individual / collective / org). At
+    # most one of owner / owner_org is set; both null = a GL account or an
+    # owner-less pool control account.
+    owner_org = models.ForeignKey(
+        'organizations.Organization', null=True, blank=True,
+        on_delete=models.PROTECT, related_name='ledger_accounts',
+    )
     # Generic link to the owning fund, stored as primitives to avoid circular
     # FK imports and to keep the ledger independent of fund-type schemas.
     # fund_type ∈ {'', 'contribution', 'welfare', 'shares', ...}
@@ -303,6 +315,7 @@ class Account(models.Model):
             models.Index(fields=['type'],                        name='ledger_acct_type_idx'),
             models.Index(fields=['fund_type', 'fund_id'],        name='ledger_acct_fund_idx'),
             models.Index(fields=['owner', 'fund_type', 'fund_id'], name='ledger_acct_owner_fund_idx'),
+            models.Index(fields=['owner_org', 'fund_type', 'fund_id'], name='ledger_acct_ownerorg_fund_idx'),
         ]
         constraints = [
             # Structured identity of a sub-ledger — one account per member-fund.
@@ -313,12 +326,23 @@ class Account(models.Model):
                 fields=['owner', 'fund_type', 'fund_id'],
                 condition=Q(owner__isnull=False),
                 name='ledger_acct_owner_fund_uniq'),
-            # A pool/fund control account (ADR-0025 Part B): owner-less, one per
-            # (fund_type, fund_id). Excludes GL accounts (fund_type = '').
+            # One organization sub-ledger per (org, fund) — the org-owned analogue
+            # of the member sub-ledger (ADR-0027).
+            models.UniqueConstraint(
+                fields=['owner_org', 'fund_type', 'fund_id'],
+                condition=Q(owner_org__isnull=False),
+                name='ledger_acct_ownerorg_fund_uniq'),
+            # A pool/fund control account (ADR-0025 Part B): owner-LESS (neither a
+            # member nor an org), one per (fund_type, fund_id). Excludes GL
+            # accounts (fund_type = '').
             models.UniqueConstraint(
                 fields=['fund_type', 'fund_id'],
-                condition=Q(owner__isnull=True) & ~Q(fund_type=''),
+                condition=Q(owner__isnull=True) & Q(owner_org__isnull=True) & ~Q(fund_type=''),
                 name='ledger_acct_pool_uniq'),
+            # A position has at most one owner — a member OR an organization.
+            models.CheckConstraint(
+                condition=~(Q(owner__isnull=False) & Q(owner_org__isnull=False)),
+                name='ledger_acct_single_owner'),
         ]
 
     def save(self, *args, **kwargs):
@@ -505,3 +529,39 @@ class ExchangeRate(models.Model):
 
     def __str__(self):
         return f"1 {self.base_currency} = {self.rate} {self.quote_currency} @ {self.effective_at:%Y-%m-%d}"
+
+
+class CustodyArrangement(models.Model):
+    """Legal-title anchor for a pool's assets (ADR-0027).
+
+    Trust law is what makes pooled money coherent: a *trustee/custodian* holds
+    legal title for the members' benefit. Recorded per pool ``(fund_type,
+    fund_id)`` — even trivially (the platform holds in trust by default) — so
+    that "collective ownership" and "a liability owed *by* whom" are legally
+    defined, and the regulatory posture of a pool is explicit rather than
+    assumed. Behaviourless anchor today; the seat the trustee/settlor/beneficiary
+    model grows from.
+    """
+    class LegalBasis(models.TextChoices):
+        TRUST = 'trust', 'Held in trust for members'
+        AGENCY = 'agency', 'Held as agent for the group'
+        OWN_FUNDS = 'own_funds', "Platform's own funds"
+
+    fund_type = models.CharField(max_length=30)
+    fund_id = models.PositiveIntegerField()
+    # The legal-title holder. A free-text label for now; generalises to a Party
+    # FK when Account.owner does (ADR-0027 organization / trust ownership).
+    trustee_label = models.CharField(max_length=200, default='Wepl (platform, in trust)')
+    legal_basis = models.CharField(
+        max_length=20, choices=LegalBasis.choices, default=LegalBasis.TRUST)
+    governing_document = models.CharField(max_length=200, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=['fund_type', 'fund_id'], name='uniq_custody_per_pool'),
+        ]
+
+    def __str__(self):
+        return f"Custody({self.fund_type}#{self.fund_id} · {self.trustee_label} · {self.legal_basis})"

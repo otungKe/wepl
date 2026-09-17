@@ -32,6 +32,7 @@ MEMBER_CONTRIB_PAYABLE = '2000'
 WELFARE_PAYABLE      = '2100'
 SHARES_PAYABLE       = '2200'
 OPENING_BALANCE_EQUITY = '3000'
+RETAINED_SURPLUS     = '3200'
 FEE_REVENUE          = '4000'
 INTEREST_INCOME      = '4100'
 
@@ -44,6 +45,7 @@ _GL_ACCOUNTS = {
     WELFARE_PAYABLE:        ('Welfare Payable',             Account.Type.LIABILITY),
     SHARES_PAYABLE:         ('Shares Payable',              Account.Type.LIABILITY),
     OPENING_BALANCE_EQUITY: ('Opening Balance Equity',      Account.Type.EQUITY),
+    RETAINED_SURPLUS:       ('Retained Surplus',            Account.Type.EQUITY),
     FEE_REVENUE:            ('Fee Revenue',                 Account.Type.INCOME),
     INTEREST_INCOME:        ('Interest Income',             Account.Type.INCOME),
 }
@@ -83,6 +85,12 @@ def code_for_fund(fund_type: str, fund_id: int, owner_id: int) -> str:
     if gl is None:
         raise ValueError(f"Unknown fund_type {fund_type!r} for code generation.")
     return sub_ledger_code(gl, fund_id, owner_id)
+
+
+def org_sub_ledger_code(gl_code: str, fund_id: int, org_id: int) -> str:
+    """An organization sub-ledger, e.g. ``2000-0350000-O000000012`` — the ``O``
+    marker keeps org ids in a namespace separate from member ids (ADR-0027)."""
+    return f"{pool_code(gl_code, fund_id)}-O{int(org_id):0{MEMBER_CODE_WIDTH}d}"
 
 
 @transaction.atomic
@@ -163,12 +171,49 @@ def member_receivable_account(*, user, fund_id: int) -> Account:
     return acct
 
 
+def ensure_custody(*, fund_type: str, fund_id: int):
+    """Ensure a pool has a custody/legal-title anchor (ADR-0027).
+
+    Idempotent; defaults to the platform holding the pool in trust for its
+    members. Called when a pool is born so every pool answers "held by whom,
+    under what basis" — the trust-law anchor that makes collective ownership and
+    "a liability owed by whom" legally defined.
+    """
+    from .models import CustodyArrangement
+    arrangement, _ = CustodyArrangement.objects.get_or_create(
+        fund_type=fund_type, fund_id=fund_id,
+    )
+    return arrangement
+
+
+def retained_surplus_account(*, fund_id: int) -> Account:
+    """Resolve (get-or-create) a pool's **retained-surplus** control account
+    (ADR-0027). Owner-less EQUITY account (code e.g. ``3200-0000042``) holding a
+    pool's collectively-owned surplus — external income lands here and stays until
+    a distribution is declared. Keyed on ``fund_type='retained'`` so it never
+    collides with the LIABILITY pool control account for the same fund id.
+    """
+    gl = gl_account(RETAINED_SURPLUS)
+    acct, _ = Account.objects.get_or_create(
+        owner=None, fund_type='retained', fund_id=fund_id,
+        defaults={
+            'code':   pool_code(RETAINED_SURPLUS, fund_id),
+            'name':   f"Pool #{fund_id} · retained surplus",
+            'type':   gl.type,
+            'parent': gl,
+            'tenant': _tenant_for_fund('contribution', fund_id),
+        },
+    )
+    return acct
+
+
 def pool_account(*, fund_type: str, fund_id: int) -> Account:
     """Resolve (get-or-create) a pool/fund **control account** (ADR-0025 Part B).
 
     A pool is a first-class ledger entity: an owner-less account (code e.g.
     ``2000-0350000``) that parents the pool's member sub-ledgers and can hold
     pool-level money (escrow, unallocated pot). Keyed on (fund_type, fund_id).
+    Its birth also anchors the pool's custody arrangement (ADR-0027).
     """
     parent_code = _FUND_PAYABLE_PARENT.get(fund_type)
     if parent_code is None:
@@ -182,6 +227,30 @@ def pool_account(*, fund_type: str, fund_id: int) -> Account:
             'type':   gl.type,
             'parent': gl,
             'tenant': _tenant_for_fund(fund_type, fund_id),
+        },
+    )
+    ensure_custody(fund_type=fund_type, fund_id=fund_id)
+    return acct
+
+
+def org_fund_account(*, org, fund_type: str, fund_id: int) -> Account:
+    """Resolve (get-or-create) an ORGANIZATION's sub-ledger LIABILITY account for
+    a fund — the org-owned analogue of ``member_fund_account`` (ADR-0027 ownership
+    axis). Keyed on the structured identity (owner_org, fund_type, fund_id) and
+    parented under the pool control account, exactly like a member sub-ledger.
+    """
+    parent_code = _FUND_PAYABLE_PARENT.get(fund_type)
+    if parent_code is None:
+        raise ValueError(f"Unknown fund_type {fund_type!r} for org sub-ledger resolution.")
+    pool = pool_account(fund_type=fund_type, fund_id=fund_id)
+    acct, _ = Account.objects.get_or_create(
+        owner_org=org, fund_type=fund_type, fund_id=fund_id,
+        defaults={
+            'code':      org_sub_ledger_code(parent_code, fund_id, org.pk),
+            'name':      f"{org.name} · {fund_type} #{fund_id}",
+            'type':      Account.Type.LIABILITY,
+            'parent':    pool,
+            'tenant':    _tenant_for_fund(fund_type, fund_id),
         },
     )
     return acct

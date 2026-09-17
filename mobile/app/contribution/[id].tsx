@@ -1237,6 +1237,22 @@ export default function ContributionDetailScreen() {
                   </Text>
                 </TouchableOpacity>
               )}
+              {isAdmin && (
+                <TouchableOpacity
+                  style={styles.payoutOption}
+                  onPress={() => router.push({
+                    pathname: '/contribution/manage-pool' as any,
+                    params: { id: String(contributionId), title: contribution.title },
+                  })}
+                  activeOpacity={0.7}
+                >
+                  <View style={[styles.payoutIcon, { backgroundColor: COLORS.primaryPale }]}>
+                    <Ionicons name="briefcase-outline" size={22} color={COLORS.primary} />
+                  </View>
+                  <Text style={styles.payoutOptionTitle}>Manage Pool</Text>
+                  <Text style={styles.payoutOptionSub}>Income · expense · payout</Text>
+                </TouchableOpacity>
+              )}
             </View>
 
             {/* Disbursement Requests */}

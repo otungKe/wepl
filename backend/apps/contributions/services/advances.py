@@ -131,14 +131,6 @@ class EmergencyAdvanceService:
             created_by=admin_user,
         )
 
-        ContributionTransaction.objects.create(
-            contribution=contribution,
-            user=advance.borrower,
-            amount=advance.amount,
-            transaction_type='ADVANCE',
-            note=f"Emergency advance #{advance.id}",
-            financial_transaction=ft,
-        )
 
         advance.transition_to('DISBURSED')
 
@@ -207,8 +199,6 @@ class EmergencyAdvanceService:
         Key fix vs. the old code:
           - Idempotency key anchored to mpesa_receipt (not wall clock).
           - Writes a dedicated ADVANCE_REPAYMENT ledger entry (entry_type=ADVANCE_REPAYMENT).
-          - Does NOT patch "the most recent ContributionTransaction" by creation time
-            (which was fragile and could corrupt the wrong row under concurrency).
           - The pool balance is credited directly — no intermediate call to contribute().
         """
         advance = EmergencyAdvance.objects.select_for_update().get(
@@ -258,15 +248,6 @@ class EmergencyAdvanceService:
             created_by=user,
         )
 
-        # Legacy: dedicated REPAYMENT transaction (not patched — created fresh)
-        ContributionTransaction.objects.create(
-            contribution=contribution,
-            user=user,
-            amount=amount,
-            transaction_type='REPAYMENT',
-            note=f"Advance repayment — advance #{advance_id}",
-            financial_transaction=ft,
-        )
 
         return advance
 
