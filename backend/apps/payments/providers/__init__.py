@@ -97,3 +97,15 @@ class PaymentProvider(ABC):
         """Poll the rail for a transaction's status. Optional — adapters that
         do not support it may leave this unimplemented."""
         raise NotImplementedError(f"{self.name} does not support query_status()")
+
+    def request_payout_result(self, *, provider_ref: str, remarks: str = '') -> StatusResult:
+        """Ask the rail to resolve a payout whose result never arrived.
+
+        Optional, and deliberately separate from ``query_status`` (which polls a
+        *collection*): some rails answer asynchronously. M-Pesa's
+        TransactionStatusQuery merely re-fires the B2C result callback, so its
+        adapter reports ``'unknown'`` and the callback endpoint finalises the
+        payout. Adapters with no such facility inherit this no-op, which leaves
+        stale-payout recovery to its own timeout.
+        """
+        return StatusResult(state='unknown', raw={})
