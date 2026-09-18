@@ -188,9 +188,9 @@ class DisbursementService:
         ft_id = ft.id
 
         def _dispatch():
-            from apps.ledger.tasks import execute_b2c_payout
+            from apps.payments.payouts import execute_payout
             from apps.core.dispatch import safe_enqueue
-            safe_enqueue(execute_b2c_payout, ft_id, critical=True)
+            safe_enqueue(execute_payout, ft_id, critical=True)
 
         transaction.on_commit(_dispatch)
 

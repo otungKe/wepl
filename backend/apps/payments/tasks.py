@@ -2,6 +2,13 @@ import logging
 from celery import shared_task
 from celery.exceptions import MaxRetriesExceededError
 
+# Payout orchestration lives in its own module (#159) but must be imported here
+# so Celery's autodiscovery — which only looks for each app's ``tasks`` module —
+# registers it. Re-exported for callers that reach for apps.payments.tasks.
+from .payouts import (  # noqa: F401
+    execute_payout, recover_stale_processing_transactions,
+)
+
 logger = logging.getLogger(__name__)
 
 

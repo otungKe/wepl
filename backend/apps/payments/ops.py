@@ -71,7 +71,7 @@ class PaymentOpsService:
     def retry_payout(cls, ft: FT, *, actor_label: str = "") -> dict:
         """Re-dispatch a payout that stalled before ever reaching the rail (stuck
         PENDING/PROCESSING with no rail reference). Re-drives the canonical B2C
-        door (``execute_b2c_payout``), whose own guards prevent a double-send.
+        door (``execute_payout``), whose own guards prevent a double-send.
 
         Not for: a settled payout (nothing to do), a failed one (its funds were
         already restored — re-issuing is a fresh disbursement, not a re-send), or
@@ -87,11 +87,11 @@ class PaymentOpsService:
             raise ValidationError(
                 "This payout was already dispatched to the rail — use Requery to fetch its result.")
 
-        from apps.ledger.tasks import execute_b2c_payout
+        from apps.payments.payouts import execute_payout
         # Synchronous: run the canonical door in-process so the operator sees the
         # outcome now. It is idempotent — the conversation-id guard blocks any
         # double-send if a callback lands mid-flight.
-        execute_b2c_payout.apply(args=[ft.id])
+        execute_payout.apply(args=[ft.id])
         ft.refresh_from_db()
         if ft.mpesa_conversation_id:
             logger.info("FinOps: payout FT %s re-dispatched by %s", ft.id, actor_label or "ops")

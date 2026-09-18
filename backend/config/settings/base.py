@@ -273,6 +273,10 @@ CELERY_TASK_ROUTES = {
     'apps.payments.tasks.*':       {'queue': 'payments'},
     'apps.mpesa.tasks.*':          {'queue': 'payments'},
     'apps.ledger.tasks.*':         {'queue': 'financial'},
+    # Payout orchestration (#159) lives in apps.payments but keeps the financial
+    # queue — an exact-name route, so the 'apps.payments.tasks.*' glob above
+    # cannot pull it onto the payments queue.
+    'apps.payments.payouts.*':     {'queue': 'financial'},
     'apps.contributions.tasks.*':  {'queue': 'financial'},
 }
 
@@ -302,7 +306,7 @@ CELERY_BEAT_SCHEDULE = {
     },
     # Detects B2C payments stuck in PROCESSING for > 15 min
     'recover-stale-processing-transactions': {
-        'task': 'apps.ledger.tasks.recover_stale_processing_transactions',
+        'task': 'apps.payments.payouts.recover_stale_processing_transactions',
         'schedule': crontab(minute='*/30'),  # every 30 minutes
     },
     # Ledger integrity: trial balance == 0 and projection == replay — runs 2am EAT
