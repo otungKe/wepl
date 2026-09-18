@@ -50,10 +50,18 @@ class MoneyActivity:
 
 
 def _rail_for(ft) -> RailInfo:
-    """Rail info, preferring the linked PaymentIntent over FT's legacy columns."""
+    """Rail info, preferring the linked PaymentIntent over FT's legacy columns.
+
+    Uses ``.all()`` and picks the latest intent in Python rather than
+    ``.order_by(...).first()``, so a caller that has done
+    ``prefetch_related('payment_intents')`` hits the prefetch cache instead of
+    issuing a query per row (an ``order_by`` on the related manager would bypass
+    it). Without a prefetch this is still a single query.
+    """
     from apps.payments.models import PaymentIntent
 
-    intent = ft.payment_intents.order_by('-id').first()
+    intents = list(ft.payment_intents.all())
+    intent = max(intents, key=lambda i: i.pk) if intents else None
     if intent is not None and intent.provider_ref:
         is_payout = intent.direction == PaymentIntent.Direction.PAYOUT
         return RailInfo(

@@ -81,3 +81,31 @@ class MoneyActivityTests(TestCase):
         ma = money_activity.for_financial_transaction(self.ft)
         self.assertFalse(ma.rail.has_rail)
         self.assertEqual(ma.rail.provider, "")
+
+    def test_latest_intent_wins(self):
+        self._intent(idempotency_key="pi-old", provider_ref="OLD", receipt="OLD_R")
+        self._intent(idempotency_key="pi-new", provider_ref="NEW", receipt="NEW_R")
+        ma = money_activity.for_financial_transaction(self.ft)
+        self.assertEqual(ma.rail.conversation_id, "NEW")
+        self.assertEqual(ma.rail.receipt, "NEW_R")
+
+    def test_prefetch_cache_avoids_a_query_per_row(self):
+        """List callers prefetch payment_intents; the seam must not re-query."""
+        self._intent()
+        second, _ = create_fin_transaction(
+            idempotency_key="ft-ma-2", op_type=FinancialTransaction.OpType.DISBURSEMENT,
+            amount=Decimal("100"), initiated_by=self.user, recipient_phone="254700000731",
+            initial_state=FinancialTransaction.State.PROCESSING,
+        )
+        PaymentIntent.objects.create(
+            provider="mpesa", direction=PaymentIntent.Direction.PAYOUT,
+            status=PaymentIntent.Status.SUCCEEDED, amount=Decimal("100"),
+            idempotency_key="pi-ma-2", provider_ref="AG_CONV_2", receipt="RCP2",
+            financial_transaction=second,
+        )
+        qs = FinancialTransaction.objects.prefetch_related("payment_intents")
+        # 1 query for the transactions + 1 for the prefetch; none per row.
+        with self.assertNumQueries(2):
+            refs = [money_activity.for_financial_transaction(ft).rail.conversation_id
+                    for ft in qs]
+        self.assertCountEqual(refs, ["AG_CONV_1", "AG_CONV_2"])
