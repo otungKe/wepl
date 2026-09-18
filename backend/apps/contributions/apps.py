@@ -11,3 +11,6 @@ class ContributionsConfig(AppConfig):
         # Register the inline settlement consumer (ADR-0028/0029 Stage 2).
         from . import settlement_consumer
         settlement_consumer.register()
+        # Register each context's settlement reactions (ADR-0030 Slice B).
+        from . import settlement_targets
+        settlement_targets.register()

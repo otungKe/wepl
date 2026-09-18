@@ -14,10 +14,8 @@ Idempotent: every domain transition tolerates being re-applied (the callback,
 the sweep, and an operator can all try to finalise the same payout).
 """
 import logging
-
-from django.utils import timezone
-
-from apps.core.exceptions import TransitionError
+from dataclasses import dataclass
+from typing import Callable
 
 logger = logging.getLogger(__name__)
 
@@ -54,130 +52,73 @@ def on_collection_settled(*, payment_type, user, amount, receipt=None,
             mpesa_receipt=receipt, idempotency_key=idem)
 
 
+# ── Settlement-target registry (ADR-0030 Slice B) ─────────────────────────────
+# A settled payout has to reach *its* domain object. That routing used to be a
+# hardcoded if/elif over ``ft.context_type`` living here, which meant the
+# dispatcher had to know every money-receiving context by name. Each context now
+# owns its own reaction and registers it (from AppConfig.ready(), the same
+# discipline as policies / exception renderers / inline consumers, ADR-0031), so
+# adding or moving a context never edits this file.
+#
+# Handlers take the primitive ``context_id`` — never the FT — so a target knows
+# nothing about the ledger. That is what lets the workflow dimension leave FT
+# entirely in a later slice: only the lookup below has to change.
+@dataclass(frozen=True)
+class SettlementTarget:
+    context_type: str
+    on_settled: Callable[[int, str], None] | None = None
+    on_failed: Callable[[int], None] | None = None
+
+
+_TARGETS: dict[str, SettlementTarget] = {}
+
+
+def register_settlement_target(context_type: str, *,
+                               on_settled: Callable[[int, str], None] | None = None,
+                               on_failed: Callable[[int], None] | None = None) -> None:
+    """Register a context's settlement reactions. Handlers must be idempotent —
+    discovery is multi-source and delivery at-least-once (ADR-0028)."""
+    if context_type in _TARGETS:
+        logger.warning("Settlement target for '%s' is being overwritten.", context_type)
+    _TARGETS[context_type] = SettlementTarget(context_type, on_settled, on_failed)
+
+
+def settlement_target_for(context_type: str) -> SettlementTarget | None:
+    return _TARGETS.get(context_type)
+
+
 def on_payout_settled(ft, receipt: str = "") -> None:
     """Advance the linked domain object and notify the member after a payout
-    succeeds. Routes on ``ft.context_type``; a no-op when the FT carries no
-    context (e.g. a manual adjustment)."""
-    from .services import _notify
-
+    succeeds. Dispatches on ``ft.context_type`` via the target registry; a no-op
+    when the FT carries no context (e.g. a manual adjustment) or the context type
+    has no registered target."""
     if not ft.context_type or not ft.context_id:
         return
 
-    if ft.context_type == 'welfare_claim':
-        from .models import WelfareClaim
-        try:
-            claim = WelfareClaim.objects.get(id=ft.context_id)
-            claim.transition_to(
-                'DISBURSED',
-                disbursed_at=timezone.now(),
-                mpesa_receipt=receipt or None,
-            )
-            _notify(
-                user=claim.claimant,
-                notification_type='welfare_disbursed',
-                title="M-Pesa payment sent!",
-                message=(
-                    f"KES {claim.amount_requested:,.0f} has been sent to your M-Pesa."
-                    + (f" Receipt: {receipt}." if receipt else "")
-                ),
-            )
-        except WelfareClaim.DoesNotExist:
-            logger.warning("on_payout_settled: WelfareClaim %s not found", ft.context_id)
-        except TransitionError:
-            logger.warning(
-                "on_payout_settled: WelfareClaim %s already transitioned (idempotent)",
-                ft.context_id,
-            )
-
-    elif ft.context_type == 'disbursement_request':
-        from .models import DisbursementRequest
-        try:
-            req = DisbursementRequest.objects.get(id=ft.context_id)
-            _notify(
-                user=req.requested_by,
-                notification_type='disbursement_sent',
-                title="Disbursement sent!",
-                message=(
-                    f"KES {req.amount} has been sent to {req.recipient_phone}."
-                    + (f" M-Pesa receipt: {receipt}." if receipt else "")
-                ),
-                contribution_id=req.contribution_id,
-            )
-        except DisbursementRequest.DoesNotExist:
-            pass
-
-    elif ft.context_type == 'emergency_advance':
-        from .models import EmergencyAdvance
-        try:
-            advance = EmergencyAdvance.objects.get(id=ft.context_id)
-            _notify(
-                user=advance.borrower,
-                notification_type='advance_sent',
-                title="Advance sent!",
-                message=(
-                    f"KES {advance.amount} has been sent to your M-Pesa."
-                    + (f" Receipt: {receipt}." if receipt else "")
-                ),
-                contribution_id=advance.contribution_id,
-            )
-        except EmergencyAdvance.DoesNotExist:
-            pass
-
-    elif ft.context_type == 'standing_order':
-        logger.info(
-            "Payout success for standing order context_id=%s receipt=%s",
-            ft.context_id, receipt,
-        )
+    target = _TARGETS.get(ft.context_type)
+    if target is None or target.on_settled is None:
+        logger.debug("on_payout_settled: no target for context_type %r", ft.context_type)
+        return
+    target.on_settled(ft.context_id, receipt)
 
 
 def on_payout_failed(ft) -> None:
     """Reset the linked domain object to a retryable state after a payout fails
-    (the reserved funds are restored separately by the ledger reversal). Routes on
-    ``ft.context_type``; a no-op when the FT carries no context."""
+    (the reserved funds are restored separately by the ledger reversal).
+    Dispatches via the target registry; a no-op when the FT carries no context.
+
+    A target's failure is logged and swallowed, preserving the long-standing
+    guarantee that a domain-update error here can never break the money path."""
     if not ft.context_type or not ft.context_id:
         return
 
+    target = _TARGETS.get(ft.context_type)
+    if target is None or target.on_failed is None:
+        logger.debug("on_payout_failed: no target for context_type %r", ft.context_type)
+        return
+
     try:
-        if ft.context_type == 'disbursement_request':
-            from .models import DisbursementRequest
-            try:
-                req = DisbursementRequest.objects.get(id=ft.context_id)
-                req.transition_to('APPROVED')
-            except (DisbursementRequest.DoesNotExist, TransitionError):
-                pass
-            logger.error(
-                "Disbursement payout FAILED for request %s — pool balance has been restored. "
-                "Admin must re-trigger the payout.",
-                ft.context_id,
-            )
-
-        elif ft.context_type == 'welfare_claim':
-            from .models import WelfareClaim
-            try:
-                # Ledger funds are restored by reverse_financial_transaction;
-                # reset the claim so it can be retried.
-                claim = WelfareClaim.objects.get(id=ft.context_id)
-                claim.transition_to('PENDING')
-            except (WelfareClaim.DoesNotExist, TransitionError):
-                pass
-            logger.error(
-                "Welfare payout FAILED for claim %s — fund balance restored. Claim reset to PENDING.",
-                ft.context_id,
-            )
-
-        elif ft.context_type == 'emergency_advance':
-            from .models import EmergencyAdvance
-            try:
-                advance = EmergencyAdvance.objects.get(id=ft.context_id)
-                advance.transition_to('APPROVED')
-            except (EmergencyAdvance.DoesNotExist, TransitionError):
-                pass
-            logger.error(
-                "Advance payout FAILED for advance %s — pool balance restored. "
-                "Advance reset to APPROVED.",
-                ft.context_id,
-            )
-
+        target.on_failed(ft.context_id)
     except Exception:
         logger.exception(
             "on_payout_failed: error updating context %s/%s",
