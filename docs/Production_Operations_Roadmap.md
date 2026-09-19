@@ -242,7 +242,7 @@ tractable; nothing before OP-9 blocks on it.
 | Real SMS gateway | console backend | activate provider account (AT_* vars exist) |
 | Neon paid tier + PITR backups | free tier | upgrade; verify restore procedure once |
 | R2 bucket versioning + staging bucket | prod bucket live | enable versioning; provision staging |
-| Celery worker split from web dyno | split out: `wepl-worker` + `wepl-beat` in render.yaml ([#161](https://github.com/otungKe/wepl/issues/161)) | sync the blueprint; the two async services need a paid worker instance type — [runbook](deploy/worker-tier.md) |
+| Celery worker split from web dyno | in-process; the split is built and guarded but unadopted, held in `render.worker-tier.yaml` ([#161](https://github.com/otungKe/wepl/issues/161)) | buy a paid worker instance type (~$14/mo prod), then the one-PR cutover — [runbook](deploy/worker-tier.md) |
 | Rate limits review | defaults set | load-test the money paths |
 | Runbooks | none | one page per OP-1/OP-2 lever: symptom → console action |
 | On-call rotation + Sentry alert routing | Sentry only | wire OP-2 alerts to phones |

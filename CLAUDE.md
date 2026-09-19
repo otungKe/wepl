@@ -119,11 +119,14 @@ separate app/deployment — never co-hosted with the customer web app.
   and `communities`, `conversations`, `notifications`,
   `reminders`, `activity`.
 - Async stack: Celery + Beat over Redis, queues `default,notifications,payments,financial`;
-  served over ASGI (Channels/Daphne). The worker and beat tiers are **separate services**
-  from the web one — `backend/start-worker.sh` / `start-beat.sh` vs `start.sh`, which runs
-  migrations and Daphne only. Beat must be a single instance, and only the web service
-  migrates. See `docs/deploy/worker-tier.md`; `apps/core/tests_deploy_topology.py` guards
-  the topology against `render.yaml`.
+  served over ASGI (Channels/Daphne). Worker + beat currently run **inside the web
+  process** (`RUN_EMBEDDED_CELERY`, on by default in `backend/start.sh`); splitting them
+  onto their own services is built and guarded but not adopted, because Render has no
+  free worker plan — the services wait in `render.worker-tier.yaml`, which Render does
+  not read, and `backend/start-worker.sh` / `start-beat.sh` are their entrypoints. The
+  switch and those services must move in one edit (see `docs/deploy/worker-tier.md`);
+  `apps/core/tests_deploy_topology.py` fails the build on either half-state, and guards
+  queue coverage, the single beat instance and the shared `SECRET_KEY` either way.
 - Work items are tracked as `P{phase}-{nn}` (e.g. `P0-05`) and referenced in commit messages,
   phase docs, and GitHub issues.
 

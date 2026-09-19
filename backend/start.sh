@@ -1,10 +1,13 @@
 #!/usr/bin/env bash
 #
-# WEB entrypoint — release steps, then serve ASGI traffic. Celery does not run
-# here: the worker and beat tiers are their own services (start-worker.sh /
-# start-beat.sh), so an async burst cannot raise request latency and a web
-# restart cannot disrupt in-flight tasks. See #161 / P0-01 and
-# docs/deploy/worker-tier.md.
+# WEB entrypoint — release steps, then serve ASGI traffic, plus the Celery
+# worker and beat while RUN_EMBEDDED_CELERY is on (it is, by default).
+#
+# The target is for those two to be their own services — start-worker.sh and
+# start-beat.sh, declared in render.worker-tier.yaml — so an async burst cannot
+# raise request latency and a web restart cannot disrupt an in-flight task.
+# That needs a paid Render worker instance type, so it waits; everything but the
+# cost is in place. See #161 / P0-01 and docs/deploy/worker-tier.md.
 set -e
 
 # The web service is the single migration writer; the async services wait for
@@ -20,20 +23,24 @@ python manage.py seed_ops_roles
 python manage.py ensure_superuser
 python manage.py create_ops_admin
 
-# ── Single-host fallback ────────────────────────────────────────────────────
-# Runs the async tier inside this process, the way the whole stack used to work
-# before #161. It exists for hosts with no worker tier at all (and for a
-# temporary rollback), and it is OFF unless explicitly switched on.
+# ── Single-host layout ──────────────────────────────────────────────────────
+# Runs the async tier inside this process. This is what is deployed TODAY: the
+# dedicated worker + beat services need a paid Render instance type, so they
+# wait in render.worker-tier.yaml until that is adopted (#161).
 #
-# Never enable it while the dedicated wepl-worker / wepl-beat services are
-# deployed: two beats double-fire every scheduled task, and
-# execute_due_standing_orders firing twice is a duplicate money movement
-# attempt. The worker half is harmless to double up; the beat half is not.
-if [ "${RUN_EMBEDDED_CELERY:-false}" = "true" ]; then
-    echo "[start] WARNING: RUN_EMBEDDED_CELERY=true — running Celery worker + beat" >&2
-    echo "[start] WARNING: inside the web process (the pre-#161 single-host layout)." >&2
-    echo "[start] WARNING: Async work now competes with HTTP requests, and this MUST" >&2
-    echo "[start] WARNING: NOT be on while a dedicated beat service is also running." >&2
+# It therefore defaults to ON. A web process that finds itself unconfigured must
+# keep doing the async work rather than silently stop doing it — with no worker
+# service anywhere, "off" means the outbox never relays, no notification is
+# delivered and nothing reconciles, and nothing raises to say so.
+#
+# At cutover this flips to "false" in render.yaml in the same edit that adds the
+# worker services, because the two half-states are both broken: embedded beat
+# plus a dedicated beat is two schedulers double-firing every entry in
+# CELERY_BEAT_SCHEDULE, and neither one is no async processing at all.
+if [ "${RUN_EMBEDDED_CELERY:-true}" = "true" ]; then
+    echo "[start] Running Celery worker + beat inside the web process" >&2
+    echo "[start] (RUN_EMBEDDED_CELERY is on). Async work shares this dyno's CPU" >&2
+    echo "[start] with HTTP requests. Adopt render.worker-tier.yaml to split it." >&2
     celery -A config worker -l info \
         -Q "${CELERY_QUEUES:-default,notifications,payments,financial}" \
         --concurrency "${CELERY_CONCURRENCY:-2}" &

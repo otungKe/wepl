@@ -7,9 +7,18 @@ schedulers firing the same job, or a worker whose SECRET_KEY differs from the
 web's. None of those raise anywhere — they just silently stop work from
 happening (or, for a second beat, do it twice).
 
-So these tests read the deployment artefacts themselves — ``render.yaml`` and
-the entrypoint scripts — and assert them against the Celery settings that are
-the actual source of truth for routing and scheduling.
+So these tests read the deployment artefacts themselves — ``render.yaml``,
+``render.worker-tier.yaml`` and the entrypoint scripts — and assert them
+against the Celery settings that are the actual source of truth for routing and
+scheduling.
+
+The async services are declared in ``render.worker-tier.yaml``, which Render
+does not read, because they need a paid instance type that has not been adopted
+yet; Celery still runs inside the web process. These tests therefore read the
+worker services from whichever file currently declares them, so they guard the
+definitions while they wait, and keep guarding them after the cutover moves
+them into ``render.yaml``. ``EmbeddedCelerySwitchTests`` is what makes the
+cutover atomic: it fails on either half of it.
 """
 from __future__ import annotations
 
@@ -24,6 +33,9 @@ from django.test import SimpleTestCase
 REPO_ROOT = Path(settings.BASE_DIR).parent
 BACKEND = Path(settings.BASE_DIR)
 RENDER_YAML = REPO_ROOT / "render.yaml"
+# The async services, held out of the synced blueprint until a paid worker plan
+# is adopted. The cutover moves these entries into render.yaml.
+WORKER_TIER_YAML = REPO_ROOT / "render.worker-tier.yaml"
 
 WEB_ENTRYPOINT = BACKEND / "start.sh"
 WORKER_ENTRYPOINT = BACKEND / "start-worker.sh"
@@ -34,8 +46,26 @@ def _blueprint() -> dict:
     return yaml.safe_load(RENDER_YAML.read_text())
 
 
+def _worker_tier() -> dict:
+    return yaml.safe_load(WORKER_TIER_YAML.read_text())
+
+
+def _cutover_done() -> bool:
+    """True once the async services live in the synced blueprint."""
+    return any(s.get("type") == "worker" for s in _blueprint()["services"])
+
+
+def _all_services() -> list[dict]:
+    """Every declared service, wherever it is declared. Before the cutover the
+    async ones are in the held-out fragment; after it, all in render.yaml."""
+    out = list(_blueprint()["services"])
+    if not _cutover_done():
+        out += _worker_tier()["services"]
+    return out
+
+
 def _services(kind: str | None = None, runtime: str | None = None) -> list[dict]:
-    out = _blueprint()["services"]
+    out = _all_services()
     if kind:
         out = [s for s in out if s.get("type") == kind]
     if runtime:
@@ -109,26 +139,71 @@ class WebServiceStaysWebOnlyTests(SimpleTestCase):
                 "%r. Async work must run on the worker tier, not in the web process." % (i + 1, lines[i]),
             )
 
-    def test_embedded_celery_fallback_defaults_off(self):
+    def test_embedded_celery_default_matches_the_deployed_layout(self):
+        """Unconfigured, the web process must do whatever the deployed topology
+        needs. With no worker service anywhere, that is running Celery itself:
+        "off" would mean the outbox never relays and nothing reconciles, with
+        nothing raising to say so."""
+        expected = "false" if _cutover_done() else "true"
         self.assertIn(
-            'RUN_EMBEDDED_CELERY:-false', WEB_ENTRYPOINT.read_text(),
-            "the embedded-Celery fallback must default to off, so a host that "
-            "forgets to set it gets the split layout rather than the old one")
+            "RUN_EMBEDDED_CELERY:-%s" % expected, WEB_ENTRYPOINT.read_text(),
+            "start.sh must default RUN_EMBEDDED_CELERY to %r while the async "
+            "services are %s the synced blueprint."
+            % (expected, "in" if _cutover_done() else "held out of"))
 
-    def test_blueprint_web_services_disable_embedded_celery(self):
-        api_services = [s for s in _services("web", runtime="python")]
-        self.assertTrue(api_services)
-        for service in api_services:
-            entry = _env(service).get("RUN_EMBEDDED_CELERY")
-            self.assertIsNotNone(
-                entry, "%s does not declare RUN_EMBEDDED_CELERY. Declare it "
-                       '"false" explicitly so a blueprint re-sync clears any leftover '
-                       "value set directly on the service." % service["name"])
-            self.assertEqual(
-                entry.get("value"), "false",
-                "%s enables the embedded-Celery fallback while dedicated beat "
-                "services exist — two schedulers double-fire every scheduled task, "
-                "standing orders included." % service["name"])
+
+class EmbeddedCelerySwitchTests(SimpleTestCase):
+    """Exactly one tier may schedule. Both half-states are broken, so neither
+    is allowed to merge.
+
+    Celery in the web process *and* a dedicated beat service is two schedulers
+    re-firing every ``CELERY_BEAT_SCHEDULE`` entry. Neither is no async
+    processing at all — and that one is silent, because a task nobody runs
+    raises nothing. So the switch in ``render.yaml`` and the presence of the
+    worker services have to move together, in one edit.
+    """
+
+    def _api_services(self) -> list[dict]:
+        services = [s for s in _blueprint()["services"]
+                    if s.get("type") == "web" and s.get("runtime") == "python"]
+        self.assertTrue(services, "render.yaml declares no Django web service")
+        return services
+
+    def test_every_web_service_declares_the_switch(self):
+        for service in self._api_services():
+            self.assertIn(
+                "RUN_EMBEDDED_CELERY", _env(service),
+                "%s does not declare RUN_EMBEDDED_CELERY. Declare it explicitly "
+                "rather than relying on the default, so a blueprint re-sync "
+                "overwrites whatever was set on the service by hand." % service["name"])
+
+    def test_the_switch_agrees_with_the_worker_services(self):
+        expected = "false" if _cutover_done() else "true"
+        for service in self._api_services():
+            actual = _env(service)["RUN_EMBEDDED_CELERY"].get("value")
+            if _cutover_done():
+                reason = ("render.yaml declares dedicated worker services, so %s must "
+                          "set it to \"false\" — embedded beat plus a dedicated beat is "
+                          "two schedulers double-firing every scheduled task."
+                          % service["name"])
+            else:
+                reason = ("no worker service is declared in render.yaml, so %s must set "
+                          "it to \"true\" — otherwise nothing runs the outbox relay, the "
+                          "notifications or the reconciliation, and nothing says so."
+                          % service["name"])
+            self.assertEqual(actual, expected, reason)
+
+    def test_the_held_out_fragment_declares_the_whole_async_tier(self):
+        """Before the cutover, the fragment is the only definition of these
+        services, so it has to be complete enough to paste in."""
+        if _cutover_done():
+            self.skipTest("the async services now live in render.yaml")
+        names = {s["name"] for s in _worker_tier()["services"]}
+        self.assertTrue(
+            any(n.startswith("wepl-worker") for n in names)
+            and any(n.startswith("wepl-beat") for n in names),
+            "render.worker-tier.yaml must declare both a worker and a beat "
+            "service; found %s" % sorted(names))
 
 
 class QueueCoverageTests(SimpleTestCase):

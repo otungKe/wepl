@@ -1,11 +1,12 @@
 """``manage.py check_workers`` — is the async tier alive? (OP-2 / #161)
 
-Since the Celery worker and beat tiers moved off the web service they have no
-HTTP surface and no health-check path of their own, so the only evidence they
-are running is the DB-backed ``WorkerHeartbeat`` each watched beat task stamps
-on completion. ``/api/ops/health/`` shows it to operators; this command shows
-the same rows from a shell or a monitor, and exits non-zero when a task has
-gone quiet, so it can be used as a check rather than read by eye.
+The only evidence Celery is actually processing is the DB-backed
+``WorkerHeartbeat`` each watched beat task stamps on completion — and it is the
+*only* evidence once the worker and beat tiers move off the web service, since
+they then have no HTTP surface and no health-check path of their own.
+``/api/ops/health/`` shows it to operators; this command shows the same rows
+from a shell or a monitor, and exits non-zero when a task has gone quiet, so it
+can back a check rather than be read by eye.
 
 Exit codes: 0 healthy, 1 at least one watched task is stale.
 """
@@ -72,7 +73,8 @@ class Command(BaseCommand):
 
         if stale:
             self.stdout.write(self.style.ERROR(
-                f"{len(stale)} watched task(s) stale — the worker or beat tier is not "
-                "processing. Check the wepl-worker / wepl-beat services."))
+                f"{len(stale)} watched task(s) stale — Celery is not processing. "
+                "Check the wepl-worker / wepl-beat services, or the web service's "
+                "own Celery processes while RUN_EMBEDDED_CELERY is on."))
         else:
             self.stdout.write(self.style.SUCCESS("no stale tasks"))
