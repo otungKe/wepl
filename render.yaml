@@ -16,9 +16,11 @@ services:
     # Pin the interpreter — Render otherwise defaults to its latest Python (3.14+),
     # which drifts from CI (3.12). Also pinned via backend/.python-version.
     buildCommand: pip install -r requirements.txt && python manage.py collectstatic --noinput
-    # start.sh also launches Celery worker + beat in-process. Splitting them into
-    # dedicated services is the target (P0-01) but needs a paid worker plan / a
-    # chosen platform — deferred for now.
+    # start.sh runs the release steps (migrate + idempotent provisioning), then
+    # Daphne, and — while RUN_EMBEDDED_CELERY is "true" — the Celery worker and
+    # beat in this same process. Splitting them onto their own services needs a
+    # paid Render worker plan, so those services wait, guarded and unsynced, in
+    # render.worker-tier.yaml (#161 / P0-01; docs/deploy/worker-tier.md).
     startCommand: bash start.sh
     healthCheckPath: /health/
     envVars:
@@ -30,6 +32,14 @@ services:
         generateValue: true
       - key: ALLOWED_HOSTS
         value: wepl-api.onrender.com
+      # Celery worker + beat run inside this web process (#161). Flip to "false"
+      # in the same edit that adds the worker services from
+      # render.worker-tier.yaml — never one without the other, or you get two
+      # schedulers double-firing every scheduled task, or no async processing
+      # at all. Declared explicitly rather than omitted so a re-sync overwrites
+      # whatever was set on the service by hand, as STAGING_OTP_BYPASS does.
+      - key: RUN_EMBEDDED_CELERY
+        value: "true"
       - key: CORS_ALLOWED_ORIGINS
         value: https://wepl-api.onrender.com,https://wepl-web.onrender.com,https://wepl-ops.onrender.com
       # OTP delivery: 'console' logs the code (visible in logs) instead of sending
@@ -219,6 +229,14 @@ services:
         generateValue: true
       - key: ALLOWED_HOSTS
         value: wepl-api-staging.onrender.com
+      # Celery worker + beat run inside this web process (#161). Flip to "false"
+      # in the same edit that adds the worker services from
+      # render.worker-tier.yaml — never one without the other, or you get two
+      # schedulers double-firing every scheduled task, or no async processing
+      # at all. Declared explicitly rather than omitted so a re-sync overwrites
+      # whatever was set on the service by hand, as STAGING_OTP_BYPASS does.
+      - key: RUN_EMBEDDED_CELERY
+        value: "true"
       - key: CORS_ALLOWED_ORIGINS
         value: https://wepl-api-staging.onrender.com,https://wepl-web-staging.onrender.com
       # Production settings forbid STAGING_OTP_BYPASS while DEBUG=False, so keep it
@@ -296,6 +314,12 @@ services:
         sync: false
       - key: USE_S3
         value: "false"
+      # Required alongside USE_S3=false: production.py refuses to boot on ephemeral
+      # media storage unless the risk is explicitly accepted (check_durable_media).
+      # Correct for staging, whose uploads are throwaway test evidence — never set
+      # this on a stack that holds real KYC documents.
+      - key: ALLOW_EPHEMERAL_MEDIA
+        value: "true"
       - key: AWS_STORAGE_BUCKET_NAME
         sync: false
       - key: AWS_S3_REGION_NAME

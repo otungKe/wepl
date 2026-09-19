@@ -74,6 +74,9 @@ services:
              daphne -b 0.0.0.0 -p 8000 config.asgi:application"
 
   # ── Celery worker ─────────────────────────────────────────────────────────────
+  # Same entrypoint as the deployed worker service (backend/start-worker.sh), so
+  # the queue list has exactly one definition and local behaviour matches #161's
+  # production layout.
   celery:
     build:
       context: ./backend
@@ -88,14 +91,17 @@ services:
       DB_HOST:                db
       DB_PORT:                5432
       REDIS_URL:              redis://redis:6379/0
+      CELERY_CONCURRENCY:     "4"
     depends_on:
       db:
         condition: service_healthy
       redis:
         condition: service_healthy
-    command: celery -A config worker -l info -Q default,notifications,payments,financial --concurrency=4
+    command: bash start-worker.sh
 
   # ── Celery Beat (scheduler) ───────────────────────────────────────────────────
+  # Exactly one replica, always — a second scheduler double-fires every entry in
+  # CELERY_BEAT_SCHEDULE. See backend/start-beat.sh.
   celery-beat:
     build:
       context: ./backend
@@ -115,7 +121,7 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
-    command: celery -A config beat -l info --scheduler django_celery_beat.schedulers:DatabaseScheduler
+    command: bash start-beat.sh
 
 volumes:
   pgdata:

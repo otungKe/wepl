@@ -1,0 +1,881 @@
+# The async tier: Celery worker + beat as their own services.
+#
+# THIS FILE IS NOT SYNCED. Render only reads render.yaml, and these four
+# services need a PAID instance type — Render has no free plan for
+# `type: worker`. Keeping them here means a blueprint sync for any unrelated
+# reason cannot try to create a paid service, and cannot flip production's
+# async tier out from under the free-tier layout that is actually running.
+#
+# Until this is adopted, Celery still runs inside the web process, the way it
+# always has: RUN_EMBEDDED_CELERY defaults to "true" and render.yaml declares it
+# "true" on both API services. See #161 and docs/deploy/worker-tier.md.
+#
+# ── Adopting it (the cutover, one PR) ──────────────────────────────────────
+#   1. Paste the service entries below into render.yaml.
+#   2. Flip RUN_EMBEDDED_CELERY to "false" on wepl-api and wepl-api-staging.
+#   3. Sync the blueprint, then set the two MPESA_B2C_* secrets on the worker.
+#
+# Steps 1 and 2 are one edit on purpose: worker services present while the web
+# service still runs its own beat is two schedulers, and the web service with
+# no embedded Celery and no worker services is no async processing at all.
+# apps/core/tests_deploy_topology.py fails the build on either half-state, so
+# the cutover cannot land half-done.
+#
+# Everything else about these services — queue coverage, the single beat
+# instance, the copied SECRET_KEY — is asserted from this file by that same
+# test module, so it is guarded while it waits here.
+services:
+
+  # ── Async tier (issue #161 / P0-01) ──────────────────────────────────────
+  # Celery used to run inside wepl-api's process: a notification fan-out or the
+  # hourly reconciliation competed with HTTP requests for the same CPU, and every
+  # web restart killed in-flight tasks. On their own services the queue isolation
+  # declared in CELERY_TASK_ROUTES (default / notifications / payments /
+  # financial) finally buys something: this tier scales on queue depth, the web
+  # tier on request rate. Liveness is the DB-backed WorkerHeartbeat, visible at
+  # /api/ops/health/ and via `manage.py check_workers`.
+  # Rollout order and the dashboard steps: docs/deploy/worker-tier.md.
+  - type: worker
+    name: wepl-worker
+    runtime: python
+    rootDir: backend
+    # Render has no free instance type for `type: worker` (free applies to web
+    # services only), so this is the first paid service in the blueprint. If a
+    # sync rejects the plan name, use the current worker instance type from the
+    # Render dashboard — the rest of this service is unaffected.
+    plan: starter
+    # No collectstatic: this tier serves no HTTP and reads no static manifest.
+    buildCommand: pip install -r requirements.txt
+    startCommand: bash start-worker.sh
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.12"
+      - key: DJANGO_SETTINGS_MODULE
+        value: config.settings.production
+      # Every credential below is copied from wepl-api rather than re-declared,
+      # so each one is still entered exactly once in the dashboard and the two
+      # tiers can never drift apart.
+      # SECRET_KEY: signed URLs (apps.files.signing) and the FIELD_ENCRYPTION_KEYS
+      # fallback are derived from it — a different key here silently breaks
+      # anything the other tier signed or encrypted.
+      - key: SECRET_KEY
+        fromService:
+          type: web
+          name: wepl-api
+          envVarKey: SECRET_KEY
+      # ALLOWED_HOSTS: production.py has no default for it, so settings won't import without it.
+      - key: ALLOWED_HOSTS
+        fromService:
+          type: web
+          name: wepl-api
+          envVarKey: ALLOWED_HOSTS
+      - key: STAGING_OTP_BYPASS
+        fromService:
+          type: web
+          name: wepl-api
+          envVarKey: STAGING_OTP_BYPASS
+      - key: ACCESS_TIER_ENFORCEMENT
+        fromService:
+          type: web
+          name: wepl-api
+          envVarKey: ACCESS_TIER_ENFORCEMENT
+      - key: SMS_BACKEND
+        fromService:
+          type: web
+          name: wepl-api
+          envVarKey: SMS_BACKEND
+      - key: BREVO_API_KEY
+        fromService:
+          type: web
+          name: wepl-api
+          envVarKey: BREVO_API_KEY
+      - key: EMAIL_BACKEND
+        fromService:
+          type: web
+          name: wepl-api
+          envVarKey: EMAIL_BACKEND
+      - key: EMAIL_HOST
+        fromService:
+          type: web
+          name: wepl-api
+          envVarKey: EMAIL_HOST
+      - key: EMAIL_PORT
+        fromService:
+          type: web
+          name: wepl-api
+          envVarKey: EMAIL_PORT
+      - key: EMAIL_USE_TLS
+        fromService:
+          type: web
+          name: wepl-api
+          envVarKey: EMAIL_USE_TLS
+      - key: EMAIL_HOST_USER
+        fromService:
+          type: web
+          name: wepl-api
+          envVarKey: EMAIL_HOST_USER
+      - key: EMAIL_HOST_PASSWORD
+        fromService:
+          type: web
+          name: wepl-api
+          envVarKey: EMAIL_HOST_PASSWORD
+      - key: DEFAULT_FROM_EMAIL
+        fromService:
+          type: web
+          name: wepl-api
+          envVarKey: DEFAULT_FROM_EMAIL
+      - key: DATABASE_URL
+        fromService:
+          type: web
+          name: wepl-api
+          envVarKey: DATABASE_URL
+      - key: MPESA_CONSUMER_KEY
+        fromService:
+          type: web
+          name: wepl-api
+          envVarKey: MPESA_CONSUMER_KEY
+      - key: MPESA_CONSUMER_SECRET
+        fromService:
+          type: web
+          name: wepl-api
+          envVarKey: MPESA_CONSUMER_SECRET
+      - key: MPESA_SHORTCODE
+        fromService:
+          type: web
+          name: wepl-api
+          envVarKey: MPESA_SHORTCODE
+      - key: MPESA_PASSKEY
+        fromService:
+          type: web
+          name: wepl-api
+          envVarKey: MPESA_PASSKEY
+      - key: MPESA_BASE_URL
+        fromService:
+          type: web
+          name: wepl-api
+          envVarKey: MPESA_BASE_URL
+      - key: MPESA_CALLBACK_URL
+        fromService:
+          type: web
+          name: wepl-api
+          envVarKey: MPESA_CALLBACK_URL
+      - key: MPESA_B2C_RESULT_URL
+        fromService:
+          type: web
+          name: wepl-api
+          envVarKey: MPESA_B2C_RESULT_URL
+      - key: MPESA_B2C_TIMEOUT_URL
+        fromService:
+          type: web
+          name: wepl-api
+          envVarKey: MPESA_B2C_TIMEOUT_URL
+      - key: AT_API_KEY
+        fromService:
+          type: web
+          name: wepl-api
+          envVarKey: AT_API_KEY
+      - key: AT_USERNAME
+        fromService:
+          type: web
+          name: wepl-api
+          envVarKey: AT_USERNAME
+      - key: AT_SENDER_ID
+        fromService:
+          type: web
+          name: wepl-api
+          envVarKey: AT_SENDER_ID
+      - key: SENTRY_DSN
+        fromService:
+          type: web
+          name: wepl-api
+          envVarKey: SENTRY_DSN
+      - key: FIREBASE_CREDENTIALS_JSON
+        fromService:
+          type: web
+          name: wepl-api
+          envVarKey: FIREBASE_CREDENTIALS_JSON
+      - key: USE_S3
+        fromService:
+          type: web
+          name: wepl-api
+          envVarKey: USE_S3
+      - key: AWS_STORAGE_BUCKET_NAME
+        fromService:
+          type: web
+          name: wepl-api
+          envVarKey: AWS_STORAGE_BUCKET_NAME
+      - key: AWS_S3_REGION_NAME
+        fromService:
+          type: web
+          name: wepl-api
+          envVarKey: AWS_S3_REGION_NAME
+      - key: AWS_S3_ENDPOINT_URL
+        fromService:
+          type: web
+          name: wepl-api
+          envVarKey: AWS_S3_ENDPOINT_URL
+      - key: AWS_ACCESS_KEY_ID
+        fromService:
+          type: web
+          name: wepl-api
+          envVarKey: AWS_ACCESS_KEY_ID
+      - key: AWS_SECRET_ACCESS_KEY
+        fromService:
+          type: web
+          name: wepl-api
+          envVarKey: AWS_SECRET_ACCESS_KEY
+      # Broker + cache come straight from the shared Redis instance.
+      - key: REDIS_URL
+        fromService:
+          type: redis
+          name: wepl-redis
+          property: connectionString
+      - key: REDIS_CACHE_URL
+        fromService:
+          type: redis
+          name: wepl-redis
+          property: connectionString
+      # B2C payout credentials. The payout call (apps/ledger/tasks.py) runs on
+      # THIS tier now, so these two secrets must be set on this service as well
+      # as on the API — they are not declared on the API service to copy from.
+      - key: MPESA_B2C_INITIATOR_NAME
+        sync: false
+      - key: MPESA_B2C_SECURITY_CREDENTIAL
+        sync: false
+
+  - type: worker
+    name: wepl-beat
+    runtime: python
+    rootDir: backend
+    plan: starter
+    # EXACTLY ONE beat instance, always. A second scheduler re-fires every
+    # entry in CELERY_BEAT_SCHEDULE, and execute_due_standing_orders firing
+    # twice is a duplicate money movement attempt, not just duplicate work.
+    numInstances: 1
+    buildCommand: pip install -r requirements.txt
+    startCommand: bash start-beat.sh
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.12"
+      - key: DJANGO_SETTINGS_MODULE
+        value: config.settings.production
+      # Every credential below is copied from wepl-api rather than re-declared,
+      # so each one is still entered exactly once in the dashboard and the two
+      # tiers can never drift apart.
+      # SECRET_KEY: signed URLs (apps.files.signing) and the FIELD_ENCRYPTION_KEYS
+      # fallback are derived from it — a different key here silently breaks
+      # anything the other tier signed or encrypted.
+      - key: SECRET_KEY
+        fromService:
+          type: web
+          name: wepl-api
+          envVarKey: SECRET_KEY
+      # ALLOWED_HOSTS: production.py has no default for it, so settings won't import without it.
+      - key: ALLOWED_HOSTS
+        fromService:
+          type: web
+          name: wepl-api
+          envVarKey: ALLOWED_HOSTS
+      - key: STAGING_OTP_BYPASS
+        fromService:
+          type: web
+          name: wepl-api
+          envVarKey: STAGING_OTP_BYPASS
+      - key: ACCESS_TIER_ENFORCEMENT
+        fromService:
+          type: web
+          name: wepl-api
+          envVarKey: ACCESS_TIER_ENFORCEMENT
+      - key: SMS_BACKEND
+        fromService:
+          type: web
+          name: wepl-api
+          envVarKey: SMS_BACKEND
+      - key: BREVO_API_KEY
+        fromService:
+          type: web
+          name: wepl-api
+          envVarKey: BREVO_API_KEY
+      - key: EMAIL_BACKEND
+        fromService:
+          type: web
+          name: wepl-api
+          envVarKey: EMAIL_BACKEND
+      - key: EMAIL_HOST
+        fromService:
+          type: web
+          name: wepl-api
+          envVarKey: EMAIL_HOST
+      - key: EMAIL_PORT
+        fromService:
+          type: web
+          name: wepl-api
+          envVarKey: EMAIL_PORT
+      - key: EMAIL_USE_TLS
+        fromService:
+          type: web
+          name: wepl-api
+          envVarKey: EMAIL_USE_TLS
+      - key: EMAIL_HOST_USER
+        fromService:
+          type: web
+          name: wepl-api
+          envVarKey: EMAIL_HOST_USER
+      - key: EMAIL_HOST_PASSWORD
+        fromService:
+          type: web
+          name: wepl-api
+          envVarKey: EMAIL_HOST_PASSWORD
+      - key: DEFAULT_FROM_EMAIL
+        fromService:
+          type: web
+          name: wepl-api
+          envVarKey: DEFAULT_FROM_EMAIL
+      - key: DATABASE_URL
+        fromService:
+          type: web
+          name: wepl-api
+          envVarKey: DATABASE_URL
+      - key: MPESA_CONSUMER_KEY
+        fromService:
+          type: web
+          name: wepl-api
+          envVarKey: MPESA_CONSUMER_KEY
+      - key: MPESA_CONSUMER_SECRET
+        fromService:
+          type: web
+          name: wepl-api
+          envVarKey: MPESA_CONSUMER_SECRET
+      - key: MPESA_SHORTCODE
+        fromService:
+          type: web
+          name: wepl-api
+          envVarKey: MPESA_SHORTCODE
+      - key: MPESA_PASSKEY
+        fromService:
+          type: web
+          name: wepl-api
+          envVarKey: MPESA_PASSKEY
+      - key: MPESA_BASE_URL
+        fromService:
+          type: web
+          name: wepl-api
+          envVarKey: MPESA_BASE_URL
+      - key: MPESA_CALLBACK_URL
+        fromService:
+          type: web
+          name: wepl-api
+          envVarKey: MPESA_CALLBACK_URL
+      - key: MPESA_B2C_RESULT_URL
+        fromService:
+          type: web
+          name: wepl-api
+          envVarKey: MPESA_B2C_RESULT_URL
+      - key: MPESA_B2C_TIMEOUT_URL
+        fromService:
+          type: web
+          name: wepl-api
+          envVarKey: MPESA_B2C_TIMEOUT_URL
+      - key: AT_API_KEY
+        fromService:
+          type: web
+          name: wepl-api
+          envVarKey: AT_API_KEY
+      - key: AT_USERNAME
+        fromService:
+          type: web
+          name: wepl-api
+          envVarKey: AT_USERNAME
+      - key: AT_SENDER_ID
+        fromService:
+          type: web
+          name: wepl-api
+          envVarKey: AT_SENDER_ID
+      - key: SENTRY_DSN
+        fromService:
+          type: web
+          name: wepl-api
+          envVarKey: SENTRY_DSN
+      - key: FIREBASE_CREDENTIALS_JSON
+        fromService:
+          type: web
+          name: wepl-api
+          envVarKey: FIREBASE_CREDENTIALS_JSON
+      - key: USE_S3
+        fromService:
+          type: web
+          name: wepl-api
+          envVarKey: USE_S3
+      - key: AWS_STORAGE_BUCKET_NAME
+        fromService:
+          type: web
+          name: wepl-api
+          envVarKey: AWS_STORAGE_BUCKET_NAME
+      - key: AWS_S3_REGION_NAME
+        fromService:
+          type: web
+          name: wepl-api
+          envVarKey: AWS_S3_REGION_NAME
+      - key: AWS_S3_ENDPOINT_URL
+        fromService:
+          type: web
+          name: wepl-api
+          envVarKey: AWS_S3_ENDPOINT_URL
+      - key: AWS_ACCESS_KEY_ID
+        fromService:
+          type: web
+          name: wepl-api
+          envVarKey: AWS_ACCESS_KEY_ID
+      - key: AWS_SECRET_ACCESS_KEY
+        fromService:
+          type: web
+          name: wepl-api
+          envVarKey: AWS_SECRET_ACCESS_KEY
+      # Broker + cache come straight from the shared Redis instance.
+      - key: REDIS_URL
+        fromService:
+          type: redis
+          name: wepl-redis
+          property: connectionString
+      - key: REDIS_CACHE_URL
+        fromService:
+          type: redis
+          name: wepl-redis
+          property: connectionString
+      # B2C payout credentials. The payout call (apps/ledger/tasks.py) runs on
+      # THIS tier now, so these two secrets must be set on this service as well
+      # as on the API — they are not declared on the API service to copy from.
+      - key: MPESA_B2C_INITIATOR_NAME
+        sync: false
+      - key: MPESA_B2C_SECURITY_CREDENTIAL
+        sync: false
+
+
+  # ── Async tier, staging (issue #161) — mirrors wepl-worker / wepl-beat ───
+  # Sync this stack FIRST and confirm the heartbeats at /api/ops/health/ before
+  # touching production. See docs/deploy/worker-tier.md.
+  - type: worker
+    name: wepl-worker-staging
+    runtime: python
+    rootDir: backend
+    # Render has no free instance type for `type: worker` (free applies to web
+    # services only), so this is the first paid service in the blueprint. If a
+    # sync rejects the plan name, use the current worker instance type from the
+    # Render dashboard — the rest of this service is unaffected.
+    plan: starter
+    # No collectstatic: this tier serves no HTTP and reads no static manifest.
+    buildCommand: pip install -r requirements.txt
+    startCommand: bash start-worker.sh
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.12"
+      - key: DJANGO_SETTINGS_MODULE
+        value: config.settings.production
+      # Every credential below is copied from wepl-api-staging rather than re-declared,
+      # so each one is still entered exactly once in the dashboard and the two
+      # tiers can never drift apart.
+      # SECRET_KEY: signed URLs (apps.files.signing) and the FIELD_ENCRYPTION_KEYS
+      # fallback are derived from it — a different key here silently breaks
+      # anything the other tier signed or encrypted.
+      - key: SECRET_KEY
+        fromService:
+          type: web
+          name: wepl-api-staging
+          envVarKey: SECRET_KEY
+      # ALLOWED_HOSTS: production.py has no default for it, so settings won't import without it.
+      - key: ALLOWED_HOSTS
+        fromService:
+          type: web
+          name: wepl-api-staging
+          envVarKey: ALLOWED_HOSTS
+      - key: STAGING_OTP_BYPASS
+        fromService:
+          type: web
+          name: wepl-api-staging
+          envVarKey: STAGING_OTP_BYPASS
+      - key: ACCESS_TIER_ENFORCEMENT
+        fromService:
+          type: web
+          name: wepl-api-staging
+          envVarKey: ACCESS_TIER_ENFORCEMENT
+      - key: SMS_BACKEND
+        fromService:
+          type: web
+          name: wepl-api-staging
+          envVarKey: SMS_BACKEND
+      - key: BREVO_API_KEY
+        fromService:
+          type: web
+          name: wepl-api-staging
+          envVarKey: BREVO_API_KEY
+      - key: EMAIL_BACKEND
+        fromService:
+          type: web
+          name: wepl-api-staging
+          envVarKey: EMAIL_BACKEND
+      - key: EMAIL_HOST
+        fromService:
+          type: web
+          name: wepl-api-staging
+          envVarKey: EMAIL_HOST
+      - key: EMAIL_PORT
+        fromService:
+          type: web
+          name: wepl-api-staging
+          envVarKey: EMAIL_PORT
+      - key: EMAIL_USE_TLS
+        fromService:
+          type: web
+          name: wepl-api-staging
+          envVarKey: EMAIL_USE_TLS
+      - key: EMAIL_HOST_USER
+        fromService:
+          type: web
+          name: wepl-api-staging
+          envVarKey: EMAIL_HOST_USER
+      - key: EMAIL_HOST_PASSWORD
+        fromService:
+          type: web
+          name: wepl-api-staging
+          envVarKey: EMAIL_HOST_PASSWORD
+      - key: DEFAULT_FROM_EMAIL
+        fromService:
+          type: web
+          name: wepl-api-staging
+          envVarKey: DEFAULT_FROM_EMAIL
+      - key: DATABASE_URL
+        fromService:
+          type: web
+          name: wepl-api-staging
+          envVarKey: DATABASE_URL
+      - key: MPESA_CONSUMER_KEY
+        fromService:
+          type: web
+          name: wepl-api-staging
+          envVarKey: MPESA_CONSUMER_KEY
+      - key: MPESA_CONSUMER_SECRET
+        fromService:
+          type: web
+          name: wepl-api-staging
+          envVarKey: MPESA_CONSUMER_SECRET
+      - key: MPESA_SHORTCODE
+        fromService:
+          type: web
+          name: wepl-api-staging
+          envVarKey: MPESA_SHORTCODE
+      - key: MPESA_PASSKEY
+        fromService:
+          type: web
+          name: wepl-api-staging
+          envVarKey: MPESA_PASSKEY
+      - key: MPESA_BASE_URL
+        fromService:
+          type: web
+          name: wepl-api-staging
+          envVarKey: MPESA_BASE_URL
+      - key: MPESA_CALLBACK_URL
+        fromService:
+          type: web
+          name: wepl-api-staging
+          envVarKey: MPESA_CALLBACK_URL
+      - key: MPESA_B2C_RESULT_URL
+        fromService:
+          type: web
+          name: wepl-api-staging
+          envVarKey: MPESA_B2C_RESULT_URL
+      - key: MPESA_B2C_TIMEOUT_URL
+        fromService:
+          type: web
+          name: wepl-api-staging
+          envVarKey: MPESA_B2C_TIMEOUT_URL
+      - key: AT_API_KEY
+        fromService:
+          type: web
+          name: wepl-api-staging
+          envVarKey: AT_API_KEY
+      - key: AT_USERNAME
+        fromService:
+          type: web
+          name: wepl-api-staging
+          envVarKey: AT_USERNAME
+      - key: AT_SENDER_ID
+        fromService:
+          type: web
+          name: wepl-api-staging
+          envVarKey: AT_SENDER_ID
+      - key: SENTRY_DSN
+        fromService:
+          type: web
+          name: wepl-api-staging
+          envVarKey: SENTRY_DSN
+      - key: FIREBASE_CREDENTIALS_JSON
+        fromService:
+          type: web
+          name: wepl-api-staging
+          envVarKey: FIREBASE_CREDENTIALS_JSON
+      - key: USE_S3
+        fromService:
+          type: web
+          name: wepl-api-staging
+          envVarKey: USE_S3
+      - key: AWS_STORAGE_BUCKET_NAME
+        fromService:
+          type: web
+          name: wepl-api-staging
+          envVarKey: AWS_STORAGE_BUCKET_NAME
+      - key: AWS_S3_REGION_NAME
+        fromService:
+          type: web
+          name: wepl-api-staging
+          envVarKey: AWS_S3_REGION_NAME
+      - key: AWS_S3_ENDPOINT_URL
+        fromService:
+          type: web
+          name: wepl-api-staging
+          envVarKey: AWS_S3_ENDPOINT_URL
+      - key: AWS_ACCESS_KEY_ID
+        fromService:
+          type: web
+          name: wepl-api-staging
+          envVarKey: AWS_ACCESS_KEY_ID
+      - key: AWS_SECRET_ACCESS_KEY
+        fromService:
+          type: web
+          name: wepl-api-staging
+          envVarKey: AWS_SECRET_ACCESS_KEY
+      - key: ALLOW_EPHEMERAL_MEDIA
+        fromService:
+          type: web
+          name: wepl-api-staging
+          envVarKey: ALLOW_EPHEMERAL_MEDIA
+      # Broker + cache come straight from the shared Redis instance.
+      - key: REDIS_URL
+        fromService:
+          type: redis
+          name: wepl-redis-staging
+          property: connectionString
+      - key: REDIS_CACHE_URL
+        fromService:
+          type: redis
+          name: wepl-redis-staging
+          property: connectionString
+      # B2C payout credentials. The payout call (apps/ledger/tasks.py) runs on
+      # THIS tier now, so these two secrets must be set on this service as well
+      # as on the API — they are not declared on the API service to copy from.
+      - key: MPESA_B2C_INITIATOR_NAME
+        sync: false
+      - key: MPESA_B2C_SECURITY_CREDENTIAL
+        sync: false
+
+  - type: worker
+    name: wepl-beat-staging
+    runtime: python
+    rootDir: backend
+    plan: starter
+    # EXACTLY ONE beat instance, always. A second scheduler re-fires every
+    # entry in CELERY_BEAT_SCHEDULE, and execute_due_standing_orders firing
+    # twice is a duplicate money movement attempt, not just duplicate work.
+    numInstances: 1
+    buildCommand: pip install -r requirements.txt
+    startCommand: bash start-beat.sh
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.12"
+      - key: DJANGO_SETTINGS_MODULE
+        value: config.settings.production
+      # Every credential below is copied from wepl-api-staging rather than re-declared,
+      # so each one is still entered exactly once in the dashboard and the two
+      # tiers can never drift apart.
+      # SECRET_KEY: signed URLs (apps.files.signing) and the FIELD_ENCRYPTION_KEYS
+      # fallback are derived from it — a different key here silently breaks
+      # anything the other tier signed or encrypted.
+      - key: SECRET_KEY
+        fromService:
+          type: web
+          name: wepl-api-staging
+          envVarKey: SECRET_KEY
+      # ALLOWED_HOSTS: production.py has no default for it, so settings won't import without it.
+      - key: ALLOWED_HOSTS
+        fromService:
+          type: web
+          name: wepl-api-staging
+          envVarKey: ALLOWED_HOSTS
+      - key: STAGING_OTP_BYPASS
+        fromService:
+          type: web
+          name: wepl-api-staging
+          envVarKey: STAGING_OTP_BYPASS
+      - key: ACCESS_TIER_ENFORCEMENT
+        fromService:
+          type: web
+          name: wepl-api-staging
+          envVarKey: ACCESS_TIER_ENFORCEMENT
+      - key: SMS_BACKEND
+        fromService:
+          type: web
+          name: wepl-api-staging
+          envVarKey: SMS_BACKEND
+      - key: BREVO_API_KEY
+        fromService:
+          type: web
+          name: wepl-api-staging
+          envVarKey: BREVO_API_KEY
+      - key: EMAIL_BACKEND
+        fromService:
+          type: web
+          name: wepl-api-staging
+          envVarKey: EMAIL_BACKEND
+      - key: EMAIL_HOST
+        fromService:
+          type: web
+          name: wepl-api-staging
+          envVarKey: EMAIL_HOST
+      - key: EMAIL_PORT
+        fromService:
+          type: web
+          name: wepl-api-staging
+          envVarKey: EMAIL_PORT
+      - key: EMAIL_USE_TLS
+        fromService:
+          type: web
+          name: wepl-api-staging
+          envVarKey: EMAIL_USE_TLS
+      - key: EMAIL_HOST_USER
+        fromService:
+          type: web
+          name: wepl-api-staging
+          envVarKey: EMAIL_HOST_USER
+      - key: EMAIL_HOST_PASSWORD
+        fromService:
+          type: web
+          name: wepl-api-staging
+          envVarKey: EMAIL_HOST_PASSWORD
+      - key: DEFAULT_FROM_EMAIL
+        fromService:
+          type: web
+          name: wepl-api-staging
+          envVarKey: DEFAULT_FROM_EMAIL
+      - key: DATABASE_URL
+        fromService:
+          type: web
+          name: wepl-api-staging
+          envVarKey: DATABASE_URL
+      - key: MPESA_CONSUMER_KEY
+        fromService:
+          type: web
+          name: wepl-api-staging
+          envVarKey: MPESA_CONSUMER_KEY
+      - key: MPESA_CONSUMER_SECRET
+        fromService:
+          type: web
+          name: wepl-api-staging
+          envVarKey: MPESA_CONSUMER_SECRET
+      - key: MPESA_SHORTCODE
+        fromService:
+          type: web
+          name: wepl-api-staging
+          envVarKey: MPESA_SHORTCODE
+      - key: MPESA_PASSKEY
+        fromService:
+          type: web
+          name: wepl-api-staging
+          envVarKey: MPESA_PASSKEY
+      - key: MPESA_BASE_URL
+        fromService:
+          type: web
+          name: wepl-api-staging
+          envVarKey: MPESA_BASE_URL
+      - key: MPESA_CALLBACK_URL
+        fromService:
+          type: web
+          name: wepl-api-staging
+          envVarKey: MPESA_CALLBACK_URL
+      - key: MPESA_B2C_RESULT_URL
+        fromService:
+          type: web
+          name: wepl-api-staging
+          envVarKey: MPESA_B2C_RESULT_URL
+      - key: MPESA_B2C_TIMEOUT_URL
+        fromService:
+          type: web
+          name: wepl-api-staging
+          envVarKey: MPESA_B2C_TIMEOUT_URL
+      - key: AT_API_KEY
+        fromService:
+          type: web
+          name: wepl-api-staging
+          envVarKey: AT_API_KEY
+      - key: AT_USERNAME
+        fromService:
+          type: web
+          name: wepl-api-staging
+          envVarKey: AT_USERNAME
+      - key: AT_SENDER_ID
+        fromService:
+          type: web
+          name: wepl-api-staging
+          envVarKey: AT_SENDER_ID
+      - key: SENTRY_DSN
+        fromService:
+          type: web
+          name: wepl-api-staging
+          envVarKey: SENTRY_DSN
+      - key: FIREBASE_CREDENTIALS_JSON
+        fromService:
+          type: web
+          name: wepl-api-staging
+          envVarKey: FIREBASE_CREDENTIALS_JSON
+      - key: USE_S3
+        fromService:
+          type: web
+          name: wepl-api-staging
+          envVarKey: USE_S3
+      - key: AWS_STORAGE_BUCKET_NAME
+        fromService:
+          type: web
+          name: wepl-api-staging
+          envVarKey: AWS_STORAGE_BUCKET_NAME
+      - key: AWS_S3_REGION_NAME
+        fromService:
+          type: web
+          name: wepl-api-staging
+          envVarKey: AWS_S3_REGION_NAME
+      - key: AWS_S3_ENDPOINT_URL
+        fromService:
+          type: web
+          name: wepl-api-staging
+          envVarKey: AWS_S3_ENDPOINT_URL
+      - key: AWS_ACCESS_KEY_ID
+        fromService:
+          type: web
+          name: wepl-api-staging
+          envVarKey: AWS_ACCESS_KEY_ID
+      - key: AWS_SECRET_ACCESS_KEY
+        fromService:
+          type: web
+          name: wepl-api-staging
+          envVarKey: AWS_SECRET_ACCESS_KEY
+      - key: ALLOW_EPHEMERAL_MEDIA
+        fromService:
+          type: web
+          name: wepl-api-staging
+          envVarKey: ALLOW_EPHEMERAL_MEDIA
+      # Broker + cache come straight from the shared Redis instance.
+      - key: REDIS_URL
+        fromService:
+          type: redis
+          name: wepl-redis-staging
+          property: connectionString
+      - key: REDIS_CACHE_URL
+        fromService:
+          type: redis
+          name: wepl-redis-staging
+          property: connectionString
+      # B2C payout credentials. The payout call (apps/ledger/tasks.py) runs on
+      # THIS tier now, so these two secrets must be set on this service as well
+      # as on the API — they are not declared on the API service to copy from.
+      - key: MPESA_B2C_INITIATOR_NAME
+        sync: false
+      - key: MPESA_B2C_SECURITY_CREDENTIAL
+        sync: false
+
