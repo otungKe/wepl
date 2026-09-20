@@ -5,7 +5,15 @@ class CommunitySharesFundView(APIView):
     permission_classes = [IsActiveSession]
 
     def get(self, request, community_id):
-        fund = get_object_or_404(SharesFund, community_id=community_id)
+        # Holdings read their amounts from the ledger, so pull the holder and the
+        # fund alongside each row rather than one query per holder.
+        fund = get_object_or_404(
+            SharesFund.objects.prefetch_related(
+                Prefetch('holdings',
+                         queryset=ShareHolding.objects.select_related('user', 'shares_fund')),
+            ),
+            community_id=community_id,
+        )
         return Response(SharesFundSerializer(fund).data)
 
 
