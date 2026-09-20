@@ -23,7 +23,7 @@ class SharesService:
         """Credit a member's share holding for a settled purchase and post the
         double-entry (cash into the float, member shares liability up). Idempotent
         on the receipt / idempotency seed."""
-        from apps.ledger.models import FinancialTransaction
+        from apps.ledger.models import FinancialTransaction, JournalEntry
         from apps.ledger.money import Money
         from apps.ledger.posting import post_journal
         from apps.ledger import posting_map as pm
@@ -31,20 +31,22 @@ class SharesService:
 
         fund = SharesFund.objects.select_for_update().get(id=shares_fund_id)
         amount = D(str(amount))
-        new_shares = (amount / fund.share_price).quantize(D('0.0001'))
-
-        # F() updates — atomic, no read-modify-write race.
-        ShareHolding.objects.update_or_create(
-            shares_fund=fund, user=user,
-            defaults={'shares_count': D('0'), 'total_contributed': D('0')},
-        )
-        ShareHolding.objects.filter(shares_fund=fund, user=user).update(
-            shares_count=F('shares_count') + new_shares,
-            total_contributed=F('total_contributed') + amount,
-        )
 
         seed = mpesa_receipt or idempotency_key
         idem_key = f"shares-{fund.id}-{user.id}-{seed}"
+
+        # ── Idempotency: if this journal was already posted, return its FT ─────
+        # post_journal dedupes on its own key, but the ShareHolding counters below
+        # are a SEPARATE write that key does not cover — a replayed settlement
+        # (at-least-once delivery) would credit the holding twice. Guard on the
+        # journal first, the same check ContributionService.contribute makes.
+        # The fund row is locked above, so this check and the update below cannot
+        # interleave with a concurrent purchase into the same fund.
+        if JournalEntry.objects.filter(idempotency_key=f"je-{idem_key}").exists():
+            return FinancialTransaction.objects.filter(idempotency_key=idem_key).first()
+
+        new_shares = (amount / fund.share_price).quantize(D('0.0001'))
+
         ft, _ = create_fin_transaction(
             idempotency_key=idem_key,
             op_type=FinancialTransaction.OpType.SHARES_PURCHASE,
@@ -63,5 +65,22 @@ class SharesService:
             narration=f"Shares purchase by {getattr(user, 'phone_number', user.pk)}",
             financial_transaction=ft,
             created_by=user,
+        )
+
+        # ── Holding counters (a projection of the shares sub-ledger) ──────────
+        # get_or_create, NOT update_or_create: update_or_create applies its
+        # ``defaults`` to an EXISTING row, so every purchase after the first reset
+        # the holding to zero and the F() increment below started from scratch —
+        # a member's holding only ever showed their most recent purchase, and
+        # ShareHolding.ownership_pct (mutable numerator over a ledger-derived
+        # pool) was wrong for anyone who had bought twice.
+        ShareHolding.objects.get_or_create(
+            shares_fund=fund, user=user,
+            defaults={'shares_count': D('0'), 'total_contributed': D('0')},
+        )
+        # F() updates — atomic, no read-modify-write race.
+        ShareHolding.objects.filter(shares_fund=fund, user=user).update(
+            shares_count=F('shares_count') + new_shares,
+            total_contributed=F('total_contributed') + amount,
         )
         return ft

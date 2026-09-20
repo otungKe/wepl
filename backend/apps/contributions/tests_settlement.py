@@ -75,9 +75,54 @@ class CollectionSettlementTests(TestCase):
             settlement.on_collection_settled(
                 payment_type="shares", user=user, amount=Decimal("100.00"),
                 receipt="DUPR", shares_fund_id=fund.id, idempotency_seed="chk-2")
-        self.assertEqual(
-            ShareHolding.objects.get(shares_fund=fund, user=user).shares_count,
-            Decimal("1.0000"))
+        holding = ShareHolding.objects.get(shares_fund=fund, user=user)
+        self.assertEqual(holding.shares_count, Decimal("1.0000"))
+        self.assertEqual(holding.total_contributed, Decimal("100.00"))
+
+    def test_repeat_share_purchases_accumulate(self):
+        """Distinct receipts are distinct purchases and must ADD to the holding.
+
+        Asserting a single-purchase value after replaying ONE receipt (the test
+        above) cannot tell "credited once" apart from "reset then credited once":
+        `update_or_create(..., defaults={'shares_count': 0, ...})` applied its
+        defaults to the existing row, so a member's holding only ever showed
+        their latest purchase. Only an accumulation across ≥2 distinct keys
+        distinguishes the two.
+        """
+        from apps.contributions.models import SharesFund, ShareHolding
+        user = get_user_model().objects.create(phone_number="254700000703")
+        fund = SharesFund.objects.create(name="Test Shares 3", share_price=Decimal("100.00"))
+        for receipt in ("SHRA1", "SHRA2", "SHRA3"):
+            settlement.on_collection_settled(
+                payment_type="shares", user=user, amount=Decimal("500.00"),
+                receipt=receipt, shares_fund_id=fund.id, idempotency_seed=receipt)
+
+        holding = ShareHolding.objects.get(shares_fund=fund, user=user)
+        self.assertEqual(holding.shares_count, Decimal("15.0000"))       # 3 × 500/100
+        self.assertEqual(holding.total_contributed, Decimal("1500.00"))
+
+    def test_replay_after_several_purchases_changes_nothing(self):
+        """The holding is a separate write from the journal, so the replay guard
+        has to protect it too — and it must still hold once the member has a
+        history to lose."""
+        from apps.contributions.models import SharesFund, ShareHolding
+        user = get_user_model().objects.create(phone_number="254700000704")
+        fund = SharesFund.objects.create(name="Test Shares 4", share_price=Decimal("100.00"))
+        for receipt in ("SHRB1", "SHRB2"):
+            settlement.on_collection_settled(
+                payment_type="shares", user=user, amount=Decimal("300.00"),
+                receipt=receipt, shares_fund_id=fund.id, idempotency_seed=receipt)
+
+        before = ShareHolding.objects.get(shares_fund=fund, user=user)
+        self.assertEqual(before.shares_count, Decimal("6.0000"))
+
+        settlement.on_collection_settled(   # duplicate delivery of the first one
+            payment_type="shares", user=user, amount=Decimal("300.00"),
+            receipt="SHRB1", shares_fund_id=fund.id, idempotency_seed="SHRB1")
+
+        after = ShareHolding.objects.get(shares_fund=fund, user=user)
+        self.assertEqual(after.shares_count, Decimal("6.0000"))
+        self.assertEqual(after.total_contributed, Decimal("600.00"))
 
 
 class C2BPaybillResolveTests(TestCase):
