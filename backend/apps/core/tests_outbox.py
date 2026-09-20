@@ -1,6 +1,6 @@
 """Tests for the transactional outbox (Phase 2, ADR-0006)."""
 from django.contrib.auth import get_user_model
-from django.db import transaction
+from django.db import connection, transaction
 from django.test import TestCase, override_settings
 from unittest.mock import patch
 
@@ -18,6 +18,19 @@ def _emit(**over):
     kwargs = dict(user_id=1, title="T", message="M")
     kwargs.update(over)
     emit("test_event", **kwargs)
+
+
+def _raise_db_error(*_args, **_kwargs):
+    """Fail the way a real consumer fails: with a *database* error.
+
+    A plain RuntimeError leaves the transaction usable, so it does not exercise
+    the relay's bookkeeping write at all. A DB error aborts the transaction —
+    Postgres then refuses every further statement in it — which is the case the
+    retry/dead-letter path actually has to survive (a constraint violation, a
+    deadlock, a bad query inside a handler).
+    """
+    with connection.cursor() as cur:
+        cur.execute("SELECT 1/0")
 
 
 class EmitDurabilityTests(TestCase):
@@ -107,6 +120,26 @@ class RelayFailureTests(TestCase):
         self.assertEqual(ev.attempts, 5)
         self.assertIn("downstream down", ev.last_error)
 
+    def test_database_error_is_counted_and_dead_letters(self):
+        """A receiver raising a DB error must still back off and dead-letter.
+
+        The dispatch runs in a savepoint for exactly this: without it the
+        aborted transaction makes the relay's own ``attempts``/``last_error``
+        write raise, so nothing is recorded and the task dies instead.
+        """
+        _emit()
+        ev = OutboxEvent.objects.get()
+        with patch("apps.core.events.domain_event.send", side_effect=_raise_db_error):
+            for _ in range(5):
+                process_outbox(max_attempts=5)
+                ev.refresh_from_db()
+                if ev.status == OutboxEvent.Status.DEAD:
+                    break
+        ev.refresh_from_db()
+        self.assertEqual(ev.status, OutboxEvent.Status.DEAD)
+        self.assertEqual(ev.attempts, 5)
+        self.assertTrue(ev.last_error)
+
 
 class InlineDeliveryTests(TestCase):
     """The ADR-0029 Stage 2 inline_atomic lane: per-consumer delivery rows,
@@ -179,6 +212,51 @@ class InlineDeliveryTests(TestCase):
         self.assertEqual(d.status, OutboxDelivery.Status.DEAD)
         self.assertEqual(d.attempts, 5)
         self.assertIn("consumer boom", d.last_error)
+
+    def test_handler_database_error_is_counted_and_dead_letters(self):
+        """The failure mode a money consumer actually has.
+
+        A financial handler fails with a constraint violation or a bad query,
+        not a RuntimeError. Running it in a savepoint is what lets the relay
+        record the attempt afterwards — without it the transaction is aborted,
+        the bookkeeping write raises, and the delivery silently never retries.
+        """
+        _INLINE_CONSUMERS.pop("test.inline", None)
+        register_inline_consumer("test.inline", {"inline_event"}, _raise_db_error)
+        self._emit_inline()
+        for _ in range(5):
+            process_inline_deliveries(max_attempts=5)
+            d = OutboxDelivery.objects.get()
+            if d.status == OutboxDelivery.Status.DEAD:
+                break
+        d = OutboxDelivery.objects.get()
+        self.assertEqual(d.status, OutboxDelivery.Status.DEAD)
+        self.assertEqual(d.attempts, 5)
+        self.assertTrue(d.last_error)
+
+    def test_failed_handler_leaves_no_partial_writes(self):
+        """The savepoint rolls the handler's work back; the ack row does not.
+
+        A handler that writes and then fails must leave nothing behind — the
+        delivery is retried later and a half-applied effect would be applied
+        twice.
+        """
+        def _write_then_fail(event):
+            OutboxEvent.objects.create(event_type="partial.write", payload={})
+            _raise_db_error()
+
+        _INLINE_CONSUMERS.pop("test.inline", None)
+        register_inline_consumer("test.inline", {"inline_event"}, _write_then_fail)
+        self._emit_inline()
+
+        # One claim only: the relay re-picks a row it put back to PENDING, so an
+        # unbounded pass would burn all five attempts here.
+        process_inline_deliveries(max_deliveries=1, max_attempts=5)
+
+        d = OutboxDelivery.objects.get()
+        self.assertEqual(d.status, OutboxDelivery.Status.PENDING)   # will retry
+        self.assertEqual(d.attempts, 1)
+        self.assertFalse(OutboxEvent.objects.filter(event_type="partial.write").exists())
 
     def test_notification_lane_untouched_when_no_inline_consumer(self):
         # With no inline consumer for this type, a plain notification emit creates
