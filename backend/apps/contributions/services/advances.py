@@ -209,6 +209,21 @@ class EmergencyAdvanceService:
         )
         amount = Decimal(str(amount))
 
+        # Idempotency key anchored to the M-Pesa receipt so retries are no-ops.
+        idem_key = f"advance-repay-{advance_id}-{mpesa_receipt}"
+
+        # ── Replay guard ──────────────────────────────────────────────────────
+        # post_journal dedupes on its own key, but ``amount_repaid`` below is a
+        # SEPARATE write that key does not cover. This is called from the
+        # settlement path, which delivers at-least-once: a replayed callback used
+        # to increment the counter again while the journal correctly refused to
+        # post twice, so the advance over-counted its repayment and could flip to
+        # REPAID while still owing. Same guard as SharesService.purchase and
+        # ContributionService.contribute. The advance row is locked above, so
+        # this check cannot interleave with a concurrent repayment of it.
+        if JournalEntry.objects.filter(idempotency_key=f"je-{idem_key}").exists():
+            return advance
+
         advance.amount_repaid = F('amount_repaid') + amount
         advance.save(update_fields=['amount_repaid'])
         advance.refresh_from_db()
@@ -216,8 +231,6 @@ class EmergencyAdvanceService:
             advance.transition_to('REPAID')
 
         # ── Credit pool balance ───────────────────────────────────────────────
-        # Idempotency key anchored to the M-Pesa receipt so retries are no-ops.
-        idem_key = f"advance-repay-{advance_id}-{mpesa_receipt}"
         ft, _ = create_fin_transaction(
             idempotency_key=idem_key,
             op_type=FinancialTransaction.OpType.ADVANCE_REPAYMENT,
