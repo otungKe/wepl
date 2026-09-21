@@ -6,6 +6,7 @@ points and the context-free no-op paths."""
 from decimal import Decimal
 
 from django.contrib.auth import get_user_model
+from django.db.models import Prefetch
 from django.test import TestCase
 
 from apps.ledger.models import FinancialTransaction as FT
@@ -193,6 +194,37 @@ class ShareHoldingIsDerivedTests(TestCase):
                 for u in (self.user, other)]
         self.assertEqual(pcts, [Decimal("75.00"), Decimal("25.00")])
         self.assertEqual(sum(pcts), Decimal("100.00"))
+
+    def test_serializing_a_fund_does_not_scale_its_queries_with_its_holders(self):
+        """The figures are ledger reads, so a naive walk costs a balance query
+        and a pool query per holder. Both are answerable in bulk, and the count
+        must not move when a holder is added."""
+        from django.db import connection
+        from django.test.utils import CaptureQueriesContext
+        from apps.contributions.models import ShareHolding, SharesFund
+        from apps.contributions.serializers import SharesFundSerializer
+
+        def serialize(fund):
+            fresh = SharesFund.objects.prefetch_related(
+                Prefetch('holdings', queryset=ShareHolding.objects.select_related('user')),
+            ).get(pk=fund.pk)
+            with CaptureQueriesContext(connection) as ctx:
+                data = SharesFundSerializer(fresh).data
+                self.assertEqual(len(data["holdings"]), fresh.holdings.count())
+            return len(ctx)
+
+        fund = self._fund("Query Count Shares")
+        self._buy(fund, self.user, "100.00", "QC1")
+        with_one = serialize(fund)
+
+        for i in range(4):
+            member = get_user_model().objects.create(phone_number=f"25470000072{i}")
+            self._buy(fund, member, "100.00", f"QC2{i}")
+        with_five = serialize(fund)
+
+        self.assertEqual(
+            with_one, with_five,
+            f"query count grew with holders: {with_one} -> {with_five}")
 
     def test_the_fund_total_is_the_pool_over_the_share_price(self):
         from apps.contributions.serializers import SharesFundSerializer
