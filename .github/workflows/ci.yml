@@ -123,6 +123,16 @@ jobs:
             exit 1
           fi
 
+      - name: Guard — the ledger never imports a payment rail (#159, Rule 1 / P-18)
+        run: |
+          # The ledger is the book of record: it posts journals and knows nothing
+          # of M-Pesa. Payout orchestration lives in apps/payments (ADR-0032).
+          if grep -rEn "apps\.mpesa" apps/ledger --include=*.py \
+               | grep -vE "/migrations/|/tests\.py|/tests_"; then
+            echo "::error::apps/ledger imports apps.mpesa — the ledger must not drive a payment rail; orchestrate payouts in apps/payments behind the PaymentProvider port (#159, ADR-0032)."
+            exit 1
+          fi
+
       - name: Check for missing migrations
         run: python manage.py makemigrations --check --dry-run
 

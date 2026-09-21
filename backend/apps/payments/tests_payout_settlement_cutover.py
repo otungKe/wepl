@@ -1,4 +1,4 @@
-"""Ledger-task settlement cutover (ADR-0028): the payout-failure path and the
+"""Payout-task settlement cutover (ADR-0028): the payout-failure path and the
 stale-recovery success path emit durable settlement events instead of finalising
 inline. Propagation (ledger reversal, domain reset/advance, notify) is deferred to
 the inline settlement consumer.
@@ -13,7 +13,9 @@ from django.utils import timezone
 
 from apps.core.models import OutboxDelivery, OutboxEvent
 from apps.ledger.models import FinancialTransaction
-from apps.ledger.tasks import _handle_payout_failure, recover_stale_processing_transactions
+from apps.payments.payouts import (
+    _handle_payout_failure, recover_stale_processing_transactions,
+)
 from apps.ledger.writer import create_fin_transaction
 
 User = get_user_model()
@@ -66,7 +68,7 @@ class StaleRecoverySuccessCutoverTests(TestCase):
         )
 
     def test_safaricom_confirmed_success_emits_settlement_event(self):
-        with patch("apps.ledger.tasks._query_safaricom_status", return_value="SUCCESS"):
+        with patch("apps.payments.payouts._query_payout_status", return_value="SUCCESS"):
             result = recover_stale_processing_transactions()
         self.assertEqual(result["recovered"], 1)
         self.ft.refresh_from_db()

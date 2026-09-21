@@ -74,6 +74,54 @@ class MpesaProvider(PaymentProvider):
             state = 'failed'
         return StatusResult(state=state, raw=resp)
 
+    def request_payout_result(self, *, provider_ref: str, remarks: str = '') -> StatusResult:
+        """Daraja Transaction Status Query for a B2C payout whose result callback
+        never arrived.
+
+        Safaricom answers this one asynchronously: a ResponseCode of "0" only
+        means the query was accepted, and the real outcome is re-delivered to the
+        B2C ResultURL. So this always reports ``'unknown'`` — B2CResultView
+        finalises the payout when the re-fired callback lands.
+
+        Uses the same Daraja credentials as the rest of the adapter and works
+        unchanged in sandbox and production.
+        """
+        import requests
+        from django.conf import settings
+
+        token = MpesaService._get_access_token()
+        payload = {
+            "Initiator":          settings.MPESA_B2C_INITIATOR_NAME,
+            "SecurityCredential": settings.MPESA_B2C_SECURITY_CREDENTIAL,
+            "CommandID":          "TransactionStatusQuery",
+            "TransactionID":      provider_ref,
+            "PartyA":             settings.MPESA_SHORTCODE,
+            "IdentifierType":     "4",
+            "ResultURL":          settings.MPESA_B2C_RESULT_URL,
+            "QueueTimeOutURL":    settings.MPESA_B2C_TIMEOUT_URL,
+            "Remarks":            remarks or "Payout status query",
+            "Occasion":           "",
+        }
+        resp = requests.post(
+            f"{settings.MPESA_BASE_URL}/mpesa/transactionstatus/v1/query",
+            json=payload,
+            headers={"Authorization": f"Bearer {token}"},
+            timeout=15,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+
+        if data.get("ResponseCode") == "0":
+            logger.info(
+                "request_payout_result: %s query accepted "
+                "(async result will arrive via ResultURL)", provider_ref
+            )
+        else:
+            logger.warning(
+                "request_payout_result: %s unexpected response: %s", provider_ref, data
+            )
+        return StatusResult(state='unknown', raw=data)
+
     def parse_callback(self, payload: dict, *, kind: str) -> CallbackEvent:
         if kind == 'collection':
             return self._parse_stk_callback(payload)

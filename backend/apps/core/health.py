@@ -20,7 +20,7 @@ logger = logging.getLogger(__name__)
 # "nervous-system" tasks are watched (sparse daily jobs would false-positive).
 WATCHED_TASKS: dict[str, int] = {
     "apps.core.tasks.process_outbox": 180,                              # every 10s
-    "apps.ledger.tasks.recover_stale_processing_transactions": 2700,   # every 30m
+    "apps.payments.payouts.recover_stale_processing_transactions": 2700,  # every 30m
     "apps.payments.tasks.reconcile_payments": 5400,                    # hourly
     "apps.reminders.tasks.fire_due_reminders": 2700,                   # every 30m
 }

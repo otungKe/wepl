@@ -29,7 +29,7 @@ an outage.
 > audited. `reverse` (settled-payout reversal) ships two-person via OP-3
 > maker-checker. `retry_payout` re-dispatches a payout that stalled before ever
 > reaching the rail (no `conversation_id`) through the canonical
-> `execute_b2c_payout` door — surfaced as **Re-send** on never-dispatched rows
+> `execute_payout` door — surfaced as **Re-send** on never-dispatched rows
 > (vs **Requery** once dispatched); the door's guards prevent a double-send. A
 > failed payout's funds are already restored, so re-issuing is a fresh
 > disbursement, not a re-send. Pay-in requery already runs automatically via
