@@ -2,7 +2,7 @@ from decimal import Decimal
 
 from rest_framework import serializers
 
-from apps.ledger.balances import economic_interest, fund_balance
+from apps.ledger.balances import economic_interest, fund_balance, fund_member_balances
 
 from .models import (
     Contribution, ContributionParticipant,
@@ -315,7 +315,7 @@ class ShareHoldingSerializer(serializers.ModelSerializer):
 
 
 class SharesFundSerializer(serializers.ModelSerializer):
-    holdings     = ShareHoldingSerializer(many=True, read_only=True)
+    holdings     = serializers.SerializerMethodField()
     total_shares = serializers.SerializerMethodField()
     # Ledger-derived (replaces the removed mutable total_pool column)
     total_pool   = serializers.SerializerMethodField()
@@ -324,16 +324,38 @@ class SharesFundSerializer(serializers.ModelSerializer):
         model = SharesFund
         fields = ['id', 'community', 'name', 'share_price', 'total_pool', 'total_shares', 'holdings', 'created_at']
 
+    def get_holdings(self, obj):
+        """Serialize the holders on two ledger reads, not two per holder.
+
+        Every holding's figures come from the sub-ledger, so serializing a fund
+        naively costs one balance read and one pool read per holder. Both are
+        answerable in bulk: ``fund_member_balances`` returns the whole fund in
+        one query, and the pool is the same denominator for everyone.
+
+        So the balance is primed into each holding's ``total_contributed``
+        cache, and every row is pointed at *this* fund instance, whose
+        ``pool_balance`` then resolves once for the lot. The properties
+        themselves are untouched — a ShareHolding serialized on its own still
+        reads its own figures.
+        """
+        rows = list(obj.holdings.all())
+        if rows:
+            balances = fund_member_balances('shares', obj.id)
+            for holding in rows:
+                holding.shares_fund = obj
+                holding.__dict__['total_contributed'] = balances.get(
+                    holding.user_id, Decimal('0'))
+        return ShareHoldingSerializer(rows, many=True, context=self.context).data
+
     def get_total_pool(self, obj):
-        return str(fund_balance('shares', obj.id))
+        return str(obj.pool_balance)
 
     def get_total_shares(self, obj):
         # Ledger-derived, like total_pool: the holdings no longer carry counters
         # to sum, and the pool over the share price is the same figure.
         if not obj.share_price:
             return "0"
-        pool = fund_balance('shares', obj.id)
-        return str((pool / obj.share_price).quantize(Decimal('0.0001')))
+        return str((obj.pool_balance / obj.share_price).quantize(Decimal('0.0001')))
 
 
 # ---------------------------------------------------------------------------

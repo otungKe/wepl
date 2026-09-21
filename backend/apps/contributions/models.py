@@ -231,6 +231,17 @@ class SharesFund(models.Model):
     share_price = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal('100.00'))
     created_at  = models.DateTimeField(auto_now_add=True)
 
+    @cached_property
+    def pool_balance(self):
+        """The fund's ledger-derived pool, read once per instance.
+
+        Every holding's ``ownership_pct`` needs the same denominator, so hanging
+        it on the fund means one read for a whole fund rather than one per
+        holder — provided the holdings share this instance.
+        """
+        from apps.ledger.balances import fund_balance
+        return fund_balance('shares', self.id)
+
     def __str__(self):
         return f"{self.community.name if self.community else '?'} — {self.name}"
 
@@ -279,8 +290,7 @@ class ShareHolding(models.Model):
 
     @property
     def ownership_pct(self):
-        from apps.ledger.balances import fund_balance
-        pool = fund_balance('shares', self.shares_fund_id)
+        pool = self.shares_fund.pool_balance
         if not pool:
             return Decimal('0')
         return (self.total_contributed / pool * 100).quantize(Decimal('0.01'))
