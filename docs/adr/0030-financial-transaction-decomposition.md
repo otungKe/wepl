@@ -126,6 +126,17 @@ strangler is already half-run (PaymentIntent is the shadow):
 Each slice keeps the trial balance at zero and the ledger authoritative throughout,
 exactly as the `ContributionTransaction` retirement did.
 
+**Implementation status (2026-09-21).** The seams are in; the deletions are not.
+Merged: the money-activity read projection (`apps/ledger/money_activity.py`) that
+readers migrate onto ahead of the model dying, the settlement registry
+(`apps/contributions/settlement_targets.py`), the back-office readers
+(`apps/backoffice/views_transactions.py`, `views_exports.py`, `views_finops.py`), and
+the Slice-A readiness gate (`apps/payments/coverage.py`, `manage.py intent_coverage`)
+that measures how much rail movement an intent can already account for. **Not done:**
+the gate has never been run against real data, no backfill is written, FT still carries
+its `mpesa_*` columns and its `reference` handle, and the model is still there. So
+Slice A is prepared, not complete, and B–D have not started.
+
 ## Consequences
 
 - **+** The financial core (`apps/ledger`) stops holding payments/orchestration

@@ -9,22 +9,41 @@
 
 ## 1. Where we are
 
+The double-entry core in `apps/ledger/` **is** the book of record. `post_journal()`
+is the only sanctioned way to create journal rows, balances are derived from
+immutable journal lines, and CI enforces both (the legacy-symbol guard and the
+shape-matching "no new mutable money counter" guard, plus a ≥90% coverage floor on
+the ledger core).
+
+Phases 0–6 have landed. The remaining money-architecture work is the
+`FinancialTransaction` decomposition (ADR-0030), which is mid-strangler: the
+money-activity read projection, the settlement registry and the back-office readers
+are merged; FT's rail columns, its public `WEPL-TXN-nnnnnn` handle and the model
+itself are not yet dropped.
+
+<details>
+<summary>Where this roadmap started (June 2026, before Phase 0)</summary>
+
 Per the architecture audit ([`../audit/2026-06-architecture-audit.md`](../audit/2026-06-architecture-audit.md)),
-WEPL is a well-engineered **Stage 2→3 community-finance application** with a
-correctly-designed but **dormant** double-entry core. Money today is tracked in
-**three** places, and the authoritative one is the weakest:
+WEPL was a well-engineered **Stage 2→3 community-finance application** with a
+correctly-designed but **dormant** double-entry core. Money was tracked in **three**
+places, and the authoritative one was the weakest:
 
 1. **Mutable balance columns** — `Contribution.current_amount`, `WelfareFund.balance`,
    `SharesFund.total_pool`, `ContributionAccount`, `ContributionBalance` (what the
-   business logic actually reads and gates on).
+   business logic actually read and gated on).
 2. **Legacy single-entry ledger** — `LedgerEntry` + `apps/ledger/writer.py` +
    `apps/ledger/queries.py` (a reconciled shadow).
 3. **Double-entry core** — `Account` / `JournalEntry` / `JournalLine` /
    `AccountBalance` (`apps/ledger/posting.py`, `coa.py`, `balances.py`). Correct,
    tested, and wired to **nothing** outside `apps/ledger/`.
 
-The roadmap's central act is to make **(3) the single book of record** and delete
-**(1)** and **(2)**.
+The roadmap's central act was to make **(3)** the single book of record and delete
+**(1)** and **(2)**. That is done — see ADR-0002. Two counters outlived the first
+sweep and were derived from the ledger later: `ShareHolding` (#202) and
+`EmergencyAdvance.amount_repaid` (#203).
+
+</details>
 
 ## 2. Target
 

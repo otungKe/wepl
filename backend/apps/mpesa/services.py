@@ -5,7 +5,6 @@ from decimal import Decimal
 
 import requests
 from django.conf import settings
-from django.utils import timezone
 
 logger = logging.getLogger(__name__)
 
