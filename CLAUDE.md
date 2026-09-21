@@ -55,9 +55,11 @@ Everything below is enforced; violating it breaks CI.
 - **Money is `Money`/`Decimal`** (`apps/ledger/money.py`) — never float. See ADR-0003.
 - **CI grep-guard (P0-07)** in `.github/workflows/ci.yml` fails the build if legacy single-entry
   ledger code or mutable balance caches are reintroduced (`LedgerEntry`, `ContributionAccount`,
-  `current_amount = F(...)`, etc.). Do not bring these back — see ADR-0002. The ledger core
-  (`posting.py`, `balances.py`, `coa.py`, `money.py`, `posting_map.py`) is also held to ≥90%
-  test coverage in CI.
+  `current_amount = F(...)`, etc.). Do not bring these back — see ADR-0002. A second guard
+  matches the *shape* — any money-ish name incremented with `F(...)` — with a single allowlisted
+  line for the `AccountBalance` projection inside `post_journal`; if that allowlist grows,
+  something has regressed. The ledger core (`posting.py`, `balances.py`, `coa.py`, `money.py`,
+  `posting_map.py`) is also held to ≥90% test coverage in CI.
 
 ## Durable eventing (transactional outbox — Phase 2, ADR-0006)
 
@@ -116,8 +118,13 @@ separate app/deployment — never co-hosted with the customer web app.
 - `backend/apps/`: `ledger` (the book of record), `core` (event bus + outbox), `payments` +
   `mpesa` (rails), `users` (phone auth/KYC), `contributions` (contributions, welfare funds,
   shares, and advances all live here), `organizations` (the participant spine, ADR-0026),
-  and `communities`, `conversations`, `notifications`,
+  `controls` (limits/risk at the posting chokepoint, ADR-0007), `verification` (the KYC
+  case ledger), `backoffice` (the ops console), `tenants` (RLS isolation, ADR-0008),
+  `audit`, `files`, `search`, and `communities`, `conversations`, `notifications`,
   `reminders`, `activity`.
+- `.claude/skills/`: repo-local skills carrying the rules this file summarises —
+  `wepl-ledger` (money), `wepl-testing`, `wepl-architecture`, `wepl-security`,
+  `wepl-tenancy`. Read the relevant one before changing code in its area.
 - Async stack: Celery + Beat over Redis, queues `default,notifications,payments,financial`;
   served over ASGI (Channels/Daphne). Worker + beat currently run **inside the web
   process** (`RUN_EMBEDDED_CELERY`, on by default in `backend/start.sh`); splitting them

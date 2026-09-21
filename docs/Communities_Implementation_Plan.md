@@ -1,5 +1,11 @@
 # Communities — Implementation Plan
 
+> **Point-in-time audit.** Written against `master` as it stood on 2026-07-09
+> (last substantive commit `35e4584`). It has not been revised since, and the
+> ledger, settlement and back-office code it describes has moved on. Treat its
+> findings as a dated record, and verify anything load-bearing against the
+> current code before acting on it.
+
 Prioritised remediation roadmap from the audit set (Domain, Business Rules,
 Backend, Integration, RBAC, Production Readiness). Grouped by severity; each item
 names its fix location and the platform pattern to reuse. No new product features

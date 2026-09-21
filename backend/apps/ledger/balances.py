@@ -62,13 +62,18 @@ def account_balance(account: Account) -> Decimal:
 
 
 def fund_balance(fund_type: str, fund_id: int) -> Decimal:
-    """Pool balance of a fund = signed sum over its member sub-ledger accounts.
+    """Pool balance of a fund = signed sum over EVERY account carrying its
+    ``(fund_type, fund_id)``.
 
-    The member sub-ledgers for contribution / welfare / shares funds are all
-    LIABILITY (credit-normal), so the pool we owe members is ``Σcredit − Σdebit``
-    across those accounts. This is the ledger-derived replacement for the legacy
-    mutable fields (`Contribution.current_amount`, `WelfareFund.balance`,
-    `SharesFund.total_pool`).
+    Those accounts are all LIABILITY (credit-normal), so the pool we owe is
+    ``Σcredit − Σdebit`` across them. This is the ledger-derived replacement for
+    the legacy mutable fields (`Contribution.current_amount`,
+    `WelfareFund.balance`, `SharesFund.total_pool`).
+
+    Since ADR-0025 the set is wider than the member sub-ledgers: it also includes
+    the pool control account and any organization sub-ledger on the same fund.
+    That is intentional — the figure is the whole pool. For members only, use
+    ``fund_member_balances``.
     """
     agg = AccountBalance.objects.filter(
         account__fund_type=fund_type, account__fund_id=fund_id,
