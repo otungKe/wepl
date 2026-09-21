@@ -92,14 +92,12 @@ def notify_overdue_advances() -> int:
     Find emergency advances whose repayment_due date has passed and whose
     borrower has not yet fully repaid, then send a reminder notification.
 
-    Runs daily via Celery Beat.
-    Sends at most one notification per advance per day (idempotency via
-    a simple date check on the advance's last_notified_at field — or, since
-    we don't track that, we simply re-notify every day until repaid).
+    Runs daily via Celery Beat. There is no per-advance "last notified"
+    field, so an overdue advance is re-notified on every run until it is
+    repaid.
 
     Returns the number of overdue advances found.
     """
-    from datetime import timedelta
     from decimal import Decimal
     from apps.contributions.models import EmergencyAdvance
     from apps.contributions.services import _notify

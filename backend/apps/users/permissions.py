@@ -12,7 +12,7 @@ was not yet ``IsActiveSession``.
 """
 from rest_framework.permissions import BasePermission
 
-from .auth import STAGE_OTP_RECOVERY, STAGE_OTP_VERIFIED, _token_stage
+from .auth import STAGE_OTP_RECOVERY, _token_stage
 from .tiers import AccessPolicy
 
 
@@ -36,16 +36,6 @@ class RequiresTier1(BasePermission):
             return False  # let the auth layer produce the standard 401/403
         AccessPolicy.gate(user)  # flag-aware: no-op while enforcement is off, else raises KYCRequired
         return True
-
-
-class IsOTPVerified(BasePermission):
-    """Allow only otp_verified-stage tokens (first-time PIN setup)."""
-    message = "A fresh OTP verification is required."
-
-    def has_permission(self, request, view):
-        if not (request.user and request.user.is_authenticated):
-            return False
-        return _token_stage(request) == STAGE_OTP_VERIFIED
 
 
 class IsOTPRecovery(BasePermission):

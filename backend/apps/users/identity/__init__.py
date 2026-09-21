@@ -59,10 +59,6 @@ class IdentityCheckResult:
         return self.state in (VERIFIED, REJECTED, MANUAL_REVIEW)
 
 
-class IdentityVerificationError(Exception):
-    """Raised by adapters for unrecoverable vendor errors."""
-
-
 class IdentityVerificationProvider(ABC):
     """An identity checker. Implementations must be stateless and side-effect-free
     except for the network calls they make."""

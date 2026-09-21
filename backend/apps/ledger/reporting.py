@@ -171,11 +171,6 @@ def statement_of_account(account: Account, *, start=None, end=None) -> dict:
     }
 
 
-def member_account(user, fund_type: str, fund_id: int) -> Account | None:
-    """Resolve a member's sub-ledger account read-only (None if none yet)."""
-    return Account.objects.filter(owner=user, fund_type=fund_type, fund_id=fund_id).first()
-
-
 # ── P5-04 Per-currency trial balance + presentation consolidation ────────────
 def trial_balance_by_currency(*, as_of=None, fund_type=None, fund_id=None, op_type=None, tenant_id=None) -> dict:
     """Trial balance split by account currency; each currency must self-balance."""
