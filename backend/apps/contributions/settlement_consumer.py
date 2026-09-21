@@ -13,9 +13,9 @@ settlement can be delivered more than once. It is: ``on_payout_settled`` /
 ``on_payout_failed`` tolerate re-application (see apps/contributions/settlement.py)
 and ``reverse_financial_transaction`` is a no-op once the FT is already reversed.
 
-Dormant until a discovery site emits these events (the cutover is a later slice);
-until then no ``payment.settled`` / ``payment.failed`` event is produced, so this
-consumer receives nothing.
+Live: three discovery sites emit these events — the M-Pesa B2C callback
+(``apps/mpesa/views.py``), the stale-payout sweep (``apps/ledger/tasks.py``) and
+the operator override (``apps/payments/ops.py``).
 """
 import logging
 

@@ -35,6 +35,10 @@ add a new ADR that supersedes the old one (note it in both).
 | [0025](0025-financial-account-and-pool-identity.md) | Financial-account identity and pools as first-class accounts | Accepted |
 | [0026](0026-organization-and-program-spine.md) | Organization spine — every participant is an Organization | Accepted |
 | [0027](0027-fund-ownership-treatment.md) | Attribution, ownership, and the two-register model | Proposed |
+| [0028](0028-settlement-discovery-vs-propagation.md) | Settlement — discovery vs propagation | Accepted |
+| [0029](0029-generalized-outbox-event-log.md) | Generalize the outbox from notification queue to domain event log | Accepted |
+| [0030](0030-financial-transaction-decomposition.md) | Decompose `FinancialTransaction` | Accepted |
+| [0031](0031-core-as-platform-layer.md) | Core is a platform layer — the registry contract | Accepted |
 
 ## Template
 

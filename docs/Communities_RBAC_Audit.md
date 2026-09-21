@@ -1,5 +1,11 @@
 # Communities — RBAC Audit
 
+> **Point-in-time audit.** Written against `master` as it stood on 2026-07-09
+> (last substantive commit `35e4584`). It has not been revised since, and the
+> ledger, settlement and back-office code it describes has moved on. Treat its
+> findings as a dated record, and verify anything load-bearing against the
+> current code before acting on it.
+
 Roles, permissions, hierarchy, leaks, and extensibility. The policy engine
 (ADR-0009, `apps/core/policy` + `communities/policies.py`) is the subject; the
 verdict on the *mechanism* is positive, on the *matrix* mixed.

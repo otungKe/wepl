@@ -1,5 +1,11 @@
 # Communities — Integration Audit
 
+> **Point-in-time audit.** Written against `master` as it stood on 2026-07-09
+> (last substantive commit `35e4584`). It has not been revised since, and the
+> ledger, settlement and back-office code it describes has moved on. Treat its
+> findings as a dated record, and verify anything load-bearing against the
+> current code before acting on it.
+
 Module-by-module review of every seam Communities touches. For each: what the
 integration is, whether ownership sits on the right side, and the defects found.
 
