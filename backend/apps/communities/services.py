@@ -618,10 +618,10 @@ class CommunityService:
         movement. Strict on purpose: when in doubt, the community must be
         archived, never deleted."""
         from apps.contributions.models import (
-            EmergencyAdvance, ShareHolding,
+            EmergencyAdvance, SharesFund,
             WelfareContribution, WelfareClaim,
         )
-        from apps.ledger.models import FinancialTransaction
+        from apps.ledger.models import AccountBalance, FinancialTransaction
         # Ledger-derived: any settled money movement on a fund in this community.
         if FinancialTransaction.objects.filter(
                 contribution__community=community).exists():
@@ -633,8 +633,13 @@ class CommunityService:
             return True
         if WelfareClaim.objects.filter(fund__community=community).exists():
             return True
-        if ShareHolding.objects.filter(
-                shares_fund__community=community, total_contributed__gt=0).exists():
+        # Shares: a sub-ledger account exists only once something posted to it,
+        # so its presence is the movement. Strict on purpose — a fund whose
+        # balance has since returned to zero still has a history.
+        shares_fund_id = SharesFund.objects.filter(
+            community=community).values_list('id', flat=True).first()
+        if shares_fund_id and AccountBalance.objects.filter(
+                account__fund_type='shares', account__fund_id=shares_fund_id).exists():
             return True
         return False
 

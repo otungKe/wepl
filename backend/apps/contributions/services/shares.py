@@ -1,15 +1,14 @@
 """Shares purchase — the domain money-operation for buying into a SharesFund.
 
 Relocated out of ``apps/mpesa/views._process_shares_purchase`` (Move 2): a shares
-purchase is a *contributions* money operation (ShareHolding + a double-entry
-posting), not rail plumbing. It is provider-agnostic — it takes a user, a fund, an
+purchase is a *contributions* money operation (a double-entry posting plus fund
+membership), not rail plumbing. It is provider-agnostic — it takes a user, a fund, an
 amount and an idempotency seed, and knows nothing about M-Pesa. The STK collection
 callback now routes here through ``contributions.settlement.on_collection_settled``.
 """
 from decimal import Decimal as D
 
 from django.db import transaction
-from django.db.models import F
 
 from ..models import ShareHolding, SharesFund
 
@@ -20,9 +19,10 @@ class SharesService:
     @transaction.atomic
     def purchase(user, shares_fund_id, amount, *, mpesa_receipt=None,
                  idempotency_key=None):
-        """Credit a member's share holding for a settled purchase and post the
-        double-entry (cash into the float, member shares liability up). Idempotent
-        on the receipt / idempotency seed."""
+        """Post the double-entry for a settled purchase (cash into the float,
+        member shares liability up) and make sure the member is on the fund.
+        Idempotent on the receipt / idempotency seed — the holding's amounts are
+        read back off this posting, never stored."""
         from apps.ledger.models import FinancialTransaction, JournalEntry
         from apps.ledger.money import Money
         from apps.ledger.posting import post_journal
@@ -45,8 +45,6 @@ class SharesService:
         if JournalEntry.objects.filter(idempotency_key=f"je-{idem_key}").exists():
             return FinancialTransaction.objects.filter(idempotency_key=idem_key).first()
 
-        new_shares = (amount / fund.share_price).quantize(D('0.0001'))
-
         ft, _ = create_fin_transaction(
             idempotency_key=idem_key,
             op_type=FinancialTransaction.OpType.SHARES_PURCHASE,
@@ -67,20 +65,9 @@ class SharesService:
             created_by=user,
         )
 
-        # ── Holding counters (a projection of the shares sub-ledger) ──────────
-        # get_or_create, NOT update_or_create: update_or_create applies its
-        # ``defaults`` to an EXISTING row, so every purchase after the first reset
-        # the holding to zero and the F() increment below started from scratch —
-        # a member's holding only ever showed their most recent purchase, and
-        # ShareHolding.ownership_pct (mutable numerator over a ledger-derived
-        # pool) was wrong for anyone who had bought twice.
-        ShareHolding.objects.get_or_create(
-            shares_fund=fund, user=user,
-            defaults={'shares_count': D('0'), 'total_contributed': D('0')},
-        )
-        # F() updates — atomic, no read-modify-write race.
-        ShareHolding.objects.filter(shares_fund=fund, user=user).update(
-            shares_count=F('shares_count') + new_shares,
-            total_contributed=F('total_contributed') + amount,
-        )
+        # ── Membership row ────────────────────────────────────────────────────
+        # No counters to move: ShareHolding.shares_count / .total_contributed are
+        # derived from the sub-ledger the posting above just wrote. All this
+        # ensures is that the member appears among the fund's holders.
+        ShareHolding.objects.get_or_create(shares_fund=fund, user=user)
         return ft

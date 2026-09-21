@@ -102,9 +102,9 @@ class CollectionSettlementTests(TestCase):
         self.assertEqual(holding.total_contributed, Decimal("1500.00"))
 
     def test_replay_after_several_purchases_changes_nothing(self):
-        """The holding is a separate write from the journal, so the replay guard
-        has to protect it too — and it must still hold once the member has a
-        history to lose."""
+        """A duplicate delivery must not move the holding. The journal dedupes on
+        its own key and the holding now reads off that journal, so this asserts
+        the guarantee end to end rather than the counter write it used to."""
         from apps.contributions.models import SharesFund, ShareHolding
         user = get_user_model().objects.create(phone_number="254700000704")
         fund = SharesFund.objects.create(name="Test Shares 4", share_price=Decimal("100.00"))
@@ -123,6 +123,84 @@ class CollectionSettlementTests(TestCase):
         after = ShareHolding.objects.get(shares_fund=fund, user=user)
         self.assertEqual(after.shares_count, Decimal("6.0000"))
         self.assertEqual(after.total_contributed, Decimal("600.00"))
+
+
+class ShareHoldingIsDerivedTests(TestCase):
+    """ShareHolding carries no money columns: ``shares_count`` and
+    ``total_contributed`` are read from the member's shares sub-ledger.
+
+    The counters drifted for the reason ADR-0002 gives for not having them — a
+    mutable balance written alongside, but separately from, the journal. The CI
+    grep-guard never saw them, because it names the specific symbols ADR-0002
+    removed rather than the rule."""
+
+    def setUp(self):
+        from apps.ledger import coa
+        coa.seed_chart_of_accounts()
+        self.user = get_user_model().objects.create(phone_number="254700000710")
+
+    def _fund(self, name="Derived Shares", price="100.00"):
+        from apps.contributions.models import SharesFund
+        return SharesFund.objects.create(name=name, share_price=Decimal(price))
+
+    def _buy(self, fund, user, amount, receipt):
+        settlement.on_collection_settled(
+            payment_type="shares", user=user, amount=Decimal(amount),
+            receipt=receipt, shares_fund_id=fund.id, idempotency_seed=receipt)
+
+    def test_the_model_has_no_money_columns(self):
+        """A guard against the counters coming back: if either is reintroduced as
+        a field, this fails and the reviewer has to argue for it."""
+        from apps.contributions.models import ShareHolding
+        columns = {f.name for f in ShareHolding._meta.get_fields() if getattr(f, 'column', None)}
+        self.assertNotIn('shares_count', columns)
+        self.assertNotIn('total_contributed', columns)
+
+    def test_a_row_created_before_any_purchase_reads_zero(self):
+        """Community creation enrols the owner with an empty holding row. It must
+        read zero rather than a default that later drifts."""
+        from apps.contributions.models import ShareHolding
+        fund = self._fund("Empty Shares")
+        holding = ShareHolding.objects.create(shares_fund=fund, user=self.user)
+        self.assertEqual(holding.shares_count, Decimal("0"))
+        self.assertEqual(holding.total_contributed, Decimal("0"))
+        self.assertEqual(holding.ownership_pct, Decimal("0"))
+
+    def test_an_enrolled_row_picks_up_purchases_without_being_written_to(self):
+        """The row that already existed is never updated by the purchase — the
+        numbers come from the posting. This is also why holdings understated by
+        the old reset bug correct themselves: the ledger was never wrong."""
+        from apps.contributions.models import ShareHolding
+        fund = self._fund("Enrolled Shares")
+        ShareHolding.objects.create(shares_fund=fund, user=self.user)
+        self._buy(fund, self.user, "500.00", "DRV1")
+        self._buy(fund, self.user, "250.00", "DRV2")
+
+        holding = ShareHolding.objects.get(shares_fund=fund, user=self.user)
+        self.assertEqual(holding.total_contributed, Decimal("750.00"))
+        self.assertEqual(holding.shares_count, Decimal("7.5000"))
+
+    def test_ownership_splits_on_the_same_basis_as_the_pool(self):
+        """Numerator and denominator now come from the same ledger read, so the
+        holders' percentages account for the whole pool."""
+        from apps.contributions.models import ShareHolding
+        other = get_user_model().objects.create(phone_number="254700000711")
+        fund = self._fund("Split Shares")
+        self._buy(fund, self.user, "750.00", "SPL1")
+        self._buy(fund, other, "250.00", "SPL2")
+
+        pcts = [ShareHolding.objects.get(shares_fund=fund, user=u).ownership_pct
+                for u in (self.user, other)]
+        self.assertEqual(pcts, [Decimal("75.00"), Decimal("25.00")])
+        self.assertEqual(sum(pcts), Decimal("100.00"))
+
+    def test_the_fund_total_is_the_pool_over_the_share_price(self):
+        from apps.contributions.serializers import SharesFundSerializer
+        fund = self._fund("Total Shares", price="50.00")
+        self._buy(fund, self.user, "500.00", "TOT1")
+        data = SharesFundSerializer(fund).data
+        self.assertEqual(Decimal(data["total_shares"]), Decimal("10.0000"))
+        self.assertEqual(Decimal(data["total_pool"]), Decimal("500.00"))
 
 
 class C2BPaybillResolveTests(TestCase):
