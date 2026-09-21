@@ -88,6 +88,45 @@ jobs:
             exit 1
           fi
 
+      - name: Guard — no new mutable money counters (ADR-0002)
+        run: |
+          # The guard above is a denylist of names that have already gone wrong.
+          # Naming shares_count and total_contributed closes the instance #200
+          # found; it does not close the class. The next counter will be called
+          # something else, and the guard will not be looking for it.
+          #
+          # The rule is that a money or quantity figure is DERIVED from immutable
+          # journal lines. A field incremented with F() is a second copy of
+          # something the ledger already knows, and a second copy drifts: every
+          # write site has to get idempotency, ordering and failure right on its
+          # own. Of the three counters that existed when this was written, two
+          # had the same replay defect — the shares holding (#200) and
+          # EmergencyAdvance.amount_repaid, fixed in the commit before this one.
+          #
+          # So match the shape, not the names, and allow only what is declared
+          # below. Adding a line to the allowlist is the point — it takes a
+          # reviewer, and it keeps the remaining debt countable.
+          #
+          # Allowed, and why:
+          #   ledger/posting.py debit_total / credit_total
+          #       AccountBalance is the sanctioned projection of the journal and
+          #       post_journal is its only writer (ADR-0002).
+          #   contributions/services/advances.py amount_repaid
+          #       The last mutable money counter. Derivable from the member
+          #       receivable, beside an ``outstanding`` figure the same function
+          #       already derives; tracked as debt until it is.
+          counter='[a-z_]*(amount|balance|total|pool|contributed|repaid|shares|principal|interest|fee)[a-z_]*'
+          allowed='^apps/ledger/posting\.py:[0-9]+:[[:space:]]*(debit|credit)_total=F\('
+          allowed="$allowed|^apps/contributions/services/advances\.py:[0-9]+:[[:space:]]*advance\.amount_repaid = F\("
+          hits=$(grep -rEn "$counter[[:space:]]*=[[:space:]]*F\(" apps --include=*.py \
+                   | grep -vE "/migrations/|/tests\.py|/tests_" \
+                   | grep -vE "$allowed" || true)
+          if [ -n "$hits" ]; then
+            echo "$hits"
+            echo "::error::A mutable money counter was added. Balances are derived from journal lines (ADR-0002) — read them back via apps.ledger.balances instead. If the figure genuinely cannot be derived, add it to the allowlist in this step with a reason."
+            exit 1
+          fi
+
       - name: Check for missing migrations
         run: python manage.py makemigrations --check --dry-run
 
