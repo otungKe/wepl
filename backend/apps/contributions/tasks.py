@@ -2,12 +2,13 @@
 Contribution Celery tasks.
 
 execute_due_standing_orders — runs on schedule, fires only orders whose
-    next_run_at has elapsed (fixes the "every order every run" bug).
+    next_run_at has elapsed, claiming each one under its own row lock.
 """
 import logging
 
 from celery import shared_task
 from django.core.exceptions import ValidationError
+from django.db import transaction
 from django.utils import timezone
 
 logger = logging.getLogger(__name__)
@@ -16,43 +17,70 @@ logger = logging.getLogger(__name__)
 @shared_task(queue='financial')
 def execute_due_standing_orders() -> int:
     """
-    Find active standing orders whose next_run_at ≤ now and execute them.
+    Find active standing orders whose next_run_at <= now and execute them.
 
-    Uses select_for_update(skip_locked=True) so concurrent Celery workers
-    skip orders another worker is already processing — no double-execution.
+    Each order is claimed and executed in its OWN transaction:
 
-    Each execution dispatches a B2C Celery task and advances next_run_at
-    to prevent re-triggering until the next cycle.
+      * ``select_for_update`` requires a transaction — evaluating the locking
+        queryset at task level raised ``TransactionManagementError`` on every
+        run, so this task had never executed an order.
+      * ``skip_locked`` lets a second worker move past an order another worker
+        is mid-way through instead of blocking behind it.
+      * The due predicate is re-checked *inside* the lock. A worker that waited
+        for the lock (or listed the order before a sibling finished it) would
+        otherwise re-run an order whose ``next_run_at`` has just advanced — and
+        because the idempotency key is anchored to ``next_run_at``, the replay
+        would mint a *new* key and pay out twice.
+      * One transaction per order keeps the row locks short and keeps
+        ``execute_standing_order``'s ``on_commit`` B2C dispatch tied to that
+        order's own commit rather than to the end of the whole batch.
     """
     from .models import StandingOrder
     from .services import StandingOrderService
 
     now = timezone.now()
-    orders = StandingOrder.objects.select_for_update(skip_locked=True).filter(
-        is_active=True,
-        next_run_at__lte=now,
-    ).select_related('contribution', 'created_by')
+    due_ids = list(
+        StandingOrder.objects
+        .filter(is_active=True, next_run_at__lte=now)
+        .order_by('next_run_at', 'id')
+        .values_list('id', flat=True)
+    )
 
     executed = 0
-    for order in orders:
+    for order_id in due_ids:
         try:
-            StandingOrderService.execute_standing_order(order.id, order.created_by)
-            executed += 1
-            logger.info(
-                "execute_due_standing_orders: order %s executed (KES %s → %s)",
-                order.id, order.amount,
-                order.fixed_payee_phone or "rotating-slot",
-            )
+            with transaction.atomic():
+                order = (
+                    StandingOrder.objects
+                    .select_for_update(skip_locked=True)
+                    .filter(id=order_id, is_active=True, next_run_at__lte=now)
+                    .select_related('contribution', 'created_by')
+                    .first()
+                )
+                if order is None:
+                    # Locked by another worker, or no longer due — someone else
+                    # has it, or has already run it.
+                    continue
+                StandingOrderService.execute_standing_order(order.id, order.created_by)
         except ValidationError as e:
             # Insufficient funds, inactive order, no next slot — expected, log and skip
             logger.warning(
-                "execute_due_standing_orders: order %s skipped — %s", order.id, e
+                "execute_due_standing_orders: order %s skipped — %s", order_id, e
             )
+            continue
         except Exception as e:
             logger.error(
-                "execute_due_standing_orders: order %s failed — %s", order.id, e,
+                "execute_due_standing_orders: order %s failed — %s", order_id, e,
                 exc_info=True,
             )
+            continue
+
+        executed += 1
+        logger.info(
+            "execute_due_standing_orders: order %s executed (KES %s → %s)",
+            order.id, order.amount,
+            order.fixed_payee_phone or "rotating-slot",
+        )
 
     logger.info("execute_due_standing_orders: executed %d order(s)", executed)
     return executed
@@ -72,14 +100,23 @@ def notify_overdue_advances() -> int:
     Returns the number of overdue advances found.
     """
     from datetime import timedelta
+    from decimal import Decimal
     from apps.contributions.models import EmergencyAdvance
     from apps.contributions.services import _notify
+    from apps.ledger.balances import advance_repaid_totals
 
     today = timezone.now().date()
-    overdue = EmergencyAdvance.objects.filter(
+    overdue = list(EmergencyAdvance.objects.filter(
         status__in=['APPROVED', 'DISBURSED'],
         repayment_due__lt=today,
-    ).select_related('borrower', 'contribution')
+    ).select_related('borrower', 'contribution'))
+
+    # ``balance_due`` is derived from each advance's repayment journals. Read
+    # them all in one query and prime the per-instance cache, rather than one
+    # query per advance inside the loop.
+    repaid = advance_repaid_totals([a.id for a in overdue])
+    for advance in overdue:
+        advance.__dict__['amount_repaid'] = repaid.get(advance.id, Decimal('0'))
 
     count = 0
     for advance in overdue:

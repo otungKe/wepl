@@ -73,6 +73,10 @@ jobs:
           pattern='LedgerEntry|write_ledger_entry|write_reversal_credit|ledger\.queries'
           pattern="$pattern|ContributionAccount|ContributionBalance"
           pattern="$pattern|current_amount[[:space:]]*=[[:space:]]*F\(|total_pool[[:space:]]*=[[:space:]]*F\(|balance[[:space:]]*=[[:space:]]*F\('balance'\)"
+          # ShareHolding kept the same kind of counter until it was derived from
+          # the shares sub-ledger; it drifted precisely because this guard named
+          # symbols rather than the rule and never looked at it.
+          pattern="$pattern|shares_count[[:space:]]*=[[:space:]]*F\(|total_contributed[[:space:]]*=[[:space:]]*F\("
           # The legacy contribution-coupled payments.Payment (a money record kept
           # OUTSIDE the ledger, pre-ADR-0003 precision) and its serializer/view were
           # removed (#165) — don't let them come back. Word boundaries keep this off
@@ -81,6 +85,41 @@ jobs:
           if grep -rEn "$pattern" apps --include=*.py \
                | grep -vE "/migrations/|/tests\.py|/tests_"; then
             echo "::error::Legacy ledger / mutable balance cache / payments.Payment reintroduced — money moves only via post_journal() and balances are ledger-derived; external payments use payments.PaymentIntent (ADR-0014)."
+            exit 1
+          fi
+
+      - name: Guard — no new mutable money counters (ADR-0002)
+        run: |
+          # The guard above is a denylist of names that have already gone wrong.
+          # Naming shares_count and total_contributed closes the instance #200
+          # found; it does not close the class. The next counter will be called
+          # something else, and the guard will not be looking for it.
+          #
+          # The rule is that a money or quantity figure is DERIVED from immutable
+          # journal lines. A field incremented with F() is a second copy of
+          # something the ledger already knows, and a second copy drifts: every
+          # write site has to get idempotency, ordering and failure right on its
+          # own. Of the three counters that existed when the audit ran, two had
+          # the same replay defect — the shares holding (#200) and
+          # EmergencyAdvance.amount_repaid (#201). Both are derived now.
+          #
+          # So match the shape, not the names, and allow only what is declared
+          # below. Adding a line to the allowlist is the point — it takes a
+          # reviewer, and it keeps the remaining debt countable.
+          #
+          # The allowlist is one line. AccountBalance is the sanctioned
+          # projection of the journal and post_journal is its only writer
+          # (ADR-0002). Every other mutable money counter in this codebase has
+          # now been derived instead: share holdings in #202, the advance
+          # repayment counter here. If this list grows, something has gone back.
+          counter='[a-z_]*(amount|balance|total|pool|contributed|repaid|shares|principal|interest|fee)[a-z_]*'
+          allowed='^apps/ledger/posting\.py:[0-9]+:[[:space:]]*(debit|credit)_total=F\('
+          hits=$(grep -rEn "$counter[[:space:]]*=[[:space:]]*F\(" apps --include=*.py \
+                   | grep -vE "/migrations/|/tests\.py|/tests_" \
+                   | grep -vE "$allowed" || true)
+          if [ -n "$hits" ]; then
+            echo "$hits"
+            echo "::error::A mutable money counter was added. Balances are derived from journal lines (ADR-0002) — read them back via apps.ledger.balances instead. If the figure genuinely cannot be derived, add it to the allowlist in this step with a reason."
             exit 1
           fi
 

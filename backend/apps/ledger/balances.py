@@ -16,6 +16,7 @@ from decimal import Decimal
 from django.db import transaction
 from django.db.models import Case, DecimalField, F, Sum, When
 
+from . import coa
 from .models import Account, AccountBalance, JournalLine
 
 
@@ -140,6 +141,53 @@ def user_fund_balances(user, fund_type: str, fund_ids=None) -> dict:
     ):
         out[row['account__fund_id']] = (row['c'] or Decimal('0')) - (row['d'] or Decimal('0'))
     return out
+
+
+def advance_repaid_totals(advance_ids) -> dict:
+    """{advance_id: cash received} for many advances, in one query.
+
+    An advance's repayments are the only journals that both carry its context
+    and post under ``ADVANCE_REPAYMENT``; each one debits the float with the
+    whole amount received (``posting_map.advance_repayment_lines``), so that leg
+    *is* the figure the old ``amount_repaid`` column accumulated.
+
+    Signed (debit − credit) rather than a plain sum of debits, so a reversal of a
+    repayment takes the money back off instead of being ignored.
+
+    The context link goes through FinancialTransaction because that is the only
+    place a journal records which domain object it belongs to. When ADR-0030
+    replaces that link, this read moves with every other context read; nothing
+    here depends on FT beyond the two context columns.
+    """
+    ids = list(advance_ids)
+    if not ids:
+        return {}
+    rows = (
+        JournalLine.objects
+        .filter(
+            journal__op_type='ADVANCE_REPAYMENT',
+            journal__financial_transaction__context_type='emergency_advance',
+            journal__financial_transaction__context_id__in=ids,
+            account__code=coa.MPESA_FLOAT,
+        )
+        .values('journal__financial_transaction__context_id')
+        .annotate(
+            d=Sum(Case(When(direction=JournalLine.Direction.DEBIT, then=F('amount')),
+                       default=Decimal('0'), output_field=DecimalField())),
+            c=Sum(Case(When(direction=JournalLine.Direction.CREDIT, then=F('amount')),
+                       default=Decimal('0'), output_field=DecimalField())),
+        )
+    )
+    return {
+        row['journal__financial_transaction__context_id']:
+            (row['d'] or Decimal('0')) - (row['c'] or Decimal('0'))
+        for row in rows
+    }
+
+
+def advance_repaid(advance_id: int) -> Decimal:
+    """Cash received against one advance (0 if none). See advance_repaid_totals."""
+    return advance_repaid_totals([advance_id]).get(advance_id, Decimal('0'))
 
 
 def fund_member_balances(fund_type: str, fund_id: int) -> dict:

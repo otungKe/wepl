@@ -303,7 +303,11 @@ class LedgerTxnSerializer(serializers.Serializer):
 class ShareHoldingSerializer(serializers.ModelSerializer):
     phone_number  = serializers.CharField(source='user.phone_number', read_only=True)
     name          = serializers.CharField(source='user.name', read_only=True)
-    ownership_pct = serializers.DecimalField(max_digits=6, decimal_places=2, read_only=True)
+    # All three are ledger-derived properties now, not columns — declared
+    # explicitly so the wire format keeps the precision it had.
+    shares_count      = serializers.DecimalField(max_digits=16, decimal_places=4, read_only=True)
+    total_contributed = serializers.DecimalField(max_digits=12, decimal_places=2, read_only=True)
+    ownership_pct     = serializers.DecimalField(max_digits=6, decimal_places=2, read_only=True)
 
     class Meta:
         model = ShareHolding
@@ -324,9 +328,12 @@ class SharesFundSerializer(serializers.ModelSerializer):
         return str(fund_balance('shares', obj.id))
 
     def get_total_shares(self, obj):
-        from django.db.models import Sum
-        result = obj.holdings.aggregate(total=Sum('shares_count'))
-        return str(result['total'] or 0)
+        # Ledger-derived, like total_pool: the holdings no longer carry counters
+        # to sum, and the pool over the share price is the same figure.
+        if not obj.share_price:
+            return "0"
+        pool = fund_balance('shares', obj.id)
+        return str((pool / obj.share_price).quantize(Decimal('0.0001')))
 
 
 # ---------------------------------------------------------------------------
@@ -454,6 +461,9 @@ class WelfareClaimSerializer(serializers.ModelSerializer):
 
 class EmergencyAdvanceSerializer(serializers.ModelSerializer):
     borrower_phone = serializers.CharField(source='borrower.phone_number', read_only=True)
+    # All three are derived properties, not columns — declared explicitly so the
+    # wire format keeps the precision it had.
+    amount_repaid  = serializers.DecimalField(max_digits=12, decimal_places=2, read_only=True)
     total_due      = serializers.DecimalField(max_digits=12, decimal_places=2, read_only=True)
     balance_due    = serializers.DecimalField(max_digits=12, decimal_places=2, read_only=True)
 

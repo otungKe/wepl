@@ -209,15 +209,23 @@ class EmergencyAdvanceService:
         )
         amount = Decimal(str(amount))
 
-        advance.amount_repaid = F('amount_repaid') + amount
-        advance.save(update_fields=['amount_repaid'])
-        advance.refresh_from_db()
-        if advance.amount_repaid >= advance.total_due:
-            advance.transition_to('REPAID')
-
-        # ── Credit pool balance ───────────────────────────────────────────────
         # Idempotency key anchored to the M-Pesa receipt so retries are no-ops.
         idem_key = f"advance-repay-{advance_id}-{mpesa_receipt}"
+
+        # ── Replay guard ──────────────────────────────────────────────────────
+        # This is called from the settlement path, which delivers at-least-once.
+        # It used to matter for correctness: ``amount_repaid`` was a counter
+        # written separately from the journal, so a replay incremented it again
+        # while post_journal correctly refused to post twice, and the advance
+        # could flip to REPAID while still owing. The figure is derived from
+        # those journals now, so a replay cannot move it whether this check is
+        # here or not. It stays as the early-out it should always have been —
+        # the same shape as SharesService.purchase and
+        # ContributionService.contribute — so a duplicate does no work.
+        if JournalEntry.objects.filter(idempotency_key=f"je-{idem_key}").exists():
+            return advance
+
+        # ── Credit pool balance ───────────────────────────────────────────────
         ft, _ = create_fin_transaction(
             idempotency_key=idem_key,
             op_type=FinancialTransaction.OpType.ADVANCE_REPAYMENT,
@@ -248,6 +256,13 @@ class EmergencyAdvanceService:
             created_by=user,
         )
 
+        # ── Settle the advance if it is now paid off ──────────────────────────
+        # After the posting, not before it: ``amount_repaid`` is read back off
+        # these journals now, so the ledger leads and the status follows. The
+        # old order incremented a counter first and asked it afterwards, which
+        # is what let a replayed callback close an advance that still owed.
+        if advance_repaid(advance.id) >= advance.total_due:
+            advance.transition_to('REPAID')
 
         return advance
 
