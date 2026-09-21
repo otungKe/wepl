@@ -121,10 +121,6 @@ def fee_revenue_account() -> Account:
     return gl_account(FEE_REVENUE)
 
 
-def suspense_account() -> Account:
-    return gl_account(SUSPENSE)
-
-
 def interest_income_account() -> Account:
     return gl_account(INTEREST_INCOME)
 

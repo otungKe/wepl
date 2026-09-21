@@ -47,10 +47,6 @@ def register(action: str, spec: FlaggedAction) -> None:
     _REGISTRY[action] = spec
 
 
-def is_flagged(action: str) -> bool:
-    return action in _REGISTRY
-
-
 def spec_for(action: str) -> FlaggedAction:
     try:
         return _REGISTRY[action]
