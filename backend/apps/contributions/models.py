@@ -695,9 +695,25 @@ class EmergencyAdvance(models.Model):
     amount         = models.DecimalField(max_digits=12, decimal_places=2)
     interest_rate  = models.DecimalField(max_digits=5, decimal_places=2, default=Decimal('10.00'))
     status         = models.CharField(max_length=20, choices=STATUS_CHOICES, default='PENDING')
-    amount_repaid  = models.DecimalField(max_digits=12, decimal_places=2, default=0)
     repayment_due  = models.DateField(null=True, blank=True)
     created_at     = models.DateTimeField(auto_now_add=True)
+
+    @cached_property
+    def amount_repaid(self):
+        """Cash received against this advance, read from its repayment journals.
+
+        This was a mutable column incremented in ``repay()`` alongside — but
+        separately from — the journal that repayment posted, which is how it came
+        to double-count a replayed settlement callback. Deriving it means a
+        replay cannot move it at all: ``post_journal`` refuses the duplicate, and
+        there is no second write left to get wrong.
+
+        Cached per instance because ``balance_due`` is expressed in terms of it.
+        An instance that spans a repayment should be re-fetched rather than read
+        again; ``advance_repaid_totals`` reads many advances in one query.
+        """
+        from apps.ledger.balances import advance_repaid
+        return advance_repaid(self.id)
 
     @property
     def total_due(self):

@@ -49,7 +49,7 @@ from apps.ledger.posting import post_journal
 from apps.ledger import posting_map as _pm
 from apps.ledger.money import Money
 # P0-06: read pool/member balances from the ledger (the authoritative source).
-from apps.ledger.balances import fund_balance, account_balance
+from apps.ledger.balances import fund_balance, account_balance, advance_repaid
 from apps.ledger import coa as _coa
 
 
@@ -110,5 +110,5 @@ __all__ = [
     "ContributionAmendment", "ContributionAmendmentVote", "ContributionJoinRequest",
     # ledger
     "create_fin_transaction", "FinancialTransaction", "JournalEntry",
-    "post_journal", "_pm", "Money", "fund_balance", "account_balance", "_coa",
+    "post_journal", "_pm", "Money", "fund_balance", "account_balance", "advance_repaid", "_coa",
 ]

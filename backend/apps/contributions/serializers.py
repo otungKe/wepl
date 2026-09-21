@@ -461,6 +461,9 @@ class WelfareClaimSerializer(serializers.ModelSerializer):
 
 class EmergencyAdvanceSerializer(serializers.ModelSerializer):
     borrower_phone = serializers.CharField(source='borrower.phone_number', read_only=True)
+    # All three are derived properties, not columns — declared explicitly so the
+    # wire format keeps the precision it had.
+    amount_repaid  = serializers.DecimalField(max_digits=12, decimal_places=2, read_only=True)
     total_due      = serializers.DecimalField(max_digits=12, decimal_places=2, read_only=True)
     balance_due    = serializers.DecimalField(max_digits=12, decimal_places=2, read_only=True)
 

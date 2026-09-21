@@ -100,14 +100,23 @@ def notify_overdue_advances() -> int:
     Returns the number of overdue advances found.
     """
     from datetime import timedelta
+    from decimal import Decimal
     from apps.contributions.models import EmergencyAdvance
     from apps.contributions.services import _notify
+    from apps.ledger.balances import advance_repaid_totals
 
     today = timezone.now().date()
-    overdue = EmergencyAdvance.objects.filter(
+    overdue = list(EmergencyAdvance.objects.filter(
         status__in=['APPROVED', 'DISBURSED'],
         repayment_due__lt=today,
-    ).select_related('borrower', 'contribution')
+    ).select_related('borrower', 'contribution'))
+
+    # ``balance_due`` is derived from each advance's repayment journals. Read
+    # them all in one query and prime the per-instance cache, rather than one
+    # query per advance inside the loop.
+    repaid = advance_repaid_totals([a.id for a in overdue])
+    for advance in overdue:
+        advance.__dict__['amount_repaid'] = repaid.get(advance.id, Decimal('0'))
 
     count = 0
     for advance in overdue:

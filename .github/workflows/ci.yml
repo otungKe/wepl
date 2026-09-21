@@ -99,25 +99,21 @@ jobs:
           # journal lines. A field incremented with F() is a second copy of
           # something the ledger already knows, and a second copy drifts: every
           # write site has to get idempotency, ordering and failure right on its
-          # own. Of the three counters that existed when this was written, two
-          # had the same replay defect — the shares holding (#200) and
-          # EmergencyAdvance.amount_repaid, fixed in the commit before this one.
+          # own. Of the three counters that existed when the audit ran, two had
+          # the same replay defect — the shares holding (#200) and
+          # EmergencyAdvance.amount_repaid (#201). Both are derived now.
           #
           # So match the shape, not the names, and allow only what is declared
           # below. Adding a line to the allowlist is the point — it takes a
           # reviewer, and it keeps the remaining debt countable.
           #
-          # Allowed, and why:
-          #   ledger/posting.py debit_total / credit_total
-          #       AccountBalance is the sanctioned projection of the journal and
-          #       post_journal is its only writer (ADR-0002).
-          #   contributions/services/advances.py amount_repaid
-          #       The last mutable money counter. Derivable from the member
-          #       receivable, beside an ``outstanding`` figure the same function
-          #       already derives; tracked as debt until it is.
+          # The allowlist is one line. AccountBalance is the sanctioned
+          # projection of the journal and post_journal is its only writer
+          # (ADR-0002). Every other mutable money counter in this codebase has
+          # now been derived instead: share holdings in #202, the advance
+          # repayment counter here. If this list grows, something has gone back.
           counter='[a-z_]*(amount|balance|total|pool|contributed|repaid|shares|principal|interest|fee)[a-z_]*'
           allowed='^apps/ledger/posting\.py:[0-9]+:[[:space:]]*(debit|credit)_total=F\('
-          allowed="$allowed|^apps/contributions/services/advances\.py:[0-9]+:[[:space:]]*advance\.amount_repaid = F\("
           hits=$(grep -rEn "$counter[[:space:]]*=[[:space:]]*F\(" apps --include=*.py \
                    | grep -vE "/migrations/|/tests\.py|/tests_" \
                    | grep -vE "$allowed" || true)

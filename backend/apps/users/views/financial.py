@@ -52,14 +52,19 @@ class FinancialSummaryView(APIView):
         # ── Advances ─────────────────────────────────────────────────────────
         # balance_due is a @property (amount * (1 + rate/100) − repaid), not a
         # DB column — fetch the rows and sum in Python (dataset is always small).
+        # What has been repaid is read from the advances' journals, so take all
+        # of them in one query rather than one per advance.
         from decimal import Decimal as D
+        from apps.ledger.balances import advance_repaid_totals
         active_advances = list(EmergencyAdvance.objects.filter(
             borrower=user,
             status__in=['PENDING', 'APPROVED', 'DISBURSED'],
-        ).only('amount', 'interest_rate', 'amount_repaid'))
+        ).only('amount', 'interest_rate'))
+        repaid = advance_repaid_totals([a.id for a in active_advances])
         pending_advances = len(active_advances)
         advance_balance  = float(sum(
-            a.amount * (D('1') + a.interest_rate / D('100')) - a.amount_repaid
+            a.amount * (D('1') + a.interest_rate / D('100'))
+            - repaid.get(a.id, D('0'))
             for a in active_advances
         ))
 
