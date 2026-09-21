@@ -53,14 +53,23 @@ def process_outbox(max_events: int = 500, max_attempts: int = 5) -> dict:
                 break
 
             try:
-                # Re-fire the domain event to all registered receivers. The outbox
-                # event id rides along so consumers can dedupe (at-least-once).
-                domain_event.send(
-                    sender=event.event_type,
-                    event_type=event.event_type,
-                    outbox_event_id=event.id,
-                    **event.payload,
-                )
+                # Dispatch inside a SAVEPOINT. A receiver that raises a *database*
+                # error would otherwise leave the whole transaction aborted, and
+                # the bookkeeping write in the except branch below would raise
+                # too ("current transaction is aborted") — so the event would
+                # never count an attempt and never dead-letter; the task would
+                # just die. Rolling back to the savepoint discards the receiver's
+                # partial writes and leaves this transaction usable.
+                with transaction.atomic():
+                    # Re-fire the domain event to all registered receivers. The
+                    # outbox event id rides along so consumers can dedupe
+                    # (at-least-once).
+                    domain_event.send(
+                        sender=event.event_type,
+                        event_type=event.event_type,
+                        outbox_event_id=event.id,
+                        **event.payload,
+                    )
                 event.status = OutboxEvent.Status.PROCESSED
                 event.processed_at = timezone.now()
                 event.save(update_fields=['status', 'processed_at'])
@@ -131,7 +140,19 @@ def process_inline_deliveries(max_deliveries: int = 500, max_attempts: int = 5) 
                     # silently vanishes.
                     raise RuntimeError(
                         f"No inline consumer registered for '{delivery.consumer_name}'")
-                consumer.handler(delivery.outbox_event)
+                # Run the handler inside a SAVEPOINT. The handler's effect still
+                # commits with the ack (the savepoint is released into this
+                # transaction on success), so the exactly-once guarantee is
+                # unchanged. But a handler that raises a *database* error — a
+                # constraint violation, a bad query — would otherwise abort the
+                # whole transaction, and the bookkeeping write in the except
+                # branch below would raise too ("current transaction is
+                # aborted"): the delivery would never count an attempt and never
+                # dead-letter, and the task would die instead. Rolling back to
+                # the savepoint discards the handler's partial writes and leaves
+                # this transaction usable to record the failure.
+                with transaction.atomic():
+                    consumer.handler(delivery.outbox_event)
                 delivery.status = OutboxDelivery.Status.PROCESSED
                 delivery.processed_at = timezone.now()
                 delivery.save(update_fields=['status', 'processed_at'])
