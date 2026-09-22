@@ -11,6 +11,7 @@ from django.utils import timezone
 from rest_framework import status as http
 from rest_framework.response import Response
 
+from apps.controls.cases import held_movement_for
 from apps.users.models import KYCProfile
 
 from .audit import record_action
@@ -302,10 +303,9 @@ class VerificationDecisionView(OpsAPIView):
 def _edd_case_payload(case):
     """Full EDD case-file payload: subject context (the held movement),
     requested evidence kinds, versioned documents, and the timeline."""
-    from apps.verification import service as case_service
     from apps.verification.models import CaseEvent
 
-    held = case_service._held_movement_for(case)
+    held = held_movement_for(case)
     opening = case.events.order_by("seq").first()
     requested = (opening.payload.get("requested_items") if opening else None) or []
     timeline = [
@@ -348,7 +348,6 @@ class EddQueueView(OpsAPIView):
     permission_classes = [RequireCapability("verification.view")]
 
     def get(self, request):
-        from apps.verification import service as case_service
         from apps.verification.models import VerificationCase
 
         S = VerificationCase.State
@@ -361,7 +360,7 @@ class EddQueueView(OpsAPIView):
         qs = qs.order_by("opened_at")[:200]
         rows = []
         for case in qs:
-            held = case_service._held_movement_for(case)
+            held = held_movement_for(case)
             rows.append({
                 "case_id": str(case.id),
                 "reference": f"VC-{case.id.hex[:8].upper()}",

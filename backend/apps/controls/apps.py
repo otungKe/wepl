@@ -13,3 +13,7 @@ class ControlsConfig(AppConfig):
         from apps.ledger.chokepoint import register_pre_posting_check
         from .engine import enforce_controls
         register_pre_posting_check(enforce_controls)
+        # React to a decided EDD case by releasing the movement it was opened
+        # over, so the case ledger does not write controls' rows (ADR-0033).
+        from . import cases
+        cases.register()

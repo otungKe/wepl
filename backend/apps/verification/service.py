@@ -19,6 +19,7 @@ import logging
 from django.db import transaction
 from django.utils import timezone
 
+from .hooks import run_subject_case_decided
 from .models import (
     CaseDocument, CaseEvent, CaseNote, OcrResult, RejectionReason, VerificationCase,
 )
@@ -299,23 +300,12 @@ def decide_subject_case(case, action, *, actor_label, staff=None, reason='',
                     actor_kind=CaseEvent.Actor.STAFF if staff else CaseEvent.Actor.SYSTEM,
                     actor_label=actor_label, actor_staff=staff, payload=payload)
 
-        override = None
-        held = _held_movement_for(case)
-        if action == 'approve' and held is not None:
-            from apps.controls.models import ControlOverride
-            override = ControlOverride.objects.create(
-                user_id=case.user_id, op_type=held.op_type,
-                max_amount=held.amount,
-                expires_at=timezone.now() + timezone.timedelta(hours=72),
-                source_case=str(case.id), held_movement=held,
-                issued_by_label=actor_label[:120],
-            )
-        if held is not None and held.status == held.Status.OPEN:
-            held.status = (held.Status.RELEASED if action == 'approve'
-                           else held.Status.REJECTED)
-            held.reviewed_at = timezone.now()
-            held.review_note = f"{actor_label}: {reason}" if reason else actor_label
-            held.save(update_fields=['status', 'reviewed_at', 'review_note'])
+        # Whatever the case was opened over reacts here, inside this
+        # transaction (ADR-0033). For an EDD case that is apps.controls
+        # releasing the held movement and issuing the pre-clearance; the case
+        # ledger does not write rows it does not own.
+        run_subject_case_decided(case=case, action=action,
+                                 actor_label=actor_label, reason=reason)
 
         # Resolve the customer-facing projection.
         now = timezone.now()
@@ -338,13 +328,6 @@ def decide_subject_case(case, action, *, actor_label, staff=None, reason='',
                  message=('We could not clear your transaction. '
                           + (reason or 'Please contact support for details.')))
     return case
-
-
-def _held_movement_for(case):
-    if case.subject_type != 'HeldMovement' or not case.subject_id:
-        return None
-    from apps.controls.models import HeldMovement
-    return HeldMovement.objects.filter(pk=case.subject_id).first()
 
 
 def record_email_verified(kyc) -> None:
