@@ -8,7 +8,7 @@ from decimal import Decimal
 from django.contrib.auth import get_user_model
 from django.test import TestCase
 
-from apps.ledger import money_activity
+from apps.payments import money_activity
 from apps.ledger.models import FinancialTransaction
 from apps.ledger.writer import create_fin_transaction
 from apps.payments.models import PaymentIntent

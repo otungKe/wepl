@@ -2,7 +2,10 @@
 
 - **Status:** Accepted (implemented in `apps/controls/`, P3-01→05; P3-04 is the durable
   `HeldMovement` review queue rather than a state on `FinancialTransaction`, because a
-  control exception rolls that row back)
+  control exception rolls that row back. Since ADR-0033 the gate is *registered into*
+  `apps/ledger/chokepoint.py` by `ControlsConfig.ready()` rather than imported by
+  `post_journal`: the enforcement point is unchanged and still singular, but the ledger
+  no longer depends on the controls app.)
 - **Date:** 2026-06-19
 - **Phase:** 3 (depends on ADR-0004)
 

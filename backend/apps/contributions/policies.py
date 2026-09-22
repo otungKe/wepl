@@ -2,7 +2,7 @@
 
 Brings contributions onto the centralized ``apps.core.policy`` front door. The
 *implementation* of the role/membership checks already lives in the long-standing
-``apps.ledger.permissions.FinancialPermissions`` helper (creator / community
+``apps.contributions.permissions.FinancialPermissions`` helper (creator / community
 admin-treasurer / active participant); this module simply registers it as the
 ``contribution`` resolver so call sites use the same ``can()`` / ``require()`` API
 as every other resource — instead of hand-rolling ``CommunityMembership.objects
@@ -21,7 +21,7 @@ Community-level financial administration is expressed by the ``community`` polic
 ``community.finance.manage`` capability (admins + treasurers).
 """
 from apps.core.policy import policy
-from apps.ledger.permissions import FinancialPermissions
+from apps.contributions.permissions import FinancialPermissions
 
 
 def is_contribution_member(contribution, user) -> bool:

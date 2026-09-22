@@ -15,7 +15,7 @@ from django.http import StreamingHttpResponse
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 
-from apps.ledger import money_activity
+from apps.payments import money_activity
 
 from .audit import record_action
 from .permissions import RequireCapability

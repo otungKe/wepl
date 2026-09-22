@@ -1,14 +1,22 @@
 """
-Central authorisation helper for all financial operations.
+Central authorisation helper for contribution and community governance.
 
 Replaces the six divergent _is_admin() copies scattered across services.py —
 every one had slightly different role checks (e.g. 'admin' only vs 'admin,treasurer').
 Now there is exactly one implementation used everywhere.
 
+These are *domain* role checks (creator, community admin/treasurer, active
+participant), not accounting rules, so they live with the domain they describe.
+They sat in ``apps.ledger`` until the ledger was pulled out of the app import
+cycle; the ledger answers what a balance is, never who may move it.
+
 Raises django.core.exceptions.PermissionDenied (not Python's PermissionError) so
 DRF's exception handler turns it into a proper 403 response automatically.
 """
-from django.core.exceptions import PermissionDenied
+from django.core.exceptions import PermissionDenied, ValidationError
+
+from apps.communities.models import CommunityMembership
+from apps.contributions.models import ContributionParticipant
 
 
 class FinancialPermissions:
@@ -22,7 +30,6 @@ class FinancialPermissions:
         """
         if community.created_by_id == user.id:
             return True
-        from apps.communities.models import CommunityMembership
         return CommunityMembership.objects.filter(
             community=community,
             user=user,
@@ -40,14 +47,12 @@ class FinancialPermissions:
         if contribution.created_by_id == user.id:
             return True
         if contribution.community_id:
-            from apps.communities.models import Community
             community = contribution.community
             return FinancialPermissions.is_community_admin(community, user)
         return False
 
     @staticmethod
     def is_active_participant(contribution, user) -> bool:
-        from apps.contributions.models import ContributionParticipant
         return ContributionParticipant.objects.filter(
             contribution=contribution, user=user, is_active=True,
         ).exists()
@@ -79,7 +84,6 @@ class FinancialPermissions:
           'admins' → contribution creator + community admins/treasurers
           '50', '67', '100', or any numeric string → all active participants
         """
-        from apps.contributions.models import ContributionParticipant
 
         if threshold == 'admins':
             count = 0
@@ -88,7 +92,6 @@ class FinancialPermissions:
                     contribution.created_by_id != excluding_user.id):
                 count += 1
             if contribution.community_id:
-                from apps.communities.models import CommunityMembership
                 count += CommunityMembership.objects.filter(
                     community_id=contribution.community_id,
                     role__in=['admin', 'treasurer'],
@@ -122,8 +125,6 @@ class FinancialPermissions:
             actor:        the user initiating the action
             action:       human-readable action name for the error message
         """
-        from django.core.exceptions import ValidationError
-
         count = FinancialPermissions.eligible_voter_count(contribution, threshold, actor)
         if count == 0:
             if threshold == 'admins':

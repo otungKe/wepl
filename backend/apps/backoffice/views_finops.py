@@ -17,7 +17,7 @@ from django.utils import timezone
 from rest_framework import status as http
 from rest_framework.response import Response
 
-from apps.ledger import money_activity
+from apps.payments import money_activity
 from apps.ledger.models import FinancialTransaction as FT
 from apps.payments.ops import PAYOUT_OP_TYPES, PaymentOpsService
 

@@ -23,7 +23,7 @@ class DisbursementService:
 
         # Quorum check: ensure at least one eligible voter exists excluding the requester.
         # Catches dynamic deadlocks (e.g. last admin left after contribution was created).
-        from apps.ledger.permissions import FinancialPermissions
+        from apps.contributions.permissions import FinancialPermissions
         FinancialPermissions.assert_quorum_exists(
             contribution, contribution.voting_threshold, user,
             action="submit this disbursement request",

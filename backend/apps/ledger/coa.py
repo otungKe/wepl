@@ -22,6 +22,7 @@ Sub-ledger accounts (created lazily on first use):
 """
 from django.db import transaction
 
+from .fund_tenant import resolve_fund_tenant
 from .models import Account
 
 # ── Canonical GL account codes ──────────────────────────────────────────────
@@ -125,27 +126,6 @@ def interest_income_account() -> Account:
     return gl_account(INTEREST_INCOME)
 
 
-def _tenant_for_fund(fund_type: str, fund_id: int):
-    """Resolve the tenant that owns a fund's community (Phase 6, P6-03).
-
-    Lazy imports avoid a ledger→contributions dependency at module load. Returns
-    None (shared) when not resolvable — safe under RLS (null tenant is visible).
-    """
-    try:
-        from apps.contributions.models import Contribution, SharesFund, WelfareFund
-        model = {
-            'contribution': Contribution,
-            'welfare':      WelfareFund,
-            'shares':       SharesFund,
-        }.get(fund_type)
-        if model is None:
-            return None
-        obj = model.objects.filter(pk=fund_id).first()
-        return getattr(getattr(obj, 'community', None), 'tenant', None)
-    except Exception:
-        return None
-
-
 def member_receivable_account(*, user, fund_id: int) -> Account:
     """Resolve (get-or-create) the member's ASSET sub-ledger for emergency
     advances, rolling up into 1200 Advances Receivable. The member owes the
@@ -197,7 +177,7 @@ def retained_surplus_account(*, fund_id: int) -> Account:
             'name':   f"Pool #{fund_id} · retained surplus",
             'type':   gl.type,
             'parent': gl,
-            'tenant': _tenant_for_fund('contribution', fund_id),
+            'tenant': resolve_fund_tenant('contribution', fund_id),
         },
     )
     return acct
@@ -222,7 +202,7 @@ def pool_account(*, fund_type: str, fund_id: int) -> Account:
             'name':   f"Pool #{fund_id} · {fund_type} payable",
             'type':   gl.type,
             'parent': gl,
-            'tenant': _tenant_for_fund(fund_type, fund_id),
+            'tenant': resolve_fund_tenant(fund_type, fund_id),
         },
     )
     ensure_custody(fund_type=fund_type, fund_id=fund_id)
@@ -246,7 +226,7 @@ def org_fund_account(*, org, fund_type: str, fund_id: int) -> Account:
             'name':      f"{org.name} · {fund_type} #{fund_id}",
             'type':      Account.Type.LIABILITY,
             'parent':    pool,
-            'tenant':    _tenant_for_fund(fund_type, fund_id),
+            'tenant':    resolve_fund_tenant(fund_type, fund_id),
         },
     )
     return acct
@@ -275,7 +255,7 @@ def member_fund_account(*, user, fund_type: str, fund_id: int) -> Account:
             'name':      f"{getattr(user, 'phone_number', user.pk)} · {fund_type} #{fund_id}",
             'type':      Account.Type.LIABILITY,
             'parent':    pool,
-            'tenant':    _tenant_for_fund(fund_type, fund_id),
+            'tenant':    resolve_fund_tenant(fund_type, fund_id),
         },
     )
     return acct

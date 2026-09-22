@@ -126,7 +126,7 @@ class ContributionSerializer(serializers.ModelSerializer):
         request = self.context.get('request')
         if not request or not request.user.is_authenticated:
             return False
-        from apps.ledger.permissions import FinancialPermissions
+        from apps.contributions.permissions import FinancialPermissions
         return FinancialPermissions.is_contribution_admin(obj, request.user)
 
     def get_is_participant(self, obj):

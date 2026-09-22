@@ -13,11 +13,18 @@ FT's own ``mpesa_*`` columns while they still exist (they are removed in Slice A
 migration.
 
 It is a **view, never a source of truth** (ADR-0002): nothing here is stored.
+
+It lives in ``apps.payments`` rather than ``apps.ledger`` because the rail
+dimension is the payments layer's business and the ledger must not import it.
+``apps.payments`` already depends on ``apps.ledger``; the reverse edge is the one
+that has to stay gone.
 """
 from __future__ import annotations
 
 from dataclasses import dataclass, field
 from decimal import Decimal
+
+from .models import PaymentIntent
 
 
 @dataclass(frozen=True)
@@ -58,8 +65,6 @@ def _rail_for(ft) -> RailInfo:
     issuing a query per row (an ``order_by`` on the related manager would bypass
     it). Without a prefetch this is still a single query.
     """
-    from apps.payments.models import PaymentIntent
-
     intents = list(ft.payment_intents.all())
     intent = max(intents, key=lambda i: i.pk) if intents else None
     if intent is not None and intent.provider_ref:

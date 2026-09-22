@@ -39,6 +39,8 @@ add a new ADR that supersedes the old one (note it in both).
 | [0029](0029-generalized-outbox-event-log.md) | Generalize the outbox from notification queue to domain event log | Accepted |
 | [0030](0030-financial-transaction-decomposition.md) | Decompose `FinancialTransaction` | Accepted |
 | [0031](0031-core-as-platform-layer.md) | Core is a platform layer — the registry contract | Accepted |
+| [0032](0032-payout-orchestration-in-payments.md) | Payout orchestration belongs to payments, not the ledger | Accepted |
+| [0033](0033-dependencies-point-inward.md) | Dependencies point inward — the ledger is a leaf, enforced | Accepted |
 
 ## Template
 
