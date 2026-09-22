@@ -92,8 +92,8 @@ class UserService:
             metadata={"request_id": vreq.pk, "kind": kind, "title": vreq.title,
                       "by": actor_label},
         )
-        from .admin import _notify_verification_request
-        _notify_verification_request(vreq)
+        from .notifications import notify_verification_request
+        notify_verification_request(vreq)
         return vreq
 
     @staticmethod
@@ -116,8 +116,8 @@ class UserService:
             metadata={"request_id": vreq.pk, "note": vreq.review_note,
                       "by": actor_label},
         )
-        from .admin import _notify_verification_request
-        _notify_verification_request(vreq, resolved=True)
+        from .notifications import notify_verification_request
+        notify_verification_request(vreq, resolved=True)
         return vreq
 
     @staticmethod

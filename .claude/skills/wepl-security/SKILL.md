@@ -80,6 +80,16 @@ version and never overwrites the evidence a prior decision was made against.
 
 Never mutate `VerificationCase.state` or `KYCProfile.status` directly.
 
+**The case ledger records the decision; it does not carry out the consequences**
+(ADR-0033). `apps/verification` imports only `apps/core`. Anything a decision
+should *do* elsewhere is registered into `verification/hooks.py` from the owning
+app's `AppConfig.ready()`: `apps/controls` releases the held movement, issues the
+pre-clearance and resolves the customer's `VerificationRequest`; `apps/users`
+tells the applicant, through `users/notifications.py`. If a decision stops
+reaching the applicant, the registration in `UsersConfig.ready()` is the first
+thing to check — losing it is silent, and
+`verification/tests.py::DecisionNotifiesApplicantTests` is what stands there.
+
 Identity checks go through the `IdentityVerificationProvider` port
 (`apps/users/identity/`, ADR-0023): `ManualProvider` (human review),
 `FakeProvider` (tests), resolved via `registry.get_provider()` — the same shape

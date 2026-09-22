@@ -154,10 +154,11 @@ separate app/deployment — never co-hosted with the customer web app.
   `apps/core/tests_deploy_topology.py` fails the build on either half-state, and guards
   queue coverage, the single beat instance and the shared `SECRET_KEY` either way.
 - **Module boundaries are tested, not assumed** (`apps/core/tests_module_boundaries.py`,
-  ADR-0033). `apps.core` may import no sibling app; `apps.ledger` may import only
-  `apps.core`; `apps.mpesa` may import only `apps.core`; and `CYCLE_BASELINE` names
-  the five apps still in one import cycle. That
-  set may only shrink — a new mutual dependency between two apps fails the build, and so
+  ADR-0033). `apps.core` may import no sibling app; `apps.ledger`, `apps.mpesa` and
+  `apps.verification` may each import only `apps.core`; and `CYCLE_BASELINE` names
+  the four apps still in one import cycle (`activity`, `communities`,
+  `contributions`, `users` — a domain knot, not a seam: no single edge frees any of
+  them). That set may only shrink — a new mutual dependency between two apps fails the build, and so
   does leaving a freed app in the baseline. When an app genuinely needs something from
   one above it, invert the call (a registry filled at `AppConfig.ready()`, or an event
   through `apps.core.events`); do not widen the baseline.

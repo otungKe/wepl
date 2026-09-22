@@ -67,7 +67,7 @@ def _open_edd_case(held: HeldMovement) -> None:
                     'bank or mobile-money statement, an invoice, or a receipt — '
                     'and add a short note if helpful.'),
         )
-        from apps.users.admin import _notify_verification_request
-        _notify_verification_request(vreq)
+        from apps.users.notifications import notify_verification_request
+        notify_verification_request(vreq)
     except Exception:
         logger.exception("Failed to open EDD case for held movement %s", held.pk)

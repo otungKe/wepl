@@ -8,13 +8,16 @@ at the top of the file — the workaround that keeps Django booting when the mod
 graph cannot be loaded in dependency order.
 
 These tests read the imports out of the source (not at runtime, so a lazy import
-counts exactly like a top-level one) and assert four things:
+counts exactly like a top-level one) and assert five things:
 
 * ``apps.core`` is the foundation and depends on no sibling app.
 * ``apps.ledger`` is the book of record and depends on nothing but ``core`` —
   including the ADR-0007 controls chokepoint, which is registered *into* the
   ledger rather than imported *by* it.
 * ``apps.mpesa`` is a Daraja wire client and depends on no sibling app at all.
+* ``apps.verification`` is the identity ledger and depends on nothing but
+  ``core``: what a decision *does* elsewhere registers into
+  ``apps.verification.hooks``.
 * the remaining cycle does not grow.
 
 The last is a ratchet, not an endorsement: :data:`CYCLE_BASELINE` is the set of
@@ -45,9 +48,16 @@ APPS_DIR = Path(settings.BASE_DIR) / "apps"
 #: ``payments`` with it, because nothing below the domain reached up any more —
 #: then five once the RLS tenant pin stopped subclassing the authenticator and
 #: started registering into ``apps.core.request_context``, freeing ``tenants``
-#: and ``audit`` behind it.
+#: and ``audit`` behind it, then four once the case ledger stopped writing the
+#: customer-facing ``VerificationRequest`` row and stopped reaching into
+#: ``apps.users.admin`` for its notification helpers.
+#:
+#: What is left is not another seam. These four are mutually entangled through
+#: the domain itself — ``contributions`` alone imports ``communities`` in 24
+#: places — and no single edge removal frees any of them. Shrinking further is a
+#: question about who owns a group and its money, not a registry away.
 CYCLE_BASELINE = {
-    "activity", "communities", "contributions", "users", "verification",
+    "activity", "communities", "contributions", "users",
 }
 
 #: ``apps.ledger`` may import these and nothing else. Controls reach the ledger by
@@ -59,6 +69,12 @@ LEDGER_MAY_IMPORT = {"core"}
 #: plus the two rail records, and what a settled payment *means* is handed to it
 #: through ``apps.mpesa.settlement`` (ADR-0033).
 MPESA_MAY_IMPORT = {"core"}
+
+#: ``apps.verification`` may import these and nothing else. It owns the KYC case
+#: timeline and the transition table; who reacts to a decision — controls closing
+#: the held movement and the customer's request row, users telling the applicant —
+#: registers into ``apps.verification.hooks`` (ADR-0033).
+VERIFICATION_MAY_IMPORT = {"core"}
 
 
 def _app_names() -> set[str]:
@@ -227,6 +243,32 @@ class MpesaIsARailClientTests(SimpleTestCase):
                 f"{sorted(component - {'mpesa'})}. A rail client that imports the "
                 "application layer is how the Daraja views ended up owning the "
                 "contribution model graph.",
+            )
+
+
+class VerificationIsACaseLedgerTests(SimpleTestCase):
+
+    def test_verification_imports_only_core(self):
+        imports = _imports_of("verification", _app_names())
+        stray = {k: v for k, v in imports.items() if k not in VERIFICATION_MAY_IMPORT}
+        self.assertEqual(
+            stray, {},
+            "apps.verification is the identity analogue of the ledger: it records "
+            "what was decided about a case and enforces the transition table. It "
+            "does not own the movement a case was opened over, the customer-facing "
+            "request row, or what the applicant is told — those register into "
+            "apps.verification.hooks (ADR-0033) instead of being imported here.\n"
+            f"Found: {stray}",
+        )
+
+    def test_verification_is_not_in_any_cycle(self):
+        for component in _cycles(_graph()):
+            self.assertNotIn(
+                "verification", component,
+                "apps.verification has been pulled back into an import cycle with "
+                f"{sorted(component - {'verification'})}. A case ledger that writes "
+                "another app's rows is how KYC review state ended up editable from "
+                "three places at once.",
             )
 
 

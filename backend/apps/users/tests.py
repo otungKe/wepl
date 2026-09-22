@@ -175,9 +175,9 @@ class KYCAdminDecisionTests(TestCase):
     def test_approval_emits_event(self):
         from types import SimpleNamespace
         from apps.core.models import OutboxEvent
-        from apps.users.admin import _notify_kyc_decision
+        from apps.users.notifications import notify_kyc_decision
 
-        _notify_kyc_decision(SimpleNamespace(status="approved", user_id=11, rejection_reason=""))
+        notify_kyc_decision(SimpleNamespace(status="approved", user_id=11, rejection_reason=""))
         self.assertTrue(
             OutboxEvent.objects.filter(event_type="kyc_approved", payload__user_id=11).exists()
         )
@@ -185,11 +185,35 @@ class KYCAdminDecisionTests(TestCase):
     def test_rejection_emits_event_with_reason(self):
         from types import SimpleNamespace
         from apps.core.models import OutboxEvent
-        from apps.users.admin import _notify_kyc_decision
+        from apps.users.notifications import notify_kyc_decision
 
-        _notify_kyc_decision(SimpleNamespace(status="rejected", user_id=12, rejection_reason="Blurry ID"))
+        notify_kyc_decision(SimpleNamespace(status="rejected", user_id=12, rejection_reason="Blurry ID"))
         ev = OutboxEvent.objects.get(event_type="kyc_rejected", payload__user_id=12)
         self.assertIn("Blurry ID", ev.payload["message"])
+
+
+class KYCDecisionHookRegistrationTests(TestCase):
+    """The applicant is told the outcome because ``UsersConfig.ready()`` registered
+    a handler, not because the case ledger imports one. Losing that registration
+    would leave decisions silent with every other test still green (ADR-0033)."""
+
+    def test_handler_is_registered_at_startup(self):
+        from apps.verification.hooks import _kyc_decided
+        from apps.users.notifications import on_kyc_decided
+
+        self.assertIn(on_kyc_decided, _kyc_decided)
+
+    def test_registration_is_idempotent(self):
+        from apps.verification import hooks
+        from apps.users import notifications
+
+        before = list(hooks._kyc_decided)
+        notifications.register()
+        self.assertEqual(hooks._kyc_decided, before)
+
+    # The end-to-end proof that a real decide() reaches the applicant through
+    # this registration lives with the decision, in
+    # apps/verification/tests.py::DecisionNotifiesApplicantTests.
 
 
 class AdminDashboardTests(TestCase):
