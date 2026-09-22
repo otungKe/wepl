@@ -45,6 +45,42 @@ def _kyc(phone='+254700000001', id_number='11111111', **overrides):
     return KYCProfile.objects.create(**fields)
 
 
+class DecisionNotifiesApplicantTests(TestCase):
+    """A decided KYC case reaches its applicant.
+
+    The case ledger no longer imports users' notification helpers — it announces
+    through ``hooks.run_kyc_decided`` and ``UsersConfig.ready()`` registers the
+    handler (ADR-0033). That registration is the only thing standing between a
+    decision and a silent one, so it is asserted end to end here rather than by
+    calling the handler directly.
+    """
+
+    def test_approval_reaches_the_applicant(self):
+        from apps.core.models import OutboxEvent
+        kyc = _kyc()
+        service.decide(kyc, 'approve', actor_label='tests')
+        self.assertTrue(
+            OutboxEvent.objects.filter(event_type='kyc_approved',
+                                       payload__user_id=kyc.user_id).exists())
+
+    def test_request_info_reaches_the_applicant(self):
+        from apps.core.models import OutboxEvent
+        kyc = _kyc(phone='+254700000002', id_number='22222222')
+        service.decide(kyc, 'request_info', actor_label='tests',
+                       items=['id_front'])
+        self.assertTrue(
+            OutboxEvent.objects.filter(event_type='kyc_resubmission_requested',
+                                       payload__user_id=kyc.user_id).exists())
+
+    def test_notify_false_stays_silent(self):
+        from apps.core.models import OutboxEvent
+        kyc = _kyc(phone='+254700000003', id_number='33333333')
+        service.decide(kyc, 'approve', actor_label='tests', notify=False)
+        self.assertFalse(
+            OutboxEvent.objects.filter(event_type='kyc_approved',
+                                       payload__user_id=kyc.user_id).exists())
+
+
 class CaseLedgerTests(TestCase):
 
     def test_case_for_opens_case_lazily_with_derived_state(self):
@@ -254,6 +290,7 @@ class EddPipelineTests(TestCase):
 
     def test_reject_refuses_hold_and_needs_no_override(self):
         from apps.controls.models import ControlOverride
+        from apps.users.models import VerificationRequest
         case = self._open()
         service.record_customer_evidence(case, user=self.user, note='x')
         service.decide_subject_case(case, 'reject', actor_label='ops:edd@wepl.app',
@@ -261,6 +298,10 @@ class EddPipelineTests(TestCase):
         self.held.refresh_from_db()
         self.assertEqual(self.held.status, 'REJECTED')
         self.assertFalse(ControlOverride.objects.exists())
+        # The customer's request closes on either outcome, carrying the reason.
+        vreq = VerificationRequest.objects.get(case=case)
+        self.assertEqual(vreq.status, VerificationRequest.Status.RESOLVED)
+        self.assertEqual(vreq.review_note, 'Source of funds unclear')
         # Terminal for repeats — a second reject is illegal (reversal via
         # 'approve' stays legal for reconsideration).
         with self.assertRaises(service.IllegalTransition):

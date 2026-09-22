@@ -7,6 +7,7 @@ from django.utils.safestring import mark_safe
 from unfold.admin import ModelAdmin as UnfoldModelAdmin
 
 from .models import User, KYCProfile, VerificationRequest, PaymentMethod
+from .notifications import notify_verification_request
 
 
 # ─────────────────────────────────────────────────────────────
@@ -61,32 +62,6 @@ class UserAdmin(BaseUserAdmin, UnfoldModelAdmin):
 # KYC ADMIN
 # ─────────────────────────────────────────────────────────────
 
-def _notify_kyc_decision(kyc):
-    """Tell the applicant their KYC was approved/rejected (in-app notification).
-
-    Goes through the durable event bus, so it survives crashes and reaches the
-    user's device via the normal notification pipeline.
-    """
-    from apps.core.events import emit
-
-    if kyc.status == 'approved':
-        emit(
-            'kyc_approved',
-            user_id=kyc.user_id,
-            title='Identity verified ✅',
-            message='Your KYC has been approved — you now have full access to '
-                    'payments, contributions, and community features.',
-        )
-    elif kyc.status == 'rejected':
-        reason = kyc.rejection_reason or 'Please re-submit your documents.'
-        emit(
-            'kyc_rejected',
-            user_id=kyc.user_id,
-            title='KYC needs attention',
-            message=f'Your identity verification was not approved. {reason}',
-        )
-
-
 @admin.action(description='Approve selected KYC submissions', permissions=['change'])
 def approve_kyc(modeladmin, request, queryset):
     from apps.verification import service as case_service
@@ -117,21 +92,6 @@ def reject_kyc(modeladmin, request, queryset):
         request,
         f"{n} KYC submission(s) rejected and applicant(s) notified. "
         f"To give a specific reason, open the record and set 'rejection reason' before saving.",
-    )
-
-
-def _notify_resubmission_request(kyc):
-    """Tell the user which KYC items they've been asked to re-provide, and send
-    them to the targeted re-submission screen (they don't re-fill the whole form)."""
-    from apps.core.events import emit
-    labels = dict(KYCProfile.RESUBMITTABLE_ITEMS)
-    items = ', '.join(labels.get(k, k) for k in (kyc.resubmission_requested or []))
-    emit(
-        'kyc_resubmission_requested',
-        user_id=kyc.user_id,
-        title='Action needed: re-submit KYC items',
-        message=f'Please re-submit the following in WEPL: {items}. '
-                f'You only need to provide these — the rest of your details stay as they are.',
     )
 
 
@@ -330,26 +290,6 @@ class KYCProfileAdmin(UnfoldModelAdmin):
 # VERIFICATION REQUESTS ADMIN
 # ─────────────────────────────────────────────────────────────
 
-def _notify_verification_request(vreq, *, resolved=False):
-    """Notify the user that a verification request was raised or resolved."""
-    from apps.core.events import emit
-    if resolved:
-        emit(
-            'verification_request_resolved',
-            user_id=vreq.user_id,
-            title='Verification updated',
-            message=f'"{vreq.title}" has been resolved.'
-                    + (f' {vreq.review_note}' if vreq.review_note else ''),
-        )
-    else:
-        emit(
-            'verification_request',
-            user_id=vreq.user_id,
-            title='Action needed: verification',
-            message=f'{vreq.title} — open your Verification Center to respond.',
-        )
-
-
 @admin.action(description='Mark selected requests resolved (notify user)', permissions=['change'])
 def resolve_requests(modeladmin, request, queryset):
     n = 0
@@ -357,7 +297,7 @@ def resolve_requests(modeladmin, request, queryset):
         vreq.status = VerificationRequest.Status.RESOLVED
         vreq.resolved_at = timezone.now()
         vreq.save(update_fields=['status', 'resolved_at'])
-        _notify_verification_request(vreq, resolved=True)
+        notify_verification_request(vreq, resolved=True)
         n += 1
     modeladmin.message_user(request, f"{n} request(s) resolved and user(s) notified.")
 
@@ -377,7 +317,7 @@ class VerificationRequestAdmin(UnfoldModelAdmin):
         super().save_model(request, obj, form, change)
         # Notify the user when a new request is raised against them.
         if creating and obj.status == VerificationRequest.Status.OPEN:
-            _notify_verification_request(obj)
+            notify_verification_request(obj)
 
 
 @admin.register(PaymentMethod)

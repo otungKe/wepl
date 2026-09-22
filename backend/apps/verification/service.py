@@ -19,7 +19,7 @@ import logging
 from django.db import transaction
 from django.utils import timezone
 
-from .hooks import run_subject_case_decided
+from .hooks import run_kyc_decided, run_subject_case_decided
 from .models import (
     CaseDocument, CaseEvent, CaseNote, OcrResult, RejectionReason, VerificationCase,
 )
@@ -292,8 +292,6 @@ def decide_subject_case(case, action, *, actor_label, staff=None, reason='',
     if action not in ('approve', 'reject'):
         raise ValueError(f"Unknown decision action: {action!r}")
 
-    from apps.users.models import VerificationRequest
-
     with transaction.atomic():
         payload = {'reason': reason} if reason else {}
         _transition(case, action, event_type=_REVIEW_EVENT[action],
@@ -302,17 +300,11 @@ def decide_subject_case(case, action, *, actor_label, staff=None, reason='',
 
         # Whatever the case was opened over reacts here, inside this
         # transaction (ADR-0033). For an EDD case that is apps.controls
-        # releasing the held movement and issuing the pre-clearance; the case
-        # ledger does not write rows it does not own.
+        # releasing the held movement, issuing the pre-clearance, and
+        # resolving the customer-facing VerificationRequest it raised when it
+        # opened the case; the case ledger does not write rows it does not own.
         run_subject_case_decided(case=case, action=action,
                                  actor_label=actor_label, reason=reason)
-
-        # Resolve the customer-facing projection.
-        now = timezone.now()
-        VerificationRequest.objects.filter(case=case).exclude(
-            status=VerificationRequest.Status.RESOLVED,
-        ).update(status=VerificationRequest.Status.RESOLVED, resolved_at=now,
-                 review_note=reason or ('Cleared' if action == 'approve' else ''))
 
     if notify:
         from apps.core.events import emit
@@ -382,7 +374,9 @@ def decide(kyc, action, *, actor_label, staff=None, reviewer_user=None,
                  reviewer_user=reviewer_user, reason=customer_reason, items=items)
 
     if notify:
-        _notify(kyc, action)
+        # Outside the transaction, where the inline _notify call sat:
+        # the applicant hears about a decision that is already durable.
+        run_kyc_decided(kyc=kyc, action=action)
     return case
 
 
@@ -474,12 +468,3 @@ def _project(kyc, case, action, *, actor_label, reviewer_user, reason, items):
             kyc.reviewed_by = reviewer_user
             fields.append('reviewed_by')
     kyc.save(update_fields=fields)
-
-
-def _notify(kyc, action):
-    # Lazy import: apps.users.admin also imports this module for its actions.
-    from apps.users.admin import _notify_kyc_decision, _notify_resubmission_request
-    if action in ('approve', 'reject'):
-        _notify_kyc_decision(kyc)
-    elif action == 'request_info' and kyc.resubmission_requested:
-        _notify_resubmission_request(kyc)

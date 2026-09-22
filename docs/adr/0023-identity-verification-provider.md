@@ -44,7 +44,10 @@ modelled on the `PaymentProvider` port (ADR-0005):
   `verification_detail`, `verification_checked_at`), derives the KYC `status`
   (`verified`→approved, `rejected`→rejected, `manual_review`/`pending`→pending),
   and notifies the applicant on a terminal decision via the existing
-  `_notify_kyc_decision` (durable outbox → `kyc_approved` / `kyc_rejected`).
+  notification path (durable outbox → `kyc_approved` / `kyc_rejected`). Since
+  ADR-0033 that message is `apps.users.notifications.notify_kyc_decision`,
+  reached through `apps.verification.hooks`, not called by name from the case
+  ledger.
 - **Fail-safe.** A provider exception never loses the submission — it falls back
   to `status='pending'` (human review).
 

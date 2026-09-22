@@ -1,14 +1,17 @@
 """Controls' side of a verification case: which movement it covers, and what
-deciding it does to that movement.
+deciding it does to that movement and to the customer's request row.
 
-``review._open_edd_case`` opens an EDD case when a movement is HELD; this is the
-other half. The decision half used to live inline in
+``review._open_edd_case`` opens an EDD case when a movement is HELD, and raises
+the ``VerificationRequest`` the customer answers; this is the other half. The
+decision half used to live inline in
 ``apps.verification.service.decide_subject_case``, which meant the case ledger
-wrote ``HeldMovement`` and ``ControlOverride`` rows it does not own (ADR-0033).
-Controls registers it instead, through ``apps.verification.hooks``.
+wrote ``HeldMovement``, ``ControlOverride`` and ``VerificationRequest`` rows it
+does not own (ADR-0033). Controls registers it instead, through
+``apps.verification.hooks``.
 
-The reaction runs inside the deciding transaction, so the release and the case
-decision commit together or not at all — the same guarantee the inline code had.
+The reaction runs inside the deciding transaction, so the release, the request
+resolution and the case decision commit together or not at all — the same
+guarantee the inline code had.
 """
 from django.utils import timezone
 
@@ -30,10 +33,28 @@ def held_movement_for(case):
     return HeldMovement.objects.filter(pk=case.subject_id).first()
 
 
+def _resolve_customer_request(case, action: str, reason: str) -> None:
+    """Close the ``VerificationRequest`` ``_open_edd_case`` raised for *case*.
+
+    Unconditional, exactly as it was when it ran inline in the case ledger: a
+    case over something other than a HeldMovement simply has no request row, so
+    the update matches nothing.
+    """
+    from apps.users.models import VerificationRequest
+
+    VerificationRequest.objects.filter(case=case).exclude(
+        status=VerificationRequest.Status.RESOLVED,
+    ).update(status=VerificationRequest.Status.RESOLVED,
+             resolved_at=timezone.now(),
+             review_note=reason or ('Cleared' if action == 'approve' else ''))
+
+
 def on_subject_case_decided(*, case, action: str, actor_label: str, reason: str) -> None:
     """Approve issues a single-use pre-clearance so the customer's retry passes
-    the HOLD; either outcome closes the hold. A case over anything other than a
-    HeldMovement has nothing to do here."""
+    the HOLD; either outcome closes the hold and the customer's request. A case
+    over anything other than a HeldMovement has no movement to release."""
+    _resolve_customer_request(case, action, reason)
+
     held = held_movement_for(case)
     if held is None:
         return

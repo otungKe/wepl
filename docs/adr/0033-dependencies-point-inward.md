@@ -67,7 +67,7 @@ a lazy import counts exactly like a top-level one, and they assert:
 
 - `apps.core` imports no sibling app (ADR-0031, now checked).
 - `apps.ledger` imports nothing but `apps.core`, and is in no cycle.
-- **the remaining cycle does not grow** — `CYCLE_BASELINE` names the ten apps still
+- **the remaining cycle does not grow** — `CYCLE_BASELINE` names the apps still
   entangled, and a new mutual dependency between any apps fails the build.
 
 `CYCLE_BASELINE` is a ratchet, not an endorsement. A second test fails if it is *stale*,
@@ -105,12 +105,28 @@ below the other — so unlike the cases above the registry went into `apps.core`
 (`request_context.py`), which both already depend on and which holds nothing but an
 opaque list of callables. `apps.audit` came out with it. Seven → five.
 
-**Not addressed.** Five apps remain in the cycle, `contributions` (6,103 lines, 19 of the
-backend's 73 models) remains the app that will hurt first, and `emit()` is still used by
-no money-path app — the decoupling seam is not load-bearing where the coupling is. This
-ADR stops the graph getting worse and frees the one app where the cost of entanglement
-was highest. The rest is sequenced work, and ADR-0013's contributions split is where it
-continues.
+Finally `apps.verification` became a leaf. Two imports held it in: the case ledger wrote
+the customer-facing `VerificationRequest` row on an EDD decision, and it reached into
+`apps.users.admin` — another app's *admin module* — for the private helpers that tell a
+KYC applicant the outcome. Both are now registered. The request row went to
+`apps.controls`, which raises it in `_open_edd_case` and is the only thing that creates
+one, so both halves of its lifetime finally sit together. The applicant's message went
+to a new `apps/users/notifications.py` (out of `admin.py`, where notification logic
+never belonged) and registers against a second slot, `kyc_decided`. That slot runs
+**after** the deciding transaction commits, where `decide()`'s inline `_notify` call
+sat, so a handler cannot roll a decision back — stated in the hook's docstring, because
+it differs from every other seam in this ADR. Five → four.
+
+**Not addressed.** Four apps remain in the cycle — `activity`, `communities`,
+`contributions`, `users` — and they are not another seam. They are mutually entangled
+through the domain itself (`contributions` imports `communities` in 24 places, and every
+pair is bidirectional), and removing any single edge frees none of them. Separating them
+is a question about who owns a group and its money, not an inversion. `contributions`
+(6,103 lines, 19 of the backend's 73 models) remains the app that will hurt first, and
+`emit()` is still used by no money-path app — the decoupling seam is not load-bearing
+where the coupling is. This ADR took the graph from eleven entangled apps to four and
+stops it getting worse. The rest is sequenced work, and ADR-0013's contributions split
+is where it continues.
 
 ## Alternatives considered
 

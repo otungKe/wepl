@@ -27,13 +27,18 @@ views / consumers
 
 Rails, identity vendors and notification channels sit **below** the services
 behind ports; `apps/core` sits **beside** everything and imports no business app.
-`apps/ledger` imports only `apps/core` (ADR-0033) — domain role checks live in the
-domain app, rail detail in `apps/payments`, and the ADR-0007 controls gate is
-registered into `ledger/chokepoint.py` rather than imported by it. Both boundaries
-are tested in `apps/core/tests_module_boundaries.py`, which also holds a ratchet on
-the nine apps still in one import cycle: that set may only shrink. `apps/controls`
-reaches verification, never the reverse: a decided EDD case releases its held
-movement through a reaction controls registers into `verification/hooks.py`.
+Three apps import only `apps/core` (ADR-0033): `apps/ledger` — domain role checks
+live in the domain app, rail detail in `apps/payments`, and the ADR-0007 controls
+gate is registered into `ledger/chokepoint.py` rather than imported by it;
+`apps/mpesa` — the Daraja wire client plus its two rail records; and
+`apps/verification` — the case ledger, which records what was decided and never
+what a decision does elsewhere. All three are tested in
+`apps/core/tests_module_boundaries.py`, which also holds a ratchet on the **four**
+apps still in one import cycle (`activity`, `communities`, `contributions`,
+`users`): that set may only shrink. `apps/controls` and `apps/users` reach
+verification, never the reverse: a decided EDD case releases its held movement and
+closes the customer's request row, and a decided KYC case reaches its applicant,
+through reactions those apps register into `verification/hooks.py`.
 
 ## The ADR ladder (read before changing money, eventing or payments)
 
@@ -70,17 +75,24 @@ Cross-cutting machinery registers itself from `AppConfig.ready()`, and
 - identity adapters — `users/identity/registry.py`
 
 The same pattern is how a *lower* app calls upward, or two peers reach each other,
-without one importing the other (ADR-0033). Five of these exist; do not
+without one importing the other (ADR-0033). Six of these exist; do not
 "simplify" any of them back into an import:
 - the posting chokepoint — `ledger/chokepoint.py`, filled by `ControlsConfig`
 - the fund → tenant lookup — `ledger/fund_tenant.py`, filled by `ContributionsConfig`
-- a decided KYC case — `verification/hooks.py`, filled by `ControlsConfig`
+- a decided EDD case — `verification/hooks.py::subject_case_decided`, filled by
+  `ControlsConfig`: it releases the held movement, issues the pre-clearance, and
+  resolves the `VerificationRequest` it raised when it opened the case
+- a decided KYC case — `verification/hooks.py::kyc_decided`, filled by
+  `UsersConfig`: it tells the applicant, via `users/notifications.py`
 - a settled M-Pesa payment — `mpesa/settlement.py`, filled by `ContributionsConfig`
 - a request's principal resolved — `core/request_context.py`, filled by
   `TenantsConfig` (the two apps are peers, so the registry sits in `core`)
 
 Each runs synchronously in the caller's transaction, at the point the direct call
-used to run, so a raising handler still aborts the caller.
+used to run, so a raising handler still aborts the caller. **The one exception is
+`kyc_decided`**, which fires after the deciding transaction has committed, exactly
+where the inline notify call sat: a handler there cannot roll the decision back.
+Each slot's docstring says which it is — read it before registering.
 
 Adding a branch at a call site instead of a registration is the wrong answer.
 
@@ -159,6 +171,8 @@ errors (#200), and the shares-fund N+1 (#204).
 | a rail detail (wire format, credentials, a rail record) | `apps/payments/providers/<rail>.py` or `apps/mpesa/` |
 | an endpoint a rail calls back on | `apps/payments/views_mpesa.py`, mapped in `config/urls_mpesa.py` — **never** in `apps/mpesa`, which imports no sibling app |
 | something the rail must ask the domain | a handler registered into `apps/mpesa/settlement.py` from `AppConfig.ready()` |
+| a consequence of a verification decision (a row to close, a message to send) | a handler registered into `apps/verification/hooks.py` from `AppConfig.ready()` — **never** a write from `verification/service.py` into another app's tables |
+| a customer-facing message about identity or compliance | `apps/users/notifications.py` — **never** `apps/users/admin.py` |
 | a cross-cutting mechanism | `apps/core/`, registered from `AppConfig.ready()` |
 | a reaction to a settled payout | a `register_settlement_target` handler in the owning context |
 | an operator action | `apps/backoffice/`, behind a capability + an `AuditEvent` |
