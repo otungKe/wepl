@@ -36,8 +36,12 @@ from django.test import SimpleTestCase
 APPS_DIR = Path(settings.BASE_DIR) / "apps"
 
 #: Apps still in one strongly-connected component. This set must only ever shrink.
+#:
+#: History, so the direction is visible: eleven apps when this test was written
+#: (ADR-0033 freed ``ledger``), then nine once ``controls`` stopped being reached
+#: into by ``apps.verification`` and started registering its own reaction instead.
 CYCLE_BASELINE = {
-    "activity", "audit", "communities", "contributions", "controls",
+    "activity", "audit", "communities", "contributions",
     "mpesa", "payments", "tenants", "users", "verification",
 }
 

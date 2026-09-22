@@ -31,7 +31,9 @@ behind ports; `apps/core` sits **beside** everything and imports no business app
 domain app, rail detail in `apps/payments`, and the ADR-0007 controls gate is
 registered into `ledger/chokepoint.py` rather than imported by it. Both boundaries
 are tested in `apps/core/tests_module_boundaries.py`, which also holds a ratchet on
-the ten apps still in one import cycle: that set may only shrink.
+the nine apps still in one import cycle: that set may only shrink. `apps/controls`
+reaches verification, never the reverse: a decided EDD case releases its held
+movement through a reaction controls registers into `verification/hooks.py`.
 
 ## The ADR ladder (read before changing money, eventing or payments)
 
