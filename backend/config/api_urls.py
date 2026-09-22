@@ -16,7 +16,9 @@ urlpatterns = [
     path('notifications/', include('apps.notifications.urls')),
     path('files/',         include('apps.files.urls')),
     path('search/',        include('apps.search.urls')),
-    path('mpesa/',         include('apps.mpesa.urls')),
+    # Daraja endpoints. The paths are registered with Safaricom and must not
+    # change; their views live in apps.contributions and apps.payments now.
+    path('mpesa/',         include('config.urls_mpesa')),
     path('reminders/',     include('apps.reminders.urls')),
     path('ledger/',        include('apps.ledger.urls')),
 ]

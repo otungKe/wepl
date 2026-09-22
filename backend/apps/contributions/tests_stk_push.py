@@ -1,6 +1,8 @@
-"""STK push: Tier-1 gate + target-number selection + per-user throttle."""
+"""STK push: Tier-1 gate + target-number selection + per-user throttle.
+
+The endpoint moved here from apps/mpesa with ADR-0033; the URL is unchanged.
+"""
 from datetime import date
-from decimal import Decimal
 
 from django.contrib.auth import get_user_model
 from django.core.cache import cache

@@ -89,7 +89,16 @@ boundary.
 **Unchanged.** No behaviour, no wire format, no schema, no migration. The controls gate
 fires on exactly the same movements as before.
 
-**Not addressed.** Ten apps remain in the cycle, `contributions` (6,103 lines, 19 of the
+**Applied since.** Two more apps have left the cycle under this rule. `apps.controls`
+stopped being reached into by `apps.verification` and registers its own reaction to a
+decided case instead. `apps.mpesa` became a Daraja wire client with no sibling
+dependency at all: its pay-in endpoint moved to `apps/contributions/views/collect.py`,
+its webhooks to `apps/payments/views_mpesa.py`, and what a settled payment *means* is
+handed to it through `apps/mpesa/settlement.py`. That one freed `apps.payments` with
+it, because once nothing below the domain reached upward, payments had no path back to
+itself. Eleven apps → seven. `MpesaIsARailClientTests` holds the new floor.
+
+**Not addressed.** Seven apps remain in the cycle, `contributions` (6,103 lines, 19 of the
 backend's 73 models) remains the app that will hurt first, and `emit()` is still used by
 no money-path app — the decoupling seam is not load-bearing where the coupling is. This
 ADR stops the graph getting worse and frees the one app where the cost of entanglement

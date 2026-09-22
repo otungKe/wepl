@@ -89,6 +89,16 @@ and `apps/mpesa/`. Code above the provider layer uses normalized results
 (`CollectionResult`/`PayoutResult`/`CallbackEvent`/`StatusResult`) and must not import Daraja
 field names.
 
+**`apps/mpesa` is the wire client and the two rail records, nothing else (ADR-0033).**
+It imports `apps/core` and no other app. The HTTP endpoints do not live there: the
+Daraja webhooks are `apps/payments/views_mpesa.py` and the pay-in endpoint is
+`apps/contributions/views/collect.py`, mapped by `config/urls_mpesa.py`. **Those paths
+are registered with Safaricom** — `/api/mpesa/stk/callback/`, `/b2c/result/`,
+`/c2b/confirm/` and friends — so changing one breaks a live callback;
+`apps/payments/tests_mpesa_urls.py` fails the build if a path moves. What a settled
+payment *means* is handed to the rail through `apps/mpesa/settlement.py`, which
+`ContributionsConfig.ready()` fills.
+
 ## Auth & the OTP-bypass guard
 
 The custom user model is `users.User` — **`phone_number` is the identifier** (no username);
@@ -145,7 +155,8 @@ separate app/deployment — never co-hosted with the customer web app.
   queue coverage, the single beat instance and the shared `SECRET_KEY` either way.
 - **Module boundaries are tested, not assumed** (`apps/core/tests_module_boundaries.py`,
   ADR-0033). `apps.core` may import no sibling app; `apps.ledger` may import only
-  `apps.core`; and `CYCLE_BASELINE` names the nine apps still in one import cycle. That
+  `apps.core`; `apps.mpesa` may import only `apps.core`; and `CYCLE_BASELINE` names
+  the seven apps still in one import cycle. That
   set may only shrink — a new mutual dependency between two apps fails the build, and so
   does leaving a freed app in the baseline. When an app genuinely needs something from
   one above it, invert the call (a registry filled at `AppConfig.ready()`, or an event

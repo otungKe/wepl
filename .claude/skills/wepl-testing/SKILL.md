@@ -124,7 +124,8 @@ what generalises.
 **2. Skipping instead of fixing.**
 14 money-path test classes carry
 `@skip("P0-02 #14: legacy money-path test; rewrite onto post_journal() in
-P0-05/06")` — 9 in `apps/contributions/tests.py`, 5 in `apps/mpesa/tests.py`.
+P0-05/06")` — 9 in `apps/contributions/tests.py`, 3 in
+`apps/payments/tests_mpesa_legacy.py` and 2 in `apps/mpesa/tests.py`.
 P0-05 and P0-06 are both marked 🟢 Done, so these are skips whose stated reason
 has expired. They account for nearly all 52 skipped tests and cover exactly the
 paths the cutover rewrote. **Green does

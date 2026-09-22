@@ -9,7 +9,7 @@ from django.conf import settings
 logger = logging.getLogger(__name__)
 
 
-def _normalize_phone(phone: str) -> str:
+def normalize_msisdn(phone: str) -> str:
     """Convert any Kenyan phone format to 254XXXXXXXXX."""
     phone = phone.strip().replace(" ", "").replace("-", "")
     if phone.startswith("+"):
@@ -53,9 +53,9 @@ class MpesaService:
             "Timestamp": timestamp,
             "TransactionType": "CustomerPayBillOnline",
             "Amount": int(amount),
-            "PartyA": _normalize_phone(phone_number),
+            "PartyA": normalize_msisdn(phone_number),
             "PartyB": shortcode,
-            "PhoneNumber": _normalize_phone(phone_number),
+            "PhoneNumber": normalize_msisdn(phone_number),
             "CallBackURL": settings.MPESA_CALLBACK_URL,
             "AccountReference": account_ref[:12],
             "TransactionDesc": description[:20],
@@ -85,7 +85,7 @@ class MpesaService:
             "CommandID":          "BusinessPayment",
             "Amount":             int(amount),
             "PartyA":             settings.MPESA_SHORTCODE,
-            "PartyB":             _normalize_phone(phone_number),
+            "PartyB":             normalize_msisdn(phone_number),
             "Remarks":            remarks[:100],
             "QueueTimeOutURL":    settings.MPESA_B2C_TIMEOUT_URL,
             "ResultURL":          settings.MPESA_B2C_RESULT_URL,
@@ -128,16 +128,17 @@ class MpesaService:
 
     @staticmethod
     def reconcile_c2b(transaction) -> bool:
-        """Thin rail adapter (Move 2b): hand the C2B deposit's normalised fields to
-        the contributions resolver and stamp the outcome onto the rail record.
+        """Hand the C2B deposit's normalised fields to the domain and stamp the
+        outcome onto the rail record.
 
         The business logic — resolve the fund from the WEPL-<id> reference, match
-        the member, gate community membership, auto-join, and credit — lives in
-        ``ContributionService.credit_paybill_payin``. This app only owns the C2B
-        model. Returns True when the payment was reconciled."""
-        from apps.contributions.services import ContributionService
+        the member, gate community membership, auto-join, and credit — belongs to
+        ``apps.contributions``, which registers itself as the resolver
+        (``apps.mpesa.settlement``). This app only owns the C2B model, so it only
+        reads and writes that. Returns True when the payment was reconciled."""
+        from .settlement import resolve_paybill_payin
 
-        result = ContributionService.credit_paybill_payin(
+        result = resolve_paybill_payin(
             reference=transaction.bill_ref_number,
             phone=transaction.phone_number,
             amount=transaction.amount,

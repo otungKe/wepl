@@ -8,15 +8,16 @@ at the top of the file — the workaround that keeps Django booting when the mod
 graph cannot be loaded in dependency order.
 
 These tests read the imports out of the source (not at runtime, so a lazy import
-counts exactly like a top-level one) and assert three things:
+counts exactly like a top-level one) and assert four things:
 
 * ``apps.core`` is the foundation and depends on no sibling app.
 * ``apps.ledger`` is the book of record and depends on nothing but ``core`` —
   including the ADR-0007 controls chokepoint, which is registered *into* the
   ledger rather than imported *by* it.
+* ``apps.mpesa`` is a Daraja wire client and depends on no sibling app at all.
 * the remaining cycle does not grow.
 
-The third is a ratchet, not an endorsement: :data:`CYCLE_BASELINE` is the set of
+The last is a ratchet, not an endorsement: :data:`CYCLE_BASELINE` is the set of
 apps that are still mutually entangled. Shrinking it is the work; adding to it is
 a regression, and this test is what makes the difference visible in review
 instead of two years later.
@@ -39,16 +40,23 @@ APPS_DIR = Path(settings.BASE_DIR) / "apps"
 #:
 #: History, so the direction is visible: eleven apps when this test was written
 #: (ADR-0033 freed ``ledger``), then nine once ``controls`` stopped being reached
-#: into by ``apps.verification`` and started registering its own reaction instead.
+#: into by ``apps.verification`` and started registering its own reaction instead,
+#: then seven once the Daraja endpoints moved off ``apps.mpesa`` — which freed
+#: ``payments`` with it, because nothing below the domain reached up any more.
 CYCLE_BASELINE = {
     "activity", "audit", "communities", "contributions",
-    "mpesa", "payments", "tenants", "users", "verification",
+    "tenants", "users", "verification",
 }
 
 #: ``apps.ledger`` may import these and nothing else. Controls reach the ledger by
 #: registering into ``apps.ledger.chokepoint`` at startup (ADR-0007), so the
 #: enforcement point stays single without the ledger knowing who enforces it.
 LEDGER_MAY_IMPORT = {"core"}
+
+#: ``apps.mpesa`` may import these and nothing else: it is the Daraja wire client
+#: plus the two rail records, and what a settled payment *means* is handed to it
+#: through ``apps.mpesa.settlement`` (ADR-0033).
+MPESA_MAY_IMPORT = {"core"}
 
 
 def _app_names() -> set[str]:
@@ -191,6 +199,32 @@ class LedgerIsALeafTests(SimpleTestCase):
                 "apps.ledger has been pulled back into an import cycle with "
                 f"{sorted(component - {'ledger'})}. Whatever the ledger now needs from "
                 "them, it should be handed rather than fetched.",
+            )
+
+
+class MpesaIsARailClientTests(SimpleTestCase):
+
+    def test_mpesa_imports_no_domain_app(self):
+        imports = _imports_of("mpesa", _app_names())
+        stray = {k: v for k, v in imports.items() if k not in MPESA_MAY_IMPORT}
+        self.assertEqual(
+            stray, {},
+            "apps.mpesa speaks Daraja and owns the two rail records; it does not "
+            "decide what a payment is for. The pay-in endpoint lives in "
+            "apps.contributions and the webhooks in apps.payments, and anything the "
+            "rail needs from the domain is registered into apps.mpesa.settlement "
+            "(ADR-0033) instead of being imported here.\n"
+            f"Found: {stray}",
+        )
+
+    def test_mpesa_is_not_in_any_cycle(self):
+        for component in _cycles(_graph()):
+            self.assertNotIn(
+                "mpesa", component,
+                "apps.mpesa has been pulled back into an import cycle with "
+                f"{sorted(component - {'mpesa'})}. A rail client that imports the "
+                "application layer is how the Daraja views ended up owning the "
+                "contribution model graph.",
             )
 
 

@@ -124,3 +124,26 @@ def on_payout_failed(ft) -> None:
             "on_payout_failed: error updating context %s/%s",
             ft.context_type, ft.context_id,
         )
+
+
+# ── Rail registration (ADR-0033) ─────────────────────────────────────────────
+# ``apps.mpesa`` owns the rail records and nothing above them, so it asks who
+# decides what a settled payment means rather than importing the answer. Both
+# handlers resolve their target at call time so a test can patch either one.
+
+def _collection_settled(**kwargs) -> None:
+    on_collection_settled(**kwargs)
+
+
+def _paybill_payin(**kwargs) -> dict:
+    from .services import ContributionService
+    return ContributionService.credit_paybill_payin(**kwargs)
+
+
+def register() -> None:
+    """Hand the M-Pesa rail the two domain decisions it must not import."""
+    from apps.mpesa.settlement import (
+        register_collection_settled, register_paybill_resolver,
+    )
+    register_collection_settled(_collection_settled)
+    register_paybill_resolver(_paybill_payin)
