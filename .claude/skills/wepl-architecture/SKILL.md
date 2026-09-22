@@ -69,13 +69,15 @@ Cross-cutting machinery registers itself from `AppConfig.ready()`, and
 - payment adapters — `payments/providers/registry.py::_build`
 - identity adapters — `users/identity/registry.py`
 
-The same pattern is how a *lower* app calls upward without importing the app above
-it (ADR-0033). Four of these exist; do not "simplify" any of them back into an
-import:
+The same pattern is how a *lower* app calls upward, or two peers reach each other,
+without one importing the other (ADR-0033). Five of these exist; do not
+"simplify" any of them back into an import:
 - the posting chokepoint — `ledger/chokepoint.py`, filled by `ControlsConfig`
 - the fund → tenant lookup — `ledger/fund_tenant.py`, filled by `ContributionsConfig`
 - a decided KYC case — `verification/hooks.py`, filled by `ControlsConfig`
 - a settled M-Pesa payment — `mpesa/settlement.py`, filled by `ContributionsConfig`
+- a request's principal resolved — `core/request_context.py`, filled by
+  `TenantsConfig` (the two apps are peers, so the registry sits in `core`)
 
 Each runs synchronously in the caller's transaction, at the point the direct call
 used to run, so a raising handler still aborts the caller.

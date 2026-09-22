@@ -30,7 +30,7 @@ token types, near-real-time.
   non-reserved claims, `sid` survives refresh — so one session spans the whole
   rotation chain. Intermediate (OTP-stage) tokens get **no** session.
 - **Enforcement at both doors.** A `SessionJWTAuthentication` (the base of the
-  existing `TenantJWTAuthentication`) rejects any token whose `sid` maps to a
+  the DRF default authentication class) rejects any token whose `sid` maps to a
   revoked/absent session and touches `last_seen_at`. A `SessionTokenRefreshView`
   applies the same check on the refresh path. Result: revoking a session kills its
   access tokens (within the auth check, immediately) **and** blocks refresh —

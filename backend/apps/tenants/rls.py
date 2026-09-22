@@ -15,7 +15,7 @@ Community) stay application-scoped — see ADR-0008.
 
 Note: RLS is bypassed for superusers and (without FORCE) table owners. The
 migrations use ``FORCE ROW LEVEL SECURITY``; deploy the app with a NON-superuser
-DB role for isolation to bite. ``TenantJWTAuthentication`` pins the context for
+DB role for isolation to bite. ``auth.pin_request_tenant`` pins the context for
 member web requests (P6-04); Celery ``task_prerun``/``task_postrun`` hooks
 (``celery_hooks``) clear it at task boundaries so a pinned tenant never leaks onto
 the next task on a pooled connection.

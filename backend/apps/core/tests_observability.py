@@ -78,18 +78,18 @@ class AuthContextBindingTests(TestCase):
             "/api/users/protected/", HTTP_AUTHORIZATION=f"Bearer {token}")
 
     def test_member_auth_binds_actor_and_tenant(self):
-        from apps.tenants.auth import TenantJWTAuthentication
+        from apps.users.auth import SessionJWTAuthentication
         obs.clear()
         user = User.objects.create(phone_number="254700000001")
-        TenantJWTAuthentication().authenticate(self._request_with_token(user))
+        SessionJWTAuthentication().authenticate(self._request_with_token(user))
         self.assertEqual(obs.get("actor_id"), user.id)
         self.assertIsNotNone(obs.get("tenant_id"))
 
     def test_staff_auth_binds_actor_but_not_tenant(self):
-        from apps.tenants.auth import TenantJWTAuthentication
+        from apps.users.auth import SessionJWTAuthentication
         obs.clear()
         staff = User.objects.create(phone_number="254700000002", is_staff=True)
-        TenantJWTAuthentication().authenticate(self._request_with_token(staff))
+        SessionJWTAuthentication().authenticate(self._request_with_token(staff))
         self.assertEqual(obs.get("actor_id"), staff.id)
         self.assertIsNone(obs.get("tenant_id"))  # operators aren't tenant-pinned
 

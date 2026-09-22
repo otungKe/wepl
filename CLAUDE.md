@@ -156,7 +156,7 @@ separate app/deployment — never co-hosted with the customer web app.
 - **Module boundaries are tested, not assumed** (`apps/core/tests_module_boundaries.py`,
   ADR-0033). `apps.core` may import no sibling app; `apps.ledger` may import only
   `apps.core`; `apps.mpesa` may import only `apps.core`; and `CYCLE_BASELINE` names
-  the seven apps still in one import cycle. That
+  the five apps still in one import cycle. That
   set may only shrink — a new mutual dependency between two apps fails the build, and so
   does leaving a freed app in the baseline. When an app genuinely needs something from
   one above it, invert the call (a registry filled at `AppConfig.ready()`, or an event

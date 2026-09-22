@@ -42,10 +42,12 @@ APPS_DIR = Path(settings.BASE_DIR) / "apps"
 #: (ADR-0033 freed ``ledger``), then nine once ``controls`` stopped being reached
 #: into by ``apps.verification`` and started registering its own reaction instead,
 #: then seven once the Daraja endpoints moved off ``apps.mpesa`` — which freed
-#: ``payments`` with it, because nothing below the domain reached up any more.
+#: ``payments`` with it, because nothing below the domain reached up any more —
+#: then five once the RLS tenant pin stopped subclassing the authenticator and
+#: started registering into ``apps.core.request_context``, freeing ``tenants``
+#: and ``audit`` behind it.
 CYCLE_BASELINE = {
-    "activity", "audit", "communities", "contributions",
-    "tenants", "users", "verification",
+    "activity", "communities", "contributions", "users", "verification",
 }
 
 #: ``apps.ledger`` may import these and nothing else. Controls reach the ledger by

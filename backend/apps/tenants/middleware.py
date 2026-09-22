@@ -2,7 +2,7 @@
 
 DB connections are pooled (CONN_MAX_AGE), so a tenant pinned during one request
 must be cleared before the connection serves another — otherwise tenant context
-would leak across requests. TenantJWTAuthentication sets the context; this
+would leak across requests. ``auth.pin_request_tenant`` sets the context; this
 middleware always clears it.
 """
 import logging
