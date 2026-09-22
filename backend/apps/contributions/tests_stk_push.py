@@ -5,6 +5,8 @@ The endpoint moved here from apps/mpesa with ADR-0033; the URL is unchanged.
 from datetime import date
 
 from django.contrib.auth import get_user_model
+from unittest.mock import patch
+
 from django.core.cache import cache
 from rest_framework.test import APITestCase
 
@@ -123,3 +125,34 @@ class STKPushTierGateTests(APITestCase):
     def test_tier1_user_allowed(self):
         r = self._push()
         self.assertEqual(r.status_code, 200)
+
+
+class STKPushProviderFailureTests(APITestCase):
+    """A provider blow-up is a 502 with a fixed message — never the exception text.
+
+    The endpoint used to return ``str(exc)``, which can carry a Daraja URL, a
+    stack frame or a credential-shaped token straight to the caller.
+    """
+
+    def setUp(self):
+        registry.use_provider(FakeProvider())
+        cache.clear()
+        self.user = _make_tier1(User.objects.create(phone_number="254700000020"))
+        self.client.force_authenticate(self.user)
+        self.contribution = ContributionService.create_contribution(
+            self.user, {"title": "Pool", "contribution_type": "POOL", "visibility": "open"})
+
+    def tearDown(self):
+        registry.use_provider(None)
+        cache.clear()
+
+    def test_provider_exception_text_is_not_returned(self):
+        secret = "https://sandbox.safaricom.co.ke/oauth?token=SECRET-abc123"
+        with patch.object(FakeProvider, "initiate_collection",
+                          side_effect=RuntimeError(secret)):
+            r = self.client.post(URL, {"payment_type": "contribution",
+                                       "contribution_id": self.contribution.id,
+                                       "amount": 10}, format="json")
+        self.assertEqual(r.status_code, 502)
+        self.assertNotIn("SECRET-abc123", str(r.data))
+        self.assertNotIn("sandbox.safaricom", str(r.data))

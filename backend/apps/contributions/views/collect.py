@@ -136,8 +136,16 @@ class STKPushView(APIView):
                 shares_fund_id=shares_fund.id if shares_fund else None,
                 advance_id=advance.id if advance else None,
             )
-        except CollectionUnavailable as exc:
-            return Response({"error": str(exc)}, status=status.HTTP_502_BAD_GATEWAY)
+        except CollectionUnavailable:
+            # The provider's own exception text can carry internals — a Daraja
+            # URL, a stack frame, a credential-shaped token — so it does not
+            # reach the caller (CodeQL: information exposure through an
+            # exception). start_collection has already logged the detail. This
+            # tightens what the endpoint used to return in apps/mpesa/views.py.
+            return Response(
+                {"error": "Could not reach M-Pesa just now. Please try again."},
+                status=status.HTTP_502_BAD_GATEWAY,
+            )
 
         if not started.accepted:
             return Response({"error": started.error}, status=status.HTTP_400_BAD_REQUEST)
