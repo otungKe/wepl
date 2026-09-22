@@ -14,3 +14,6 @@ class ContributionsConfig(AppConfig):
         # Register each context's settlement reactions (ADR-0030 Slice B).
         from . import settlement_targets
         settlement_targets.register()
+        # Hand the ledger the fund → tenant lookup it must not import (P6-03).
+        from . import fund_tenant
+        fund_tenant.register()

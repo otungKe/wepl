@@ -39,7 +39,7 @@ from ..models import (
 from apps.activity.models import Activity
 from apps.activity.services import ActivityService
 from apps.users.tiers import AccessPolicy
-from apps.ledger.permissions import FinancialPermissions
+from apps.contributions.permissions import FinancialPermissions
 from apps.ledger.writer import create_fin_transaction
 from apps.ledger.models import FinancialTransaction, JournalEntry
 # P0-05 strangler: post double-entry journals alongside the legacy writes. The

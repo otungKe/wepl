@@ -127,7 +127,8 @@ Each slice keeps the trial balance at zero and the ledger authoritative througho
 exactly as the `ContributionTransaction` retirement did.
 
 **Implementation status (2026-09-21).** The seams are in; the deletions are not.
-Merged: the money-activity read projection (`apps/ledger/money_activity.py`) that
+Merged: the money-activity read projection (`apps/payments/money_activity.py`,
+moved out of `apps/ledger` by ADR-0033) that
 readers migrate onto ahead of the model dying, the settlement registry
 (`apps/contributions/settlement_targets.py`), the back-office readers
 (`apps/backoffice/views_transactions.py`, `views_exports.py`, `views_finops.py`), and

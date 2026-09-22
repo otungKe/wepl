@@ -17,8 +17,8 @@ Read `CLAUDE.md` first; this skill is the layer beneath it.
 
 ```
 views / consumers
-  → authorization (core/policy.py, users/tiers.py, ledger/permissions.py,
-                   backoffice/permissions.py)
+  → authorization (core/policy.py, users/tiers.py,
+                   contributions/permissions.py, backoffice/permissions.py)
   → application services (contributions/services/*, payments/services.py,
                           verification/service.py)
   → posting_map recipe  →  post_journal()  ← THE money chokepoint
@@ -27,6 +27,11 @@ views / consumers
 
 Rails, identity vendors and notification channels sit **below** the services
 behind ports; `apps/core` sits **beside** everything and imports no business app.
+`apps/ledger` imports only `apps/core` (ADR-0033) — domain role checks live in the
+domain app, rail detail in `apps/payments`, and the ADR-0007 controls gate is
+registered into `ledger/chokepoint.py` rather than imported by it. Both boundaries
+are tested in `apps/core/tests_module_boundaries.py`, which also holds a ratchet on
+the ten apps still in one import cycle: that set may only shrink.
 
 ## The ADR ladder (read before changing money, eventing or payments)
 
@@ -94,7 +99,7 @@ savepoint, and do not test this path with a `RuntimeError` — it proves nothing
 > legacy you must still read and keep consistent, not a layer you may route
 > around or start deleting.
 
-Merged: the money-activity read projection (`ledger/money_activity.py`), the
+Merged: the money-activity read projection (`payments/money_activity.py`), the
 back-office readers, `payments/coverage.py`, the settlement-target registry.
 Not merged: dropping FT's `mpesa_*` columns, its public id, and the model.
 So FT is *intentionally* half-alive. New readers of the rail dimension go
@@ -115,14 +120,12 @@ on either half-state. Cutover runbook: `docs/deploy/worker-tier.md`.
 
 ## Known-broken, at `68e8cf6` (2026-09-21)
 
-- `ledger/tasks.py::_query_safaricom_status` returns `"UNKNOWN"` on every path,
-  including success, so the stale sweep's "ask Safaricom first" branch is dead
-  and every payout stuck past 60 minutes is force-failed and reversed. See
+- The Daraja `TransactionStatusQuery` is asynchronous, so
+  `payments/providers/mpesa.py::request_payout_result` reports `unknown` on every
+  path including success. The stale sweep's "ask Safaricom first" branch is
+  therefore dead and every payout stuck past 60 minutes is force-failed and
+  reversed, including one Safaricom settled. Moved but not fixed by #197. See
   `wepl-ledger`.
-- `ledger/tasks.py` imports `apps.mpesa.services` and hand-builds Daraja JSON —
-  the ledger calling the rail directly. Open issue **#159**; PR **#197** is the
-  proposed fix and is awaiting review (it also adds a CI guard against *new*
-  `ledger → mpesa` edges; that guard is on the PR branch, not on master).
 - **Production has never handled real money.** The deployment points at the
   M-Pesa sandbox. Nothing in this repo's money path has been exercised against
   real settlement, so "it works" means "it works under test".

@@ -30,7 +30,7 @@ actively unwinding (ADR-0030).
 
 > **Framing call taken 2026-09-21, correct it if you disagree.** This skill
 > describes `FinancialTransaction` as ADR-0030 currently leaves it: the read
-> projection (`ledger/money_activity.py`), the back-office readers, the
+> projection (`payments/money_activity.py`), the back-office readers, the
 > `intent_coverage` gate and the settlement registry have all landed, but the
 > `mpesa_*` columns, the public id and the model itself are still here and still
 > load-bearing. So FT is **legacy that you must still read and keep consistent**,
@@ -66,9 +66,11 @@ Consequences you must hold on to:
 `apps/ledger/posting.py::post_journal(...)` is the ONLY sanctioned way to create
 `JournalEntry` / `JournalLine` rows (ADR-0004). It guarantees atomically:
 Σdebit == Σcredit **per currency** with ≥ 2 lines; idempotency on
-`idempotency_key`; a consistent `AccountBalance` update. It calls
-`controls/engine.py::enforce_controls` for member-facing movements (skipped for
-reversals and for journals with no FT).
+`idempotency_key`; a consistent `AccountBalance` update. For member-facing
+movements (skipped for reversals and for journals with no FT) it runs whatever
+checks are registered in `ledger/chokepoint.py` — in practice
+`controls/engine.py::enforce_controls`, which `ControlsConfig.ready()` registers
+there. The ledger does not import the controls app (ADR-0033).
 
 Enforced independently by:
 - `ledger/migrations/0003` — a DEFERRABLE INITIALLY DEFERRED constraint trigger
@@ -212,8 +214,10 @@ short-circuit that.
 
 ## Controls at the chokepoint (ADR-0007)
 
-`enforce_controls` runs inside `post_journal` for member-facing movements:
-account restrictions first (`users/services.py::RestrictionService.blocks_money`),
+`enforce_controls` runs inside `post_journal` for member-facing movements, via
+`ledger/chokepoint.py` — `ControlsConfig.ready()` registers it, so there is still
+exactly one enforcement point but the ledger does not import controls (ADR-0033).
+Account restrictions first (`users/services.py::RestrictionService.blocks_money`),
 then `LimitRule` evaluation. DENY short-circuits; otherwise the strictest outcome
 wins. DENY → `LimitExceeded`, HOLD → `ControlHeld`, both raised **before any
 journal is written**.
@@ -230,9 +234,10 @@ the transaction without reading ADR-0007 first.
 `balance_sheet`, `income_statement`, `statement_of_account`, `export_rows`. All
 derive from lines, all accept `as_of` / `fund_type` / `fund_id` / `op_type` /
 `tenant_id`. All endpoints in `ledger/views.py` are `IsAdminUser`.
-`ledger/money_activity.py` is the ADR-0030 read projection: a **view, never a
+`payments/money_activity.py` is the ADR-0030 read projection: a **view, never a
 source of truth** — prefer the linked `PaymentIntent`, fall back to FT's columns
-while they exist.
+while they exist. It lives in payments, not the ledger, because the rail dimension
+is the payments layer's business (ADR-0033).
 
 ## Do not assume
 
@@ -285,11 +290,13 @@ and are described above as history, not as live bugs.
   `PROCESSING` after 60 minutes is force-failed and reversed, including one
   Safaricom actually settled. Do not read the two-tier recovery docstring as a
   description of behaviour.
-- **`apps/ledger` is not provider-agnostic.** `tasks.py` imports
-  `apps.mpesa.services.MpesaService` directly (lines 55 and 280), which is what
-  issue #159 is about; PR #197 moves the payout orchestration out. Until it
-  lands, a CI guard forbids *new* `ledger → mpesa` edges rather than the two
-  that exist.
+- **`apps/ledger` is now a leaf and must stay one (ADR-0033).** It imports
+  `apps/core` and nothing else; `ledger/tasks.py` holds only `reconcile_ledger`.
+  Anything the ledger needs from above is *handed* to it — `chokepoint.py` for
+  the controls gate, `fund_tenant.py` for the fund → tenant lookup — never
+  imported, and a lazy import inside a function is still an import.
+  `apps/core/tests_module_boundaries.py` reads the AST and fails the build. A CI
+  guard separately forbids any `ledger → mpesa` edge (#159, #197).
 - **Production has never held real money.** The deployment points at the M-Pesa
   sandbox, so no invariant in this file has been exercised against real
   settlement. Treat "the ledger is correct" as "the ledger is correct under

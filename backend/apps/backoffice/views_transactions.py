@@ -20,7 +20,7 @@ from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from rest_framework.response import Response
 
-from apps.ledger import money_activity
+from apps.payments import money_activity
 from apps.ledger.models import FinancialTransaction
 
 from .permissions import RequireCapability

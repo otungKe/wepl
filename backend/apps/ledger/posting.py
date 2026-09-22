@@ -20,6 +20,7 @@ from decimal import Decimal
 from django.db import transaction
 from django.db.models import F
 
+from .chokepoint import run_pre_posting_checks
 from .exceptions import UnbalancedJournalError
 from .models import Account, AccountBalance, JournalEntry, JournalLine
 
@@ -102,11 +103,12 @@ def post_journal(
     # Evaluated here so every member-facing money movement passes through exactly
     # one enforcement point. Reversals and journals with no FinancialTransaction
     # (internal moves) bypass member-facing controls. Raises LimitExceeded (DENY)
-    # or ControlHeld (HOLD) before any journal is written. Imported lazily to keep
-    # the ledger core free of an import-time dependency on the controls app.
+    # or ControlHeld (HOLD) before any journal is written. The checks are
+    # registered into the chokepoint by apps.controls at startup, so the ledger
+    # enforces them without importing the app that defines them.
     if financial_transaction is not None and reverses is None:
-        from apps.controls.engine import enforce_controls
-        enforce_controls(financial_transaction=financial_transaction, amount=debit_total)
+        run_pre_posting_checks(
+            financial_transaction=financial_transaction, amount=debit_total)
 
     # ── Create the entry (idempotency_key unique → safe under races) ─────────
     defaults = dict(

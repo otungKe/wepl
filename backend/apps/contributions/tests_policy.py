@@ -101,7 +101,7 @@ class ContributionPolicyUnitTests(TestCase):
 
     def test_policy_matches_financial_permissions_implementation(self):
         # The policy must not diverge from the helper it delegates to.
-        from apps.ledger.permissions import FinancialPermissions
+        from apps.contributions.permissions import FinancialPermissions
         for u in (self.creator, self.admin, self.member, self.participant, self.outsider):
             self.assertEqual(
                 can(u, "contribution.admin", self.contribution),

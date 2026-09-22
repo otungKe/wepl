@@ -60,6 +60,14 @@ Everything below is enforced; violating it breaks CI.
   line for the `AccountBalance` projection inside `post_journal`; if that allowlist grows,
   something has regressed. The ledger core (`posting.py`, `balances.py`, `coa.py`, `money.py`,
   `posting_map.py`) is also held to ≥90% test coverage in CI.
+- **The ledger is a leaf (ADR-0033).** `apps/ledger` imports `apps/core` and nothing
+  else. It answers what a balance is, never who may move it or which rail carried it:
+  domain role checks live in the domain app, rail detail in `apps/payments`, and
+  anything that must run inside `post_journal` — the ADR-0007 controls gate — registers
+  into `apps/ledger/chokepoint.py` from its own `AppConfig.ready()` instead of being
+  imported. Same for the fund → tenant lookup (`apps/ledger/fund_tenant.py`). A lazy
+  import inside a function is still an import: `apps/core/tests_module_boundaries.py`
+  reads the AST, so it counts.
 
 ## Durable eventing (transactional outbox — Phase 2, ADR-0006)
 
@@ -68,7 +76,8 @@ Domain events must never be lost. Services announce events via `emit(...)`
 rolled-back transaction discards the event and a crash never loses it. The `process_outbox`
 relay (`apps/core/tasks.py`) delivers at-least-once by re-firing the `domain_event` signal;
 consumers register receivers in their `AppConfig.ready()` and dedupe idempotently via
-`Notification.event_id`. `emit()`'s signature is fixed (~30 call sites) and payloads must be
+`Notification.event_id`. `emit()`'s signature is fixed (17 producer call sites, all in `communities`, `users`
+and `verification` — no money-path app emits yet) and payloads must be
 JSON-serialisable primitives (IDs/strings/numbers), never ORM objects.
 
 ## Payments (port/adapter — Phase 1, ADR-0005)
@@ -134,6 +143,13 @@ separate app/deployment — never co-hosted with the customer web app.
   switch and those services must move in one edit (see `docs/deploy/worker-tier.md`);
   `apps/core/tests_deploy_topology.py` fails the build on either half-state, and guards
   queue coverage, the single beat instance and the shared `SECRET_KEY` either way.
+- **Module boundaries are tested, not assumed** (`apps/core/tests_module_boundaries.py`,
+  ADR-0033). `apps.core` may import no sibling app; `apps.ledger` may import only
+  `apps.core`; and `CYCLE_BASELINE` names the ten apps still in one import cycle. That
+  set may only shrink — a new mutual dependency between two apps fails the build, and so
+  does leaving a freed app in the baseline. When an app genuinely needs something from
+  one above it, invert the call (a registry filled at `AppConfig.ready()`, or an event
+  through `apps.core.events`); do not widen the baseline.
 - Work items are tracked as `P{phase}-{nn}` (e.g. `P0-05`) and referenced in commit messages,
   phase docs, and GitHub issues.
 
