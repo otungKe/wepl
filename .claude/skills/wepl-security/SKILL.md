@@ -18,7 +18,7 @@ description: WEPL's two separate identities (customer phone+OTP vs back-office
 | Identifier | **`phone_number`** — there is no username | corporate **email + password** |
 | Credential | OTP (+ a 6-digit hashed PIN) | admin-provisioned password, `must_change_password`, **no self-serve reset** |
 | Token | SimpleJWT with a `stage` claim, `sid` session claim | own HS256 JWT, `type: "ops"`, 12 h TTL (`backoffice/auth.py`) |
-| Authz | `core/policy.py`, `users/tiers.py`, `ledger/permissions.py` | capability map over `ops:*` Groups + `RequireCapability` |
+| Authz | `core/policy.py`, `users/tiers.py`, `contributions/permissions.py` | capability map over `ops:*` Groups + `RequireCapability` |
 | Audit | `apps/audit` | every action via `record_action()` |
 
 `request.user` on an ops endpoint is a `StaffAccount`, **not** a `User`. Code
