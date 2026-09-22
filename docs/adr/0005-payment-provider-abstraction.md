@@ -1,6 +1,7 @@
 # ADR-0005: Payment provider port/adapter abstraction
 
-- **Status:** Proposed
+- **Status:** Accepted (implemented in `apps/payments/providers/`, P1-01→05; payout
+  orchestration moved behind the port in ADR-0032)
 - **Date:** 2026-06-19
 - **Phase:** 1
 

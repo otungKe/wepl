@@ -15,11 +15,17 @@ immutable journal lines, and CI enforces both (the legacy-symbol guard and the
 shape-matching "no new mutable money counter" guard, plus a ≥90% coverage floor on
 the ledger core).
 
-Phases 0–6 have landed. The remaining money-architecture work is the
-`FinancialTransaction` decomposition (ADR-0030), which is mid-strangler: the
-money-activity read projection, the settlement registry and the back-office readers
-are merged; FT's rail columns, its public `WEPL-TXN-nnnnnn` handle and the model
-itself are not yet dropped.
+Phases 0–4 have landed. Phases 5 and 6 are built but not finished: multi-currency
+balances per currency and refuses cross-currency arithmetic, yet `KES` is still
+hardcoded in four places (P5-05); tenancy has RLS, the GUC and the guards, but
+`tenant_for_user()` returns the default tenant for everyone, so the boundary is a
+correct seam and not a live boundary (P6-04) — do not claim tenant isolation as a
+security property outside this repo.
+
+The remaining money-architecture work is the `FinancialTransaction` decomposition
+(ADR-0030), which is mid-strangler: the money-activity read projection, the settlement
+registry and the back-office readers are merged; FT's rail columns, its public
+`WEPL-TXN-nnnnnn` handle and the model itself are not yet dropped.
 
 <details>
 <summary>Where this roadmap started (June 2026, before Phase 0)</summary>
@@ -72,8 +78,8 @@ settlement, reporting) has exactly one insertion point.
 | 2 | [Durable Eventing (Transactional Outbox)](PHASE-2-eventing-outbox.md) | No lost domain events | 4 | [#6](https://github.com/otungKe/wepl/issues/6) | 🟢 Done |
 | 3 | [Controls: Limits & Risk](PHASE-3-controls-limits-risk.md) | Limits + velocity/fraud gate at the posting chokepoint | 4 | [#7](https://github.com/otungKe/wepl/issues/7) | 🟢 Done (core; P3-01→05) |
 | 4 | [Reporting & GL](PHASE-4-reporting-gl.md) | Trial balance, statements, audit exports | 4 | [#8](https://github.com/otungKe/wepl/issues/8) | 🟢 Done (core; P4-01→04) |
-| 5 | [Multi-Currency](PHASE-5-multi-currency.md) | FX-aware Money; per-currency balancing | 4→5 | [#9](https://github.com/otungKe/wepl/issues/9) | 🟢 Done (core; P5-01→05) |
-| 6 | [Multi-Tenancy](PHASE-6-multi-tenancy.md) | Tenant boundary + isolation | 5 | [#10](https://github.com/otungKe/wepl/issues/10) | 🟢 Done (P6-01→05) |
+| 5 | [Multi-Currency](PHASE-5-multi-currency.md) | FX-aware Money; per-currency balancing | 4→5 | [#9](https://github.com/otungKe/wepl/issues/9) | 🟡 Done (core; P5-01→04) — `KES` still hardcoded in four places (P5-05) |
+| 6 | [Multi-Tenancy](PHASE-6-multi-tenancy.md) | Tenant boundary + isolation | 5 | [#10](https://github.com/otungKe/wepl/issues/10) | 🟡 Built, not live — every user resolves to the default tenant (P6-04) |
 | 7 | [Banking-as-a-Service](PHASE-7-baas.md) | Public API, webhooks-out, sandbox, API keys | 5 | [#11](https://github.com/otungKe/wepl/issues/11) | 🔴 Not started |
 | 8 | [Enterprise & Compliance](PHASE-8-enterprise-compliance.md) | AML, monitoring, treasury, data residency | 6 | [#12](https://github.com/otungKe/wepl/issues/12) | 🔴 Not started |
 
