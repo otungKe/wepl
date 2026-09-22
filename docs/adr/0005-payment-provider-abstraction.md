@@ -1,7 +1,11 @@
 # ADR-0005: Payment provider port/adapter abstraction
 
 - **Status:** Accepted (implemented in `apps/payments/providers/`, P1-01→05; payout
-  orchestration moved behind the port in ADR-0032)
+  orchestration moved behind the port in ADR-0032. Since ADR-0033 `apps/mpesa` is
+  *only* the wire client and the two rail records: the Daraja webhook endpoints are
+  `apps/payments/views_mpesa.py` and the pay-in endpoint is
+  `apps/contributions/views/collect.py`, with the URL map in `config/urls_mpesa.py`.
+  The paths Safaricom calls are unchanged.)
 - **Date:** 2026-06-19
 - **Phase:** 1
 

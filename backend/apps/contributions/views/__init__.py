@@ -16,9 +16,11 @@ from .welfare import WelfareClaimVoteView, WelfareFundView, WelfareContributeVie
 from .advances import AdvanceListCreateView, AdvanceActionView, MyAdvancesView
 from .standing_orders import StandingOrderListCreateView, StandingOrderExecuteView, StandingOrderCancelView, StandingOrderUpdateView
 from .amendments import AmendmentListCreateView, AmendmentVoteView, AmendmentWithdrawView
+from .collect import STKPushView
 from .join_requests import ContributionJoinRequestListView, ContributionJoinRequestActionView, ContributionInviteView, ContributionInviteRespondView, MyContributionJoinRequestView, MyContributionInviteView
 
 __all__ = [
+    "STKPushView",
     "ContributionCreateView",
     "MyContributionsView",
     "CommunityContributionsView",

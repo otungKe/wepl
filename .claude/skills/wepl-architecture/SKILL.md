@@ -69,6 +69,17 @@ Cross-cutting machinery registers itself from `AppConfig.ready()`, and
 - payment adapters — `payments/providers/registry.py::_build`
 - identity adapters — `users/identity/registry.py`
 
+The same pattern is how a *lower* app calls upward without importing the app above
+it (ADR-0033). Four of these exist; do not "simplify" any of them back into an
+import:
+- the posting chokepoint — `ledger/chokepoint.py`, filled by `ControlsConfig`
+- the fund → tenant lookup — `ledger/fund_tenant.py`, filled by `ContributionsConfig`
+- a decided KYC case — `verification/hooks.py`, filled by `ControlsConfig`
+- a settled M-Pesa payment — `mpesa/settlement.py`, filled by `ContributionsConfig`
+
+Each runs synchronously in the caller's transaction, at the point the direct call
+used to run, so a raising handler still aborts the caller.
+
 Adding a branch at a call site instead of a registration is the wrong answer.
 
 ## Events
@@ -143,7 +154,9 @@ errors (#200), and the shares-fund N+1 (#204).
 |---|---|
 | a debit/credit recipe | `apps/ledger/posting_map.py` |
 | a money use-case (auth + transaction + side effects) | `apps/contributions/services/<domain>.py` |
-| a rail detail | `apps/payments/providers/<rail>.py` or `apps/mpesa/` |
+| a rail detail (wire format, credentials, a rail record) | `apps/payments/providers/<rail>.py` or `apps/mpesa/` |
+| an endpoint a rail calls back on | `apps/payments/views_mpesa.py`, mapped in `config/urls_mpesa.py` — **never** in `apps/mpesa`, which imports no sibling app |
+| something the rail must ask the domain | a handler registered into `apps/mpesa/settlement.py` from `AppConfig.ready()` |
 | a cross-cutting mechanism | `apps/core/`, registered from `AppConfig.ready()` |
 | a reaction to a settled payout | a `register_settlement_target` handler in the owning context |
 | an operator action | `apps/backoffice/`, behind a capability + an `AuditEvent` |

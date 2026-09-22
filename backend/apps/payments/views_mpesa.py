@@ -1,198 +1,43 @@
-"""
-M-Pesa Daraja API webhook handlers and STK push initiator.
+"""Daraja webhook endpoints, plus the STK status poll.
 
-Key fixes applied:
+These are *payment* endpoints, not rail internals: each one turns a provider
+callback into a ``PaymentIntent`` state change and, where money has actually
+moved, into a ledger transition or a durable settlement event. They read the
+M-Pesa rail records through ``apps.mpesa`` — the sanctioned direction, since
+``apps.payments`` is the adapter layer and the rail client sits under it
+(ADR-0005, ADR-0033).
+
+They lived in ``apps/mpesa/views.py`` until the rail app was made a leaf. The
+URLs they answer are registered with Safaricom and did not change; see
+``config/urls_mpesa.py``.
+
+Behaviour notes carried over from that file:
   - STKCallbackView: idempotent via atomic UPDATE WHERE status='PENDING' — a
     duplicate callback from Safaricom is a no-op (rows=0 → early return).
-    All domain processing is deferred to process_stk_payment Celery task via
-    on_commit — no more silent exception swallowing in the HTTP handler.
-  - B2CResultView: resolves FinancialTransaction by conversation_id and
-    updates the linked domain object (WelfareClaim, DisbursementRequest, etc.)
-    Uses _notify() / on_commit rather than direct NotificationService.create().
-  - SharesFund update in STK callback is now wrapped in @transaction.atomic
-    with F() expressions (no read-modify-write race condition).
-  - STKPushView: amount parsed as Decimal, not float.
+    All domain processing is deferred via on_commit — no silent exception
+    swallowing in the HTTP handler.
+  - B2CResultView: resolves FinancialTransaction by conversation_id, claims the
+    transition and emits one durable settlement event (ADR-0028).
   - Callback views: SafaricomIPPermission applied (no-op when
     SAFARICOM_CALLBACK_IPS is empty, enforced in production).
 """
 import logging
-import re
 from datetime import datetime
-from decimal import Decimal, InvalidOperation
 
 from django.db import transaction
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
-from rest_framework import status
-from rest_framework.permissions import AllowAny, IsAuthenticated
+from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from apps.core.throttling import ResilientUserRateThrottle
-
-from apps.contributions.models import Contribution, WelfareFund, SharesFund
 from apps.core.exceptions import TransitionError
-from apps.users.tiers import AccessPolicy
-from .models import MpesaSTKRequest, MpesaC2BTransaction
-from .permissions import SafaricomIPPermission
-from .services import MpesaService, _normalize_phone
+from apps.mpesa import tasks as rail_tasks
+from apps.mpesa.models import MpesaSTKRequest, MpesaC2BTransaction
+from apps.mpesa.permissions import SafaricomIPPermission
+from apps.mpesa.services import MpesaService
 
 logger = logging.getLogger(__name__)
-
-# Canonical Kenyan MSISDN after normalisation: 2547XXXXXXXX / 2541XXXXXXXX.
-_KE_MSISDN = re.compile(r"^254(7|1)\d{8}$")
-
-
-class STKPushThrottle(ResilientUserRateThrottle):
-    """Per-user rate limit on STK pushes (rate: settings 'stk_push'). Curbs
-    prompt-spam now that a push may target a number other than the caller's.
-    Fails open on a cache outage (see apps.core.throttling)."""
-    scope = 'stk_push'
-
-
-class STKPushView(APIView):
-    """Initiate an M-Pesa STK Push for a contribution, welfare fund, or shares fund."""
-    permission_classes = [IsAuthenticated]
-    throttle_classes   = [STKPushThrottle]
-
-    def post(self, request):
-        # Tier-1 (KYC-approved) gate — this is the single money front-door for
-        # members (all contribution/welfare/shares/advance payments flow through
-        # STK push; the direct service endpoints are disabled). Enforced
-        # unconditionally like the other money paths, independent of the
-        # ACCESS_TIER_ENFORCEMENT flag (ADR-0022).
-        AccessPolicy.require_tier1(
-            request.user,
-            "Verify your identity before making a payment.")
-
-        payment_type = request.data.get("payment_type", "contribution")
-        amount       = request.data.get("amount")
-
-        # Target phone: default to the caller's own number; allow an explicit
-        # phone_number in the body (e.g. pay from a different M-Pesa line, or pay
-        # on someone's behalf). Validated to a Kenyan MSISDN; STKPushThrottle caps
-        # per-user volume to curb prompt-spam.
-        raw_phone = (request.data.get("phone_number") or "").strip()
-        if raw_phone:
-            phone = _normalize_phone(raw_phone)
-            if not _KE_MSISDN.match(phone):
-                return Response(
-                    {"error": "Invalid phone number. Use a Kenyan number, e.g. 0712345678."},
-                    status=status.HTTP_400_BAD_REQUEST,
-                )
-        else:
-            phone = request.user.phone_number
-
-        if not amount:
-            return Response({"error": "amount is required"}, status=status.HTTP_400_BAD_REQUEST)
-        try:
-            amount = Decimal(str(amount))
-            if amount <= 0:
-                raise ValueError
-        except (InvalidOperation, ValueError, TypeError):
-            return Response({"error": "Invalid amount"}, status=status.HTTP_400_BAD_REQUEST)
-
-        contribution = welfare_fund = shares_fund = advance = None
-
-        if payment_type == "welfare":
-            community_id = request.data.get("community_id")
-            if not community_id:
-                return Response(
-                    {"error": "community_id required for welfare payment"}, status=400
-                )
-            welfare_fund = get_object_or_404(WelfareFund, community_id=community_id)
-            account_ref  = f"WPLWLF{community_id}"
-            description  = welfare_fund.name or "Welfare"
-
-        elif payment_type == "shares":
-            community_id = request.data.get("community_id")
-            if not community_id:
-                return Response(
-                    {"error": "community_id required for shares payment"}, status=400
-                )
-            shares_fund = get_object_or_404(SharesFund, community_id=community_id)
-            account_ref = f"WPLSHR{community_id}"
-            description = shares_fund.name or "Shares"
-
-        elif payment_type == "advance_repayment":
-            from apps.contributions.models import EmergencyAdvance
-            advance_id = request.data.get("advance_id")
-            if not advance_id:
-                return Response({"error": "advance_id required for advance repayment"}, status=400)
-            advance = get_object_or_404(
-                EmergencyAdvance,
-                id=advance_id,
-                borrower=request.user,
-                status__in=['APPROVED', 'DISBURSED'],
-            )
-            account_ref = f"WPLADV{advance.id}"
-            description = f"Advance repayment #{advance.id}"
-
-        else:
-            contribution_id = request.data.get("contribution_id")
-            if not contribution_id:
-                return Response({"error": "contribution_id required"}, status=400)
-            contribution = get_object_or_404(Contribution, id=contribution_id, is_active=True)
-            account_ref  = f"WEPL-{contribution.id}"
-            description  = contribution.title
-
-        from apps.payments.providers.registry import get_provider
-        from apps.ledger.money import Money
-        try:
-            result = get_provider().initiate_collection(
-                phone=phone,
-                amount=Money(str(amount)),
-                reference=account_ref,
-                description=description,
-            )
-        except Exception as exc:
-            logger.exception("STK push failed")
-            return Response({"error": str(exc)}, status=status.HTTP_502_BAD_GATEWAY)
-
-        if not result.accepted:
-            return Response(
-                {"error": result.raw.get("errorMessage", "STK push failed")},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-
-        MpesaSTKRequest.objects.create(
-            user=request.user,
-            payment_type=payment_type,
-            contribution=contribution,
-            welfare_fund=welfare_fund,
-            shares_fund=shares_fund,
-            advance=advance,
-            phone_number=_normalize_phone(phone),
-            amount=amount,
-            checkout_request_id=result.provider_ref,
-            merchant_request_id=result.raw.get("MerchantRequestID", ""),
-        )
-
-        # Provider-agnostic payment aggregate (ADR-0014) — best-effort; never
-        # block the money path on payment bookkeeping.
-        try:
-            from apps.payments.services import PaymentService
-            from apps.payments.models import PaymentIntent
-            PaymentService.record_initiation(
-                provider=get_provider().name,
-                direction=PaymentIntent.Direction.COLLECTION,
-                amount=amount,
-                idempotency_key=f"pi-collect-{result.provider_ref}",
-                provider_ref=result.provider_ref,
-                op_type=payment_type,
-                initiated_by=request.user,
-                metadata={"payment_type": payment_type},
-            )
-        except Exception:
-            logger.exception("record_initiation (collection) failed for %s", result.provider_ref)
-
-        return Response(
-            {
-                "message": "STK Push sent. Enter your M-Pesa PIN on your phone.",
-                "checkout_request_id": result.provider_ref,
-            },
-            status=status.HTTP_200_OK,
-        )
 
 
 class STKCallbackView(APIView):
@@ -202,14 +47,13 @@ class STKCallbackView(APIView):
     Idempotency: uses UPDATE WHERE status='PENDING' to atomically claim the callback.
     If rows=0 the callback was already processed — return 200 immediately.
 
-    Processing is deferred to the process_stk_payment Celery task via on_commit so
-    that transient failures (DB, downstream service) are retried by Celery, not
-    swallowed silently in the HTTP handler.
+    Processing is deferred to on_commit so that transient failures (DB, downstream
+    service) are retried rather than swallowed in the HTTP handler.
     """
     permission_classes = [SafaricomIPPermission]
 
     def post(self, request):
-        from apps.payments.providers.registry import get_provider
+        from .providers.registry import get_provider
         event       = get_provider().parse_callback(request.data, kind='collection')
         checkout_id = event.provider_ref
 
@@ -219,7 +63,7 @@ class STKCallbackView(APIView):
         # Settle the provider-agnostic payment aggregate (ADR-0014) — best-effort,
         # and durably record the raw callback for audit/replay first.
         try:
-            from apps.payments.services import PaymentService
+            from .services import PaymentService
             PaymentService.record_provider_event(
                 provider=get_provider().name, event_type='collection_callback',
                 payload=request.data, provider_ref=checkout_id,
@@ -237,9 +81,9 @@ class STKCallbackView(APIView):
             # ── Success path ───────────────────────────────────────────────────
             receipt = event.receipt
 
-            # Atomic claim + deferred task dispatch.
-            # on_commit ensures the task is enqueued only after the UPDATE is
-            # durably committed — no phantom tasks if the DB write is rolled back.
+            # Atomic claim + deferred processing.
+            # on_commit ensures processing starts only after the UPDATE is
+            # durably committed — no phantom work if the DB write is rolled back.
             with transaction.atomic():
                 rows = MpesaSTKRequest.objects.filter(
                     checkout_request_id=checkout_id,
@@ -262,7 +106,7 @@ class STKCallbackView(APIView):
 
                 stk_id = stk.id
                 transaction.on_commit(
-                    lambda: _process_stk_sync_with_fallback(stk_id)
+                    lambda: rail_tasks.process_stk_sync(stk_id)
                 )
 
         else:
@@ -347,14 +191,13 @@ class B2CResultView(APIView):
     """
     Daraja async callback — called when a B2C payment succeeds or fails.
 
-    Resolves the linked FinancialTransaction and updates the domain object
-    (WelfareClaim, DisbursementRequest, EmergencyAdvance) accordingly.
-    Uses _notify() so notifications go through Celery / on_commit, not inline.
+    Claims the linked FinancialTransaction's transition and emits one durable
+    settlement event; the inline consumer propagates to the domain (ADR-0028).
     """
     permission_classes = [SafaricomIPPermission]
 
     def post(self, request):
-        from apps.payments.providers.registry import get_provider
+        from .providers.registry import get_provider
         event           = get_provider().parse_callback(request.data, kind='payout')
         conversation_id = event.provider_ref
 
@@ -364,7 +207,7 @@ class B2CResultView(APIView):
         # Settle the provider-agnostic payment aggregate (ADR-0014) — best-effort,
         # and durably record the raw result callback for audit/replay first.
         try:
-            from apps.payments.services import PaymentService
+            from .services import PaymentService
             PaymentService.record_provider_event(
                 provider=get_provider().name, event_type='payout_result',
                 payload=request.data, provider_ref=conversation_id,
@@ -467,61 +310,3 @@ class PendingSTKStatusView(APIView):
             user=request.user,
         )
         return Response({"status": stk.status, "mpesa_receipt": stk.mpesa_receipt})
-
-
-# ---------------------------------------------------------------------------
-# Internal helpers
-# ---------------------------------------------------------------------------
-
-def _enqueue_stk_processing(stk_id: int) -> None:
-    """Called via on_commit — safe to import tasks here (no circular import at module load).
-
-    Best-effort: a broker outage must not 500 the callback handler. The STK
-    request is committed, so the stuck-transaction sweep / ops retry lever pick it
-    up; Safaricom also re-delivers the callback if we don't 200 promptly."""
-    from .tasks import process_stk_payment
-    from apps.core.dispatch import safe_enqueue
-    safe_enqueue(process_stk_payment, stk_id, critical=True, options={'queue': 'payments'})
-
-
-def _process_stk_sync_with_fallback(stk_id: int) -> None:
-    """
-    Process STK payment synchronously after the DB transaction commits.
-
-    Running synchronously here (rather than via Celery) means the contribution
-    balance, transaction record, and activity log are all written before the
-    Safaricom webhook response is returned — so the mobile sees consistent data
-    the first time it polls after payment confirmation.
-
-    If synchronous processing raises any exception (rare — all operations are DB
-    writes), we fall back to the Celery retry queue so no payment is ever lost.
-    """
-    from .models import MpesaSTKRequest
-    from apps.contributions.settlement import on_collection_settled
-
-    try:
-        stk = MpesaSTKRequest.objects.select_related(
-            'user', 'contribution', 'welfare_fund', 'shares_fund', 'advance'
-        ).get(id=stk_id)
-    except MpesaSTKRequest.DoesNotExist:
-        logger.error("_process_stk_sync: STKRequest %s not found", stk_id)
-        return
-
-    try:
-        # Read the rail model, delegate the business routing to the domain seam.
-        on_collection_settled(
-            payment_type=stk.payment_type, user=stk.user, amount=stk.amount,
-            receipt=stk.mpesa_receipt, contribution_id=stk.contribution_id,
-            welfare_fund_id=stk.welfare_fund_id, shares_fund_id=stk.shares_fund_id,
-            advance_id=stk.advance_id, idempotency_seed=stk.checkout_request_id,
-        )
-        logger.info(
-            "_process_stk_sync: STKRequest %s processed synchronously — type=%s receipt=%s",
-            stk_id, stk.payment_type, stk.mpesa_receipt,
-        )
-    except Exception:
-        logger.exception(
-            "_process_stk_sync: failed for STKRequest %s — scheduling Celery retry",
-            stk_id,
-        )
-        _enqueue_stk_processing(stk_id)

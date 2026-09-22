@@ -18,7 +18,7 @@ Trace a payout finalization. The exact same three-step sequence — *reverse-or-
 confirm the ledger, advance the business workflow, notify* — is written out
 three times:
 
-- **`apps/mpesa/views.py:412-428`** — the Daraja B2C result callback. On success:
+- **`apps/payments/views_mpesa.py`, `B2CResultView`** — the Daraja B2C result callback. On success:
   `on_payout_settled(ft, receipt)` (:413). On failure:
   `reverse_financial_transaction(ft, ...)` then `on_payout_failed(ft)` (:427-428).
 - **`apps/ledger/tasks.py:204-341`** — the `execute_b2c_payout` task. On a
@@ -37,7 +37,7 @@ fused:
 1. **Discovery** — *"did the rail actually settle, and how?"* This is inherently
    **multi-source**. A rail's callback is best-effort: it can arrive late, arrive
    twice, or never arrive. So discovery legitimately has three independent
-   witnesses — the callback (`mpesa/views.py`), the requery/timeout sweep
+   witnesses — the callback (`payments/views_mpesa.py`), the requery/timeout sweep
    (`recover_stale_processing_transactions`, `apps/ledger/tasks.py:157`;
    `reconcile_payments`, `apps/payments/reconciliation.py`), and the human
    operator (`apps/payments/ops.py`). You cannot collapse these into one; removing
@@ -93,7 +93,7 @@ actually needs.**
 
 ### 1. Discovery stays multi-source; its only job is to record the fact
 
-The callback (`mpesa/views.py`), the requery/timeout sweep (`ledger/tasks.py`,
+The callback (`payments/views_mpesa.py`), the requery/timeout sweep (`ledger/tasks.py`,
 `payments/reconciliation.py`), and the operator (`payments/ops.py`) all remain.
 Each is a witness that may independently observe "the rail settled." A witness
 does **not** run the finalization recipe. Its sole responsibility is to durably
@@ -152,7 +152,7 @@ not to pick one.
 ## Consequences
 
 - **+** The finalization recipe exists **once** (as consumers), not three times
-  (`mpesa/views.py:412-428`, `ledger/tasks.py:204-341`, `payments/ops.py:186-210`).
+  (`payments/views_mpesa.py`, `ledger/tasks.py`, `payments/ops.py`).
   A new witness (a second rail's callback, a new sweep) emits the same event and
   gets correct propagation for free; changing the recipe is a one-file change.
 - **+** Propagation becomes a **durable obligation** (an outbox row), not a side

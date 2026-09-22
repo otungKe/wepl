@@ -17,3 +17,6 @@ class ContributionsConfig(AppConfig):
         # Hand the ledger the fund → tenant lookup it must not import (P6-03).
         from . import fund_tenant
         fund_tenant.register()
+        # Hand the M-Pesa rail the settlement decisions it must not import (ADR-0033).
+        from . import settlement
+        settlement.register()

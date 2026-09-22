@@ -1,15 +1,14 @@
-"""
-M-Pesa callback view tests.
+"""M-Pesa rail tests.
 
-Covers the critical security and idempotency boundaries:
-  - STKCallbackView  : success, failure, duplicate idempotency
-  - C2BCallbackView  : success, duplicate idempotency, community membership gate
-  - B2CResultView    : success, failure, missing conversation_id
-  - reconcile_c2b    : community-member gate (the C2B auto-join bypass fix)
+The webhook views these used to cover are ``apps.payments`` endpoints now
+(ADR-0033), and their quarantined legacy tests moved with them, to
+``apps/payments/tests_mpesa_legacy.py``. What is left is the rail's own: the C2B
+reconciler that stamps ``MpesaC2BTransaction``, and the stage gate over the
+public auth endpoints.
 """
 from decimal import Decimal
 from unittest import skip
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 # Quarantined under P0-02 — see GitHub issue #14. These cover the M-Pesa callback
 # credit/reversal paths that Phase 0 rewrites onto post_journal()/reverse_journal()
@@ -17,14 +16,13 @@ from unittest.mock import MagicMock, patch
 _LEGACY = "P0-02 #14: legacy M-Pesa money-path test; rewrite onto post_journal() in P0-05"
 
 from django.test import TestCase
-from django.urls import reverse
 from rest_framework.test import APIClient
 
 from apps.communities.models import Community, CommunityMembership
 from apps.contributions.models import Contribution, ContributionParticipant
 from apps.users.models import User
 
-from .models import MpesaC2BTransaction, MpesaSTKRequest
+from .models import MpesaC2BTransaction
 from .services import MpesaService
 
 
@@ -58,171 +56,6 @@ def _make_contribution(creator, community=None, is_active=True):
         amount_per_member=Decimal("500.00"),
         is_active=is_active,
     )
-
-
-def _make_stk(user, contribution, amount="500.00", status="PENDING"):
-    return MpesaSTKRequest.objects.create(
-        user=user,
-        payment_type="contribution",
-        contribution=contribution,
-        phone_number=user.phone_number,
-        amount=Decimal(amount),
-        checkout_request_id="ws_CO_TEST_001",
-        merchant_request_id="MREQ_001",
-        status=status,
-    )
-
-
-# ---------------------------------------------------------------------------
-# STKCallbackView
-# ---------------------------------------------------------------------------
-
-@skip(_LEGACY)
-class STKCallbackViewTest(TestCase):
-
-    def setUp(self):
-        self.client      = APIClient()
-        self.user        = _make_user()
-        self.contrib     = _make_contribution(self.user)
-        self.stk         = _make_stk(self.user, self.contrib)
-        self.url         = "/api/mpesa/stk-callback/"
-
-    def _success_payload(self, checkout_id="ws_CO_TEST_001", receipt="RCT001"):
-        return {
-            "Body": {
-                "stkCallback": {
-                    "MerchantRequestID": "MREQ_001",
-                    "CheckoutRequestID": checkout_id,
-                    "ResultCode": 0,
-                    "ResultDesc": "The service request is processed successfully.",
-                    "CallbackMetadata": {
-                        "Item": [
-                            {"Name": "Amount",              "Value": 500},
-                            {"Name": "MpesaReceiptNumber",  "Value": receipt},
-                            {"Name": "TransactionDate",     "Value": 20260528120000},
-                            {"Name": "PhoneNumber",         "Value": 254700000001},
-                        ]
-                    }
-                }
-            }
-        }
-
-    def _failure_payload(self, checkout_id="ws_CO_TEST_001"):
-        return {
-            "Body": {
-                "stkCallback": {
-                    "MerchantRequestID": "MREQ_001",
-                    "CheckoutRequestID": checkout_id,
-                    "ResultCode": 1032,
-                    "ResultDesc": "Request cancelled by user",
-                }
-            }
-        }
-
-    @patch("apps.mpesa.views._process_stk_sync_with_fallback")
-    def test_success_callback_marks_stk_success(self, mock_process):
-        resp = self.client.post(self.url, self._success_payload(), format="json")
-
-        self.assertEqual(resp.status_code, 200)
-        self.stk.refresh_from_db()
-        self.assertEqual(self.stk.status, "SUCCESS")
-        self.assertEqual(self.stk.mpesa_receipt, "RCT001")
-
-    @patch("apps.mpesa.views._process_stk_sync_with_fallback")
-    def test_success_callback_triggers_processing(self, mock_process):
-        self.client.post(self.url, self._success_payload(), format="json")
-        # Processing is scheduled via on_commit; in tests on_commit runs inline.
-        mock_process.assert_called_once_with(self.stk.id)
-
-    @patch("apps.mpesa.views._process_stk_sync_with_fallback")
-    def test_duplicate_success_callback_is_noop(self, mock_process):
-        """Second identical callback must not double-process."""
-        self.client.post(self.url, self._success_payload(), format="json")
-        mock_process.reset_mock()
-
-        resp = self.client.post(self.url, self._success_payload(), format="json")
-
-        self.assertEqual(resp.status_code, 200)
-        mock_process.assert_not_called()
-
-    def test_failure_callback_marks_stk_failed(self):
-        resp = self.client.post(self.url, self._failure_payload(), format="json")
-
-        self.assertEqual(resp.status_code, 200)
-        self.stk.refresh_from_db()
-        self.assertEqual(self.stk.status, "FAILED")
-        self.assertEqual(self.stk.result_code, 1032)
-
-    def test_missing_checkout_id_returns_200(self):
-        resp = self.client.post(self.url, {"Body": {"stkCallback": {}}}, format="json")
-        self.assertEqual(resp.status_code, 200)
-
-    def test_unknown_checkout_id_success_callback_does_not_crash(self):
-        payload = self._success_payload(checkout_id="ws_CO_UNKNOWN")
-        resp    = self.client.post(self.url, payload, format="json")
-        self.assertEqual(resp.status_code, 200)
-
-
-# ---------------------------------------------------------------------------
-# C2BCallbackView — basic reconciliation
-# ---------------------------------------------------------------------------
-
-@skip(_LEGACY)
-class C2BCallbackViewTest(TestCase):
-
-    def setUp(self):
-        self.client  = APIClient()
-        self.user    = _make_user("254700000002")
-        self.contrib = _make_contribution(self.user)
-        # Make user a participant so open-contribution path works
-        ContributionParticipant.objects.create(
-            contribution=self.contrib, user=self.user, is_active=True
-        )
-        self.url = "/api/mpesa/c2b-callback/"
-
-    def _payload(self, ref="WEPL-{id}", receipt="RCTE001", phone="254700000002"):
-        ref = ref.format(id=self.contrib.id)
-        return {
-            "TransID":          receipt,
-            "MSISDN":           phone,
-            "TransAmount":      "500.00",
-            "BillRefNumber":    ref,
-            "TransTime":        "20260528120000",
-            "FirstName":        "JANE",
-            "MiddleName":       "A",
-            "LastName":         "WANJIKU",
-        }
-
-    @patch.object(MpesaService, "reconcile_c2b", return_value=True)
-    def test_c2b_callback_creates_transaction(self, mock_reconcile):
-        resp = self.client.post(self.url, self._payload(), format="json")
-
-        self.assertEqual(resp.status_code, 200)
-        tx = MpesaC2BTransaction.objects.get(mpesa_receipt="RCTE001")
-        # The payer's registered M-Pesa name is captured, not discarded.
-        self.assertEqual(tx.first_name, "JANE")
-        self.assertEqual(tx.last_name, "WANJIKU")
-        self.assertEqual(tx.payer_name, "JANE A WANJIKU")
-        mock_reconcile.assert_called_once()
-
-    @patch.object(MpesaService, "reconcile_c2b", return_value=True)
-    def test_duplicate_receipt_is_noop(self, mock_reconcile):
-        """Same M-Pesa receipt twice must not create a second transaction."""
-        self.client.post(self.url, self._payload(), format="json")
-        mock_reconcile.reset_mock()
-
-        resp = self.client.post(self.url, self._payload(), format="json")
-
-        self.assertEqual(resp.status_code, 200)
-        self.assertEqual(
-            MpesaC2BTransaction.objects.filter(mpesa_receipt="RCTE001").count(), 1
-        )
-        mock_reconcile.assert_not_called()
-
-    @patch.object(MpesaService, "reconcile_c2b", return_value=True)
-    def test_missing_receipt_returns_200(self, _):
-        resp = self.client.post(self.url, {}, format="json")
-        self.assertEqual(resp.status_code, 200)
 
 
 # ---------------------------------------------------------------------------
@@ -317,43 +150,6 @@ class ReconcileC2BCommunityGateTest(TestCase):
                 contribution=open_contrib, user=self.outsider
             ).exists()
         )
-
-
-# ---------------------------------------------------------------------------
-# B2CResultView
-# ---------------------------------------------------------------------------
-
-@skip(_LEGACY)
-class B2CResultViewTest(TestCase):
-
-    def setUp(self):
-        self.client = APIClient()
-        self.url    = "/api/mpesa/b2c-result/"
-
-    def _payload(self, result_code=0, conversation_id="CONV_001"):
-        return {
-            "Result": {
-                "ResultCode":    result_code,
-                "ResultDesc":    "The service request is processed successfully.",
-                "ConversationID": conversation_id,
-                "ResultParameters": {
-                    "ResultParameter": [
-                        {"Key": "TransactionID",      "Value": "NLJ7RT61SV"},
-                        {"Key": "TransactionReceipt", "Value": "NLJ7RT61SV"},
-                    ]
-                }
-            }
-        }
-
-    def test_missing_conversation_id_returns_200(self):
-        resp = self.client.post(self.url, {"Result": {}}, format="json")
-        self.assertEqual(resp.status_code, 200)
-
-    @patch("apps.ledger.models.FinancialTransaction.objects.get",
-           side_effect=Exception("DoesNotExist"))
-    def test_unknown_conversation_id_returns_200(self, _):
-        resp = self.client.post(self.url, self._payload(conversation_id="UNKNOWN"), format="json")
-        self.assertEqual(resp.status_code, 200)
 
 
 # ---------------------------------------------------------------------------
