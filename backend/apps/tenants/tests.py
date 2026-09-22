@@ -78,6 +78,52 @@ class CommunityGetsTenantOnCreateTests(TestCase):
         self.assertEqual(community.tenant.slug, 'default')
 
 
+class TenantPinRegistrationTests(TestCase):
+    """The pin is registered into authentication, not named in settings (ADR-0033).
+
+    Before, ``DEFAULT_AUTHENTICATION_CLASSES`` named a tenant-aware subclass, so
+    losing the pin meant an obviously broken settings file. Now it is one line in
+    ``TenantsConfig.ready()`` — and losing it would leave every request running in
+    the permissive *system* RLS context with nothing failing. Hence this test.
+    """
+
+    def test_the_pin_is_registered_at_startup(self):
+        from apps.core.request_context import _post_authenticate
+        from apps.tenants.auth import pin_request_tenant
+        self.assertIn(pin_request_tenant, _post_authenticate)
+
+    def test_registration_is_idempotent(self):
+        from apps.core import request_context
+        from apps.tenants import auth
+        before = list(request_context._post_authenticate)
+        auth.register()
+        self.assertEqual(request_context._post_authenticate, before)
+
+    def test_the_authenticator_runs_registered_handlers(self):
+        """Whatever is registered must actually fire on a real authentication."""
+        from apps.core import request_context
+        from apps.users.auth import SessionJWTAuthentication
+        from django.contrib.auth import get_user_model
+        seen = {}
+
+        def _spy(*, user, request):
+            seen['user_id'] = user.id
+
+        request_context.register_post_authenticate(_spy)
+        try:
+            user = get_user_model().objects.create_user(phone_number='254700000032')
+            SessionJWTAuthentication().authenticate(self._request_with_token(user))
+        finally:
+            request_context._post_authenticate.remove(_spy)
+        self.assertEqual(seen.get('user_id'), user.id)
+
+    def _request_with_token(self, user):
+        from rest_framework.test import APIRequestFactory
+        from rest_framework_simplejwt.tokens import AccessToken
+        token = str(AccessToken.for_user(user))
+        return APIRequestFactory().get('/', HTTP_AUTHORIZATION=f'Bearer {token}')
+
+
 class TenantContextWiringTests(TestCase):
     """P6-04 — JWT auth pins the RLS context for members; middleware resets it."""
 
@@ -95,23 +141,23 @@ class TenantContextWiringTests(TestCase):
 
     def test_member_request_pins_tenant(self):
         from django.contrib.auth import get_user_model
-        from apps.tenants.auth import TenantJWTAuthentication
+        from apps.users.auth import SessionJWTAuthentication
         from apps.tenants.rls import clear_current_tenant
         from apps.tenants.resolve import default_tenant
         clear_current_tenant()
         user = get_user_model().objects.create_user(phone_number='254700000030')
-        TenantJWTAuthentication().authenticate(self._request_with_token(user))
+        SessionJWTAuthentication().authenticate(self._request_with_token(user))
         self.assertEqual(self._guc(), str(default_tenant().id))
 
     def test_staff_request_not_pinned(self):
         from django.contrib.auth import get_user_model
-        from apps.tenants.auth import TenantJWTAuthentication
+        from apps.users.auth import SessionJWTAuthentication
         from apps.tenants.rls import clear_current_tenant
         clear_current_tenant()
         staff = get_user_model().objects.create_user(phone_number='254700000031')
         staff.is_staff = True
         staff.save()
-        TenantJWTAuthentication().authenticate(self._request_with_token(staff))
+        SessionJWTAuthentication().authenticate(self._request_with_token(staff))
         self.assertEqual(self._guc(), '')  # left unset → cross-tenant operator
 
     def test_middleware_resets_context(self):

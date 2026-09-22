@@ -20,6 +20,8 @@ from rest_framework.permissions import BasePermission
 from rest_framework_simplejwt.authentication import JWTAuthentication
 from rest_framework_simplejwt.tokens import RefreshToken
 
+from apps.core.request_context import run_post_authenticate
+
 logger = logging.getLogger(__name__)
 
 # ── Stage constants ────────────────────────────────────────────────────────────
@@ -133,4 +135,8 @@ class SessionJWTAuthentication(JWTAuthentication):
             if session is None:
                 raise AuthenticationFailed("This session has been revoked. Please sign in again.")
             touch(session)
+        # Per-request context owned by other apps — today the RLS tenant pin
+        # (ADR-0008 / P6-04). Fires where the tenant-aware subclass used to run:
+        # after the revocation check, before the view queries anything.
+        run_post_authenticate(user=user, request=request)
         return user, token

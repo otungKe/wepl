@@ -27,9 +27,14 @@ mechanism landed", not "the boundary is live".
 
 ## How context flows
 
-1. **Set** — `apps/tenants/auth.py::TenantJWTAuthentication` (DRF's
-   `DEFAULT_AUTHENTICATION_CLASSES`) pins the GUC right after the user is
-   resolved: `SELECT set_config('app.tenant_id', %s, false)`.
+1. **Set** — `apps/tenants/auth.py::pin_request_tenant` pins the GUC right
+   after the user is resolved: `SELECT set_config('app.tenant_id', %s, false)`.
+   It is **not** named in `DEFAULT_AUTHENTICATION_CLASSES` (that is plain
+   `apps.users.auth.SessionJWTAuthentication`); `TenantsConfig.ready()` registers
+   it into `apps/core/request_context.py` and the authenticator calls it there,
+   at the same moment the old tenant-aware subclass ran (ADR-0033). **Deleting
+   that one `ready()` line would silently leave every request in the permissive
+   system context** — `TenantPinRegistrationTests` exists to catch that.
 2. **Cleared** — `apps/tenants/middleware.py::TenantRLSMiddleware` (last in
    `MIDDLEWARE`) clears it in a `finally` on every request. Connections are
    pooled (`CONN_MAX_AGE=60`), so this is not optional.
@@ -77,7 +82,7 @@ freshly created `NOSUPERUSER` probe. `ledger/views.py::TenancyCheckView`
   **exactly one production call site**, `apps/communities/views.py:211`
   (re-verified on `68e8cf6`). Adding the second is real work, not a formality.
 - **Everything under `/api/ops/*`.** `StaffAccount` is not a `User`,
-  `TenantJWTAuthentication` never runs for it, so every ops query runs in the
+  the tenant pin never runs for it, so every ops query runs in the
   permissive system context. Deliberate; protected by capabilities instead.
 
 ## `tenant_id IS NULL` means "visible to everyone"

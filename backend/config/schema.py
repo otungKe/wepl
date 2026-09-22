@@ -6,10 +6,10 @@ which also registers the authentication extension below.
 from drf_spectacular.extensions import OpenApiAuthenticationExtension
 
 
-class TenantJWTScheme(OpenApiAuthenticationExtension):
-    """Teach the schema that our (subclassed) JWT auth is HTTP bearer JWT, so the
+class SessionJWTScheme(OpenApiAuthenticationExtension):
+    """Teach the schema that our session-aware JWT auth is HTTP bearer JWT, so the
     generated spec advertises the auth scheme instead of warning about it."""
-    target_class = 'apps.tenants.auth.TenantJWTAuthentication'
+    target_class = 'apps.users.auth.SessionJWTAuthentication'
     name = 'jwtAuth'
 
     def get_security_definition(self, auto_schema):

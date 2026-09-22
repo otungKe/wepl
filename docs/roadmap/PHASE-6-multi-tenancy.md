@@ -37,7 +37,7 @@ BaaS (Phase 7).
   all tenants, tenant-scoped rules only to that tenant; the controls engine filters
   by the movement's tenant. `Tenant.config` JSON is the seam for further per-tenant
   settings.
-- [x] **P6-04** Tenant-aware auth + reporting. `TenantJWTAuthentication` sets the
+- [x] **P6-04** Tenant-aware auth + reporting. `auth.pin_request_tenant` sets the
   per-request RLS context (`app.tenant_id`) for member users; `TenantRLSMiddleware`
   resets it after every request (safe under connection pooling). Platform staff /
   superusers are intentionally NOT pinned (cross-tenant operators; Django admin

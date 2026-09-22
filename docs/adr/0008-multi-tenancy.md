@@ -75,7 +75,7 @@ Isolation is enforced in two layers:
   `app.tenant_id` is empty so platform/system contexts (migrations, management
   commands, platform-wide reporting, cross-tenant Celery jobs) work. This means RLS
   is a hard backstop **only for connections that pin a tenant** (member web requests
-  via `TenantJWTAuthentication`); it is *not* a safety net for a task that forgets to
+  via `auth.pin_request_tenant`); it is *not* a safety net for a task that forgets to
   scope itself. Celery `task_prerun`/`task_postrun` hooks (`tenants.celery_hooks`)
   clear the context at task boundaries so a pinned tenant cannot leak across pooled
   connections, but per-tenant tasks must still opt in with `tenant_context(...)`.

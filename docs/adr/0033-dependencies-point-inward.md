@@ -98,7 +98,14 @@ handed to it through `apps/mpesa/settlement.py`. That one freed `apps.payments` 
 it, because once nothing below the domain reached upward, payments had no path back to
 itself. Eleven apps → seven. `MpesaIsARailClientTests` holds the new floor.
 
-**Not addressed.** Seven apps remain in the cycle, `contributions` (6,103 lines, 19 of the
+Then `apps.tenants` stopped subclassing the authenticator. `TenantJWTAuthentication`
+existed only to run one line after the user resolved, and that subclass was the whole
+of `tenants -> users`. `apps.users` and `apps.tenants` are peers — neither belongs
+below the other — so unlike the cases above the registry went into `apps.core`
+(`request_context.py`), which both already depend on and which holds nothing but an
+opaque list of callables. `apps.audit` came out with it. Seven → five.
+
+**Not addressed.** Five apps remain in the cycle, `contributions` (6,103 lines, 19 of the
 backend's 73 models) remains the app that will hurt first, and `emit()` is still used by
 no money-path app — the decoupling seam is not load-bearing where the coupling is. This
 ADR stops the graph getting worse and frees the one app where the cost of entanglement

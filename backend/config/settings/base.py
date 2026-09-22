@@ -103,7 +103,8 @@ MIDDLEWARE = [
     'django.contrib.auth.middleware.AuthenticationMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
-    # Resets the per-request RLS tenant context (set in TenantJWTAuthentication).
+    # Resets the per-request RLS tenant context (pinned during authentication,
+    # by the handler apps/tenants/auth.py registers).
     'apps.tenants.middleware.TenantRLSMiddleware',
 ]
 
@@ -144,8 +145,9 @@ SIMPLE_JWT = {
 
 REST_FRAMEWORK = {
     'DEFAULT_AUTHENTICATION_CLASSES': (
-        # Tenant-aware JWT: pins the RLS tenant context for member requests.
-        'apps.tenants.auth.TenantJWTAuthentication',
+        # Session-aware JWT (ADR-0010). Per-request context — the RLS tenant
+        # pin — is registered into it at startup, not subclassed (ADR-0033).
+        'apps.users.auth.SessionJWTAuthentication',
     ),
     'EXCEPTION_HANDLER': 'apps.core.exceptions.custom_exception_handler',
     # Fail-open throttles: a Redis outage degrades rate limiting instead of
