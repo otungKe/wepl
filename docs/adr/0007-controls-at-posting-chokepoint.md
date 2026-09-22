@@ -1,6 +1,8 @@
 # ADR-0007: Limits & risk controls live at the posting chokepoint
 
-- **Status:** Accepted (implemented in `apps/controls/`, P3-01/02/03/05)
+- **Status:** Accepted (implemented in `apps/controls/`, P3-01→05; P3-04 is the durable
+  `HeldMovement` review queue rather than a state on `FinancialTransaction`, because a
+  control exception rolls that row back)
 - **Date:** 2026-06-19
 - **Phase:** 3 (depends on ADR-0004)
 
