@@ -56,7 +56,7 @@ class MoneyActivity:
     rail: RailInfo = field(default_factory=RailInfo)
 
 
-def _rail_for(ft) -> RailInfo:
+def rail_for(ft) -> RailInfo:
     """Rail info, preferring the linked PaymentIntent over FT's legacy columns.
 
     Uses ``.all()`` and picks the latest intent in Python rather than
@@ -98,5 +98,35 @@ def for_financial_transaction(ft) -> MoneyActivity:
         counterparty_name=ft.counterparty_name or "",
         context_type=ft.context_type or "",
         context_id=ft.context_id,
-        rail=_rail_for(ft),
+        rail=rail_for(ft),
     )
+
+
+def financial_transaction_for_ref(provider_ref: str, *, provider: str = ""):
+    """The FinancialTransaction a rail correlation id belongs to, via its intent.
+
+    The reverse of ``rail_for``: a callback arrives carrying only the rail's own
+    id, and the movement it settles has to be found from it. The link lives on
+    ``PaymentIntent.financial_transaction`` (ADR-0014), which is authoritative for
+    the rail dimension; FT's ``mpesa_conversation_id`` is the legacy path and is
+    tried second so a row written before the backfill still resolves. That
+    fallback goes with the column in ADR-0030's next slice.
+
+    Returns None when nothing matches — a callback for a movement this system
+    never initiated.
+    """
+    from apps.ledger.models import FinancialTransaction
+
+    if not provider_ref:
+        return None
+
+    intents = PaymentIntent.objects.filter(
+        provider_ref=provider_ref, financial_transaction__isnull=False)
+    if provider:
+        intents = intents.filter(provider=provider)
+    intent = intents.select_related('financial_transaction').order_by('-pk').first()
+    if intent is not None:
+        return intent.financial_transaction
+
+    return FinancialTransaction.objects.filter(
+        mpesa_conversation_id=provider_ref).first()

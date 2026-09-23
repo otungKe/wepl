@@ -124,8 +124,11 @@ def filter_transactions(params):
             Q(initiated_by__phone_number__icontains=q)
             | Q(recipient_phone__icontains=q)
             | Q(idempotency_key__iexact=q)
+            # Receipt via the intent (ADR-0014), plus FT's own column until the
+            # backfill lands everywhere (ADR-0030 drops it next).
+            | Q(payment_intents__receipt__iexact=q)
             | Q(mpesa_receipt__iexact=q)
-            | (Q(pk=pk) if pk is not None else Q()))
+            | (Q(pk=pk) if pk is not None else Q())).distinct()
 
     # Date range (on created_at), inclusive.
     d_from = _parse_date(params.get("date_from"), end=False)

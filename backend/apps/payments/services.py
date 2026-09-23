@@ -51,6 +51,22 @@ class PaymentService:
         return intent
 
     @staticmethod
+    def attach_provider_ref(intent, provider_ref):
+        """Stamp the rail's correlation id onto an intent minted before dispatch.
+
+        A payout's intent is created *before* the rail is called, so the intent
+        exists even if the process dies mid-dispatch; the id only exists once the
+        rail has accepted. Only fills a blank ref — a second callback-driven
+        write must never repoint an intent that already correlates.
+        """
+        if not provider_ref or intent is None or intent.provider_ref:
+            return intent
+        PaymentIntent.objects.filter(pk=intent.pk, provider_ref='').update(
+            provider_ref=provider_ref)
+        intent.provider_ref = provider_ref
+        return intent
+
+    @staticmethod
     @transaction.atomic
     def resolve(*, provider, provider_ref, success, receipt='',
                 failure_code='', failure_message='', metadata=None, event_time=None):
