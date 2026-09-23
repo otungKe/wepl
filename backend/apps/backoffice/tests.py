@@ -854,15 +854,20 @@ class StepUpTOTPTests(TestCase):
 
 
 class _StubProvider:
-    """A provider whose query_status returns a fixed state (test control)."""
+    """A provider whose payout query returns a fixed state (test control)."""
     name = "fake"
 
     def __init__(self, state):
         self._state = state
 
-    def query_status(self, *, provider_ref):
+    def request_payout_result(self, *, provider_ref, remarks=""):
         from apps.payments.providers import StatusResult
         return StatusResult(state=self._state, raw={"provider_ref": provider_ref})
+
+    def query_status(self, *, provider_ref):
+        # The collection poll. The desk must never read a payout's fate from
+        # it (on M-Pesa it is an STK query), so a call here is a bug.
+        raise AssertionError("payout levers must not use the collection poll")
 
 
 class FinopsModuleTests(TestCase):
@@ -953,6 +958,49 @@ class FinopsModuleTests(TestCase):
         self.assertEqual(res.data["result"]["outcome"], "healed_success")
         ft.refresh_from_db()
         self.assertEqual(ft.state, "SUCCESS")
+
+    def test_requery_an_m_pesa_payout_reports_unknown_and_leaves_it(self):
+        from apps.payments.providers import registry
+        registry.use_provider(_StubProvider("unknown"))
+        ft = self._stuck_payout(key="op1-payout-8", conv="AG_CONV_8")
+        res = op_client(self.finance).post(
+            f"/api/ops/finops/transactions/{ft.pk}/action/",
+            {"action": "requery"}, format="json", **self._stepup())
+        self.assertEqual(res.data["result"]["outcome"], "unknown")
+        ft.refresh_from_db()
+        self.assertEqual(ft.state, "PROCESSING")
+
+    def test_confirm_paid_settles_with_the_receipt_and_audits_it(self):
+        from apps.audit.models import AuditEvent
+        from apps.ledger.balances import trial_balance
+        from apps.payments.models import PaymentIntent
+        from apps.payments.providers import registry
+        registry.use_provider(_StubProvider("unknown"))
+        ft = self._stuck_payout(key="op1-payout-9", conv="AG_CONV_9")
+        res = op_client(self.finance).post(
+            f"/api/ops/finops/transactions/{ft.pk}/action/",
+            {"action": "confirm_paid", "receipt": " tia7x2k9qp "}, format="json",
+            **self._stepup())
+        self.assertEqual(res.status_code, 200)
+        self.assertEqual(res.data["result"]["outcome"], "healed_success")
+        ft.refresh_from_db()
+        self.assertEqual(ft.state, "SUCCESS")
+        self.assertEqual(
+            PaymentIntent.objects.get(provider_ref="AG_CONV_9").receipt, "TIA7X2K9QP")
+        audit = AuditEvent.objects.get(action="ops.finops.confirm_paid")
+        self.assertEqual(audit.metadata["receipt"], "TIA7X2K9QP")
+        self.assertTrue(trial_balance()["balanced"])
+
+    def test_confirm_paid_requires_a_receipt(self):
+        from apps.payments.providers import registry
+        registry.use_provider(_StubProvider("unknown"))
+        ft = self._stuck_payout(key="op1-payout-10", conv="AG_CONV_10")
+        res = op_client(self.finance).post(
+            f"/api/ops/finops/transactions/{ft.pk}/action/",
+            {"action": "confirm_paid"}, format="json", **self._stepup())
+        self.assertEqual(res.status_code, 409)
+        ft.refresh_from_db()
+        self.assertEqual(ft.state, "PROCESSING")
 
     def test_mark_failed_requires_reason(self):
         from apps.payments.providers import registry

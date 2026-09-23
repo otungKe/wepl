@@ -173,9 +173,10 @@ written. What is still open:
 3. An RLS **write** test exercising a policy's `WITH CHECK` clause. Five
    migrations declare one and nothing asserts a cross-tenant write is refused.
 4. A test that every ADR file appears in `docs/adr/README.md`.
-5. A test for the `_query_safaricom_status` / stale-payout interaction, which
-   force-fails and reverses payouts Safaricom may have settled (see
-   `wepl-ledger`, "Known-broken").
+5. ~~A test for the stale-payout sweep reversing payouts Safaricom settled.~~
+   Written with the fix, 2026-09-23: `payments/tests_stale_payout_sweep.py`, a
+   `TransactionTestCase` that reads the pool balance after the sweep and the
+   inline settlement lane have run.
 
 ## Do not assume
 

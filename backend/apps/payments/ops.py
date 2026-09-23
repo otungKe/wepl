@@ -13,6 +13,15 @@ truth. No lever hand-rolls a journal or mutates state directly:
 - ``mark_failed`` — terminally fail a stuck payout the rail confirms never
   completed. Requires a fresh query that is *not* success — operator opinion is
   not enough to strand or unstick money.
+- ``confirm_paid`` — settle a stuck payout the operator has found paid on the
+  rail's own records, carrying that receipt. The counterpart the stale sweep
+  relies on: it leaves a payout of unknown outcome in PROCESSING rather than
+  reverse it, and on M-Pesa every stuck payout's outcome is unknown.
+
+Rail queries here are *payout* queries (``request_payout_result``), never the
+collection poll ``query_status``: on M-Pesa that is an STK query, which cannot
+describe a B2C payout. M-Pesa's payout query answers asynchronously, so it
+reports ``unknown`` and the desk decides from the M-Pesa portal.
 
 Scope (increment 1): the payout rail (B2C ``FinancialTransaction``s stuck in
 PENDING/PROCESSING) — where "money in limbo" actually bites. Pay-ins are
@@ -67,7 +76,12 @@ class PaymentOpsService:
         if state == "failed":
             return cls._apply_failure(
                 ft, reason="Rail reports the payout failed.", actor_label=actor_label)
-        return cls._result("pending", ft, "Rail still reports the payout pending.")
+        if state == "pending":
+            return cls._result("pending", ft, "Rail still reports the payout pending.")
+        return cls._result(
+            "unknown", ft,
+            "The rail can't confirm this payout's outcome from here. Check its own "
+            "records (the M-Pesa portal), then confirm it paid or mark it failed.")
 
     @classmethod
     def retry_payout(cls, ft: FT, *, actor_label: str = "") -> dict:
@@ -128,10 +142,36 @@ class PaymentOpsService:
             f"Reversed via JE-{entry.id}." if entry else "Reversed (no journal to invert).")
 
     @classmethod
+    def confirm_paid(cls, ft: FT, *, receipt: str, actor_label: str = "") -> dict:
+        """Settle a stuck payout the operator has found paid on the rail's own
+        records (for M-Pesa, the organisation portal), with its receipt.
+
+        Settling posts no money: the payout's journal was posted when the funds
+        were reserved, so this only confirms it and stops it ever being
+        reversed. The receipt is mandatory and must not already belong to
+        another payment, which catches a mistyped or reused receipt before it
+        lands."""
+        cls._guard_payout(ft)
+        receipt = (receipt or "").strip().upper()
+        if not receipt:
+            raise ValidationError("The rail's receipt is required to confirm a payout.")
+        if ft.state != FT.State.PROCESSING:
+            raise ValidationError("Only a payout handed to the rail (PROCESSING) can be confirmed paid.")
+        from apps.payments.models import PaymentIntent
+        if (PaymentIntent.objects.filter(receipt=receipt)
+                .exclude(financial_transaction=ft).exists()):
+            raise ValidationError(f"Receipt {receipt} already belongs to another payment.")
+        return cls._apply_success(ft, receipt=receipt, actor_label=actor_label)
+
+    @classmethod
     def mark_failed(cls, ft: FT, *, reason: str, actor_label: str = "") -> dict:
-        """Terminally fail a stuck payout the rail confirms never completed. If a
-        fresh query instead shows success, it is healed as success (never
-        stranded). A reason is mandatory."""
+        """Terminally fail a stuck payout that never completed, restoring its
+        reserved funds. If a fresh query instead shows success, it is healed as
+        success (never stranded). A reason is mandatory.
+
+        On M-Pesa the query cannot answer, so this is the operator's word that
+        the payout is absent from the M-Pesa portal. Failing a payout that was
+        paid pays the member twice; that check is the whole safeguard."""
         cls._guard_payout(ft)
         reason = (reason or "").strip()
         if not reason:
@@ -156,36 +196,52 @@ class PaymentOpsService:
 
     @staticmethod
     def _query_state(provider_ref: str) -> str:
+        """The rail's answer for a *payout*: 'success', 'failed', or anything
+        else meaning it cannot say (M-Pesa always, since it answers later)."""
         from apps.payments.providers.registry import get_provider
         try:
-            return get_provider().query_status(provider_ref=provider_ref).state
+            return get_provider().request_payout_result(
+                provider_ref=provider_ref, remarks="FinOps requery").state
         except Exception:
             logger.exception("requery: rail status query failed for %s", provider_ref)
             return "unknown"
 
     @staticmethod
-    def _settle_intent(ft: FT, *, success: bool, reason: str = "") -> None:
+    def _settle_intent(ft: FT, *, success: bool, reason: str = "", receipt: str = "") -> None:
         """Settle the linked PaymentIntent through the SAME door a provider callback
         uses (``PaymentService.resolve``), so operator recovery never leaves an
         intent↔FT drift or a privileged shortcut. Best-effort and idempotent — a
         missing or already-terminal intent is a no-op."""
         ref = rail_for(ft).conversation_id
-        if not ref:
-            return
         try:
+            from apps.payments.models import PaymentIntent
             from apps.payments.providers.registry import get_provider
             from apps.payments.services import PaymentService
-            PaymentService.resolve(
-                provider=get_provider().name, provider_ref=ref,
-                success=success, failure_message=reason or '')
+            if ref:
+                PaymentService.resolve(
+                    provider=get_provider().name, provider_ref=ref,
+                    success=success, receipt=receipt, failure_message=reason or '')
+                return
+            # No rail reference: the dispatch died between minting the intent
+            # and recording the rail's answer. The intent is still the payout's
+            # rail record, so settle it by its link instead of leaving it open.
+            intent = (PaymentIntent.objects
+                      .filter(financial_transaction=ft,
+                              direction=PaymentIntent.Direction.PAYOUT,
+                              status=PaymentIntent.Status.PENDING)
+                      .first())
+            if intent is not None:
+                intent.transition_to(
+                    PaymentIntent.Status.SUCCEEDED if success else PaymentIntent.Status.FAILED,
+                    receipt=receipt, failure_message=reason or '')
         except Exception:
             logger.exception("PaymentOps: intent settlement failed for FT %s", ft.id)
 
     @classmethod
     @transaction.atomic
-    def _apply_success(cls, ft: FT, *, actor_label: str = "") -> dict:
-        """Finalise a confirmed payout exactly as the B2C callback would. The rail
-        status query carries no receipt, so it finalises without one."""
+    def _apply_success(cls, ft: FT, *, receipt: str = "", actor_label: str = "") -> dict:
+        """Finalise a confirmed payout exactly as the B2C callback would. A rail
+        status query carries no receipt; an operator's confirmation does."""
         from apps.core.events import emit_event
         try:
             ft.transition_to(FT.State.SUCCESS)
@@ -199,9 +255,9 @@ class PaymentOpsService:
             'payment.settled',
             aggregate_key=f'ft:{ft.id}',
             dedup_key=f'payment.settled:ft={ft.id}',
-            body={'ft_id': ft.id, 'receipt': ''},
+            body={'ft_id': ft.id, 'receipt': receipt},
         )
-        cls._settle_intent(ft, success=True)
+        cls._settle_intent(ft, success=True, receipt=receipt)
         logger.info("FinOps: payout FT %s healed to SUCCESS by %s", ft.id, actor_label or "ops")
         return cls._result("healed_success", ft, "Payout confirmed and finalised.")
 

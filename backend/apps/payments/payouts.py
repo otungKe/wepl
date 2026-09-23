@@ -168,14 +168,30 @@ def execute_payout(self, fin_transaction_id: int) -> str:
 @shared_task(queue='financial')
 def recover_stale_processing_transactions() -> dict:
     """
-    Two-tier recovery for FinancialTransactions stuck in PROCESSING.
+    Sweep payouts stuck in PROCESSING. It never reverses one whose outcome it
+    does not know.
 
-    Tier 1 — warn (> 15 min):  CRITICAL log so ops can investigate immediately
-              while the rail's callback might still arrive.
+    A payout in PROCESSING has been handed to the rail. Reversing it restores
+    the member's pool funds, so reversing one the rail actually paid pays the
+    member twice. The only safe reason to reverse is the rail saying it failed.
 
-    Tier 2 — auto-recover (> 60 min):  The callback window is long past.
-              Mark FAILED, write reversal ledger entry to restore pool funds,
-              and reset the linked domain object so admins can re-trigger.
+    Tier 1 — warn (> 15 min): CRITICAL log; the rail's callback may still land.
+
+    Tier 2 — resolve (> 60 min): ask the rail through the provider port.
+      - It confirms SUCCESS → settle, exactly as the result callback would.
+      - It confirms FAILED  → fail, and the settlement consumer reverses.
+      - Anything else       → leave the payout in PROCESSING for a person.
+
+    M-Pesa lands in the last case every time: its TransactionStatusQuery answers
+    asynchronously, so ``request_payout_result`` can only ever report
+    ``unknown``. That used to fall through to a forced FAILED plus reversal,
+    which reversed payouts Safaricom had settled. Now the payout stays where it
+    is: a late result callback still settles or fails it normally (it only
+    matches PROCESSING), and until then it sits in the FinOps desk's stuck
+    queue and the ops health "stuck payouts" alert, where an operator confirms
+    it paid (with the M-Pesa receipt) or marks it failed after checking the
+    M-Pesa portal (``apps/payments/ops.py``). The rail is asked again on every
+    run, so a rail that can answer inline resolves itself.
 
     Runs every 30 minutes via Celery Beat (settings.CELERY_BEAT_SCHEDULE).
     """
@@ -185,7 +201,7 @@ def recover_stale_processing_transactions() -> dict:
 
     now        = timezone.now()
     warn_at    = now - timedelta(minutes=15)
-    recover_at = now - timedelta(minutes=60)
+    resolve_at = now - timedelta(minutes=60)
 
     all_stale = (FinancialTransaction.objects
                  .filter(state=FinancialTransaction.State.PROCESSING,
@@ -193,68 +209,16 @@ def recover_stale_processing_transactions() -> dict:
                  .prefetch_related("payment_intents")
                  .order_by("updated_at"))
 
-    warned    = 0
-    recovered = 0
+    warned       = 0
+    settled      = 0
+    failed       = 0
+    needs_review = 0
 
     for ft in all_stale:
         # One read of the rail dimension per movement; the prefetch above keeps
         # that off the per-row query budget.
         rail = rail_for(ft)
-        if ft.updated_at < recover_at:
-            # ── Tier 2: query the rail, then auto-recover ─────────────────────
-            # Try the rail's status facility first so we know the real outcome.
-            # If the query confirms SUCCESS we record it correctly rather than
-            # writing a false reversal.
-            rail_state = _query_payout_status(ft, provider_ref=rail.conversation_id)
-
-            if rail_state == "SUCCESS":
-                logger.info(
-                    "STALE-RECOVER: FT-%s confirmed SUCCESS by the rail — "
-                    "transitioning to SUCCESS without reversal.",
-                    ft.id,
-                )
-                try:
-                    from django.db import transaction
-
-                    from apps.core.events import emit_event
-                    receipt = rail.receipt or ""
-                    # Discovery → one durable settlement event (ADR-0028); the
-                    # inline settlement consumer propagates it. Atomic with the
-                    # transition (same posture as the B2C callback), so a won
-                    # transition always carries its event.
-                    with transaction.atomic():
-                        ft.transition_to(FinancialTransaction.State.SUCCESS)
-                        emit_event(
-                            'payment.settled',
-                            aggregate_key=f'ft:{ft.id}',
-                            dedup_key=f'payment.settled:ft={ft.id}',
-                            body={'ft_id': ft.id, 'receipt': receipt},
-                        )
-                    recovered += 1
-                except Exception:
-                    logger.exception("STALE-RECOVER: success-transition failed for FT-%s", ft.id)
-
-            else:
-                # FAILED, UNKNOWN, or query itself failed — treat as failed.
-                logger.error(
-                    "STALE-RECOVER: FT-%s op=%s amount=%s context=%s/%s "
-                    "provider_ref=%s stuck > 60 min (rail_state=%s) — "
-                    "forcing FAILED and writing reversal.",
-                    ft.id, ft.op_type, ft.amount,
-                    ft.context_type, ft.context_id,
-                    rail.conversation_id, rail_state,
-                )
-                try:
-                    _handle_payout_failure(
-                        ft,
-                        f"Auto-recovered after 60 min in PROCESSING "
-                        f"(rail_state={rail_state}, "
-                        f"provider_ref={rail.conversation_id}).",
-                    )
-                    recovered += 1
-                except Exception:
-                    logger.exception("STALE-RECOVER: failed to auto-recover FT-%s", ft.id)
-        else:
+        if ft.updated_at >= resolve_at:
             # ── Tier 1: warn only (callback might still arrive) ───────────────
             logger.critical(
                 "STALE-WARN: FT-%s op=%s amount=%s context=%s/%s "
@@ -264,13 +228,77 @@ def recover_stale_processing_transactions() -> dict:
                 rail.conversation_id,
             )
             warned += 1
+            continue
 
-    summary = {"warned": warned, "recovered": recovered}
-    if warned or recovered:
-        logger.critical(
-            "recover_stale_processing_transactions: %d warned, %d auto-recovered.",
-            warned, recovered,
-        )
+        # ── Tier 2: ask the rail; act only on a definite answer ───────────────
+        rail_state = _query_payout_status(ft, provider_ref=rail.conversation_id)
+
+        if rail_state == "SUCCESS":
+            logger.info(
+                "STALE-RECOVER: FT-%s confirmed SUCCESS by the rail — "
+                "transitioning to SUCCESS without reversal.",
+                ft.id,
+            )
+            try:
+                from apps.core.events import emit_event
+                receipt = rail.receipt or ""
+                # Discovery → one durable settlement event (ADR-0028); the
+                # inline settlement consumer propagates it. Atomic with the
+                # transition (same posture as the B2C callback), so a won
+                # transition always carries its event.
+                with transaction.atomic():
+                    ft.transition_to(FinancialTransaction.State.SUCCESS)
+                    emit_event(
+                        'payment.settled',
+                        aggregate_key=f'ft:{ft.id}',
+                        dedup_key=f'payment.settled:ft={ft.id}',
+                        body={'ft_id': ft.id, 'receipt': receipt},
+                    )
+                settled += 1
+            except TransitionError:
+                pass  # a callback finalised it between the read and here
+            except Exception:
+                logger.exception("STALE-RECOVER: success-transition failed for FT-%s", ft.id)
+
+        elif rail_state == "FAILED":
+            logger.error(
+                "STALE-RECOVER: FT-%s op=%s amount=%s provider_ref=%s — the rail "
+                "confirms the payout failed; failing it and restoring funds.",
+                ft.id, ft.op_type, ft.amount, rail.conversation_id,
+            )
+            try:
+                _handle_payout_failure(
+                    ft,
+                    f"Rail confirmed failure after 60 min in PROCESSING "
+                    f"(provider_ref={rail.conversation_id}).",
+                )
+                failed += 1
+            except Exception:
+                logger.exception("STALE-RECOVER: failure-transition failed for FT-%s", ft.id)
+
+        else:
+            # Outcome unknown. The payout may well have been paid, so it is
+            # neither failed nor reversed: it stays PROCESSING, on the FinOps
+            # desk, until the rail's callback or an operator settles it.
+            logger.critical(
+                "STALE-REVIEW: FT-%s op=%s amount=%s context=%s/%s "
+                "provider_ref=%s stuck > 60 min and the rail cannot say whether "
+                "it paid (rail_state=%s). Left in PROCESSING for manual review "
+                "on the FinOps desk; NOT reversed.",
+                ft.id, ft.op_type, ft.amount,
+                ft.context_type, ft.context_id,
+                rail.conversation_id, rail_state,
+            )
+            needs_review += 1
+
+    summary = {
+        "warned": warned,
+        "settled": settled,
+        "failed": failed,
+        "needs_review": needs_review,
+    }
+    if any(summary.values()):
+        logger.critical("recover_stale_processing_transactions: %s", summary)
     else:
         logger.info("recover_stale_processing_transactions: no stale transactions.")
 
@@ -309,9 +337,9 @@ def _query_payout_status(ft, *, provider_ref: str | None = None) -> str:
     Ask the rail for a stuck payout's outcome, through the PaymentProvider port.
     Returns "SUCCESS", "FAILED", or "UNKNOWN" (on error or inconclusive result).
 
-    M-Pesa answers asynchronously — its TransactionStatusQuery only re-fires the
-    result callback — so the adapter reports ``unknown`` and the callback updates
-    the FT when it arrives. Rails that answer inline map straight through.
+    M-Pesa answers asynchronously, so its adapter always reports ``unknown``;
+    the sweep treats that as "a person must look", never as failure. Rails that
+    answer inline map straight through.
     """
     if provider_ref is None:
         provider_ref = rail_for(ft).conversation_id

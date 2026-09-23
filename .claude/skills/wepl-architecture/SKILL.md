@@ -149,9 +149,9 @@ on either half-state. Cutover runbook: `docs/deploy/worker-tier.md`.
 
 - The Daraja `TransactionStatusQuery` is asynchronous, so
   `payments/providers/mpesa.py::request_payout_result` reports `unknown` on every
-  path including success. The stale sweep's "ask Safaricom first" branch is
-  therefore dead and every payout stuck past 60 minutes is force-failed and
-  reversed, including one Safaricom settled. Moved but not fixed by #197. See
+  path, and its later answer is not correlated to the payout. Since 2026-09-23
+  the stale sweep leaves such payouts on the FinOps desk instead of reversing
+  them (it used to reverse them, paying twice when Safaricom had paid). See
   `wepl-ledger`.
 - **Production has never handled real money.** The deployment points at the
   M-Pesa sandbox. Nothing in this repo's money path has been exercised against

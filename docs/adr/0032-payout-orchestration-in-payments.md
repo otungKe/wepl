@@ -98,3 +98,9 @@ Daraja vocabulary at all.
 ADR-0028 stands: because the requery is asynchronous, tier-2 recovery cannot
 confirm a late success before it force-fails and reverses. Moving the code
 neither fixes nor worsens it.
+
+*Update, 2026-09-23:* fixed in a follow-up. The sweep reverses a stuck payout
+only when the rail confirms it failed. An unknown outcome (every M-Pesa payout,
+since the requery answers asynchronously) stays in PROCESSING on the FinOps
+desk, where a late callback or an operator settles it; the desk gained a
+`confirm_paid` lever that takes the M-Pesa receipt.

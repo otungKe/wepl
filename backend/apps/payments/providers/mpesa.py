@@ -79,9 +79,15 @@ class MpesaProvider(PaymentProvider):
         never arrived.
 
         Safaricom answers this one asynchronously: a ResponseCode of "0" only
-        means the query was accepted, and the real outcome is re-delivered to the
-        B2C ResultURL. So this always reports ``'unknown'`` — B2CResultView
-        finalises the payout when the re-fired callback lands.
+        means the query was accepted, and the outcome is posted to the B2C
+        ResultURL later. So this always reports ``'unknown'``, which the stale
+        sweep treats as "leave it for a person", never as a failure.
+
+        That later answer is not wired up yet. It arrives under the *query's*
+        own ConversationID, not the payout's, so B2CResultView records it as a
+        ProviderEvent and finds no payout to settle. Correlating it needs a
+        captured sandbox payload to confirm the field names; until then a stuck
+        payout is settled by its own late callback or by an operator.
 
         Uses the same Daraja credentials as the rest of the adapter and works
         unchanged in sandbox and production.

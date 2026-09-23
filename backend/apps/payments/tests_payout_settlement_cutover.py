@@ -76,7 +76,7 @@ class StaleRecoverySuccessCutoverTests(TestCase):
     def test_safaricom_confirmed_success_emits_settlement_event(self):
         with patch("apps.payments.payouts._query_payout_status", return_value="SUCCESS"):
             result = recover_stale_processing_transactions()
-        self.assertEqual(result["recovered"], 1)
+        self.assertEqual(result["settled"], 1)
         self.ft.refresh_from_db()
         self.assertEqual(self.ft.state, FinancialTransaction.State.SUCCESS)
         ev = OutboxEvent.objects.get(event_type="payment.settled")

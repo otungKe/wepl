@@ -2,10 +2,15 @@
 // FinOps — the payments desk (OP-1). Two queues: stuck payouts (money going out
 // that stalled, with recovery levers) and failed payouts (audit trail). Every
 // lever routes through the server's PaymentOpsService and is step-up gated.
+//
+// M-Pesa can't tell us a stuck payout's outcome from here, so the stale sweep
+// leaves those payouts in this queue instead of reversing them. The operator
+// looks the payout up in the M-Pesa portal and either confirms it paid (with
+// the receipt) or marks it failed.
 import { useCallback, useEffect, useState } from 'react'
 import Link from 'next/link'
-import { Banknote, Loader2, RefreshCw, XCircle, AlertTriangle, Info, Send } from 'lucide-react'
-import { finops, type FinopsQueues, type FinopsRow } from '@/lib/platform'
+import { Banknote, Loader2, RefreshCw, XCircle, AlertTriangle, Info, Send, CheckCircle2 } from 'lucide-react'
+import { finops, type FinopsAction, type FinopsQueues, type FinopsRow } from '@/lib/platform'
 import { apiError } from '@/lib/ops'
 import { useCan } from '@/store/ops'
 import { useStepUp } from '@/components/StepUp'
@@ -23,6 +28,8 @@ export default function FinopsPage() {
   const [msg, setMsg] = useState('')
   const [failFor, setFailFor] = useState<FinopsRow | null>(null)
   const [reason, setReason] = useState('')
+  const [paidFor, setPaidFor] = useState<FinopsRow | null>(null)
+  const [receipt, setReceipt] = useState('')
 
   const load = useCallback(() => {
     setStatus('loading')
@@ -30,15 +37,16 @@ export default function FinopsPage() {
   }, [minutes])
   useEffect(() => { load() }, [load])
 
-  const run = async (ft: FinopsRow, action: 'requery' | 'mark_failed' | 'retry_payout', why = '') => {
+  const run = async (ft: FinopsRow, action: FinopsAction, why = '', rcpt = '') => {
     setMsg('')
     let token: string
     try { token = await stepUp.request() } catch { return }
     setBusyId(ft.id)
     try {
-      const r = await finops.action(ft.id, action, why, token)
+      const r = await finops.action(ft.id, action, why, token, rcpt)
       setMsg(`#${ft.id}: ${r.data.result.detail}`)
       setFailFor(null); setReason('')
+      setPaidFor(null); setReceipt('')
       load()
     } catch (e) { setMsg(apiError(e, 'Action failed.')) }
     finally { setBusyId(null) }
@@ -52,6 +60,13 @@ export default function FinopsPage() {
           row={failFor} reason={reason} setReason={setReason}
           onCancel={() => { setFailFor(null); setReason('') }}
           onConfirm={() => run(failFor, 'mark_failed', reason.trim())}
+        />
+      )}
+      {paidFor && (
+        <ReceiptModal
+          row={paidFor} receipt={receipt} setReceipt={setReceipt}
+          onCancel={() => { setPaidFor(null); setReceipt('') }}
+          onConfirm={() => run(paidFor, 'confirm_paid', '', receipt.trim())}
         />
       )}
 
@@ -101,6 +116,7 @@ export default function FinopsPage() {
           onRequery={(ft) => run(ft, 'requery')}
           onRetry={(ft) => run(ft, 'retry_payout')}
           onFail={(ft) => { setFailFor(ft); setReason('') }}
+          onPaid={(ft) => { setPaidFor(ft); setReceipt('') }}
           emptyLabel={tab === 'stuck' ? 'No stuck payouts. The desk is clear.' : 'No failed payouts.'}
         />
       )}
@@ -108,10 +124,10 @@ export default function FinopsPage() {
   )
 }
 
-function Queue({ rows, actionable, busyId, onRequery, onRetry, onFail, emptyLabel }: {
+function Queue({ rows, actionable, busyId, onRequery, onRetry, onFail, onPaid, emptyLabel }: {
   rows: FinopsRow[]; actionable: boolean; busyId: number | null
   onRequery: (ft: FinopsRow) => void; onRetry: (ft: FinopsRow) => void
-  onFail: (ft: FinopsRow) => void; emptyLabel: string
+  onFail: (ft: FinopsRow) => void; onPaid: (ft: FinopsRow) => void; emptyLabel: string
 }) {
   if (rows.length === 0)
     return <div className="rounded-xl border border-dashed border-slate-300 py-16 text-center text-sm text-slate-500 dark:border-slate-700">{emptyLabel}</div>
@@ -158,6 +174,11 @@ function Queue({ rows, actionable, busyId, onRequery, onRetry, onFail, emptyLabe
                         {busyId === r.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Send className="h-3.5 w-3.5" />} Re-send
                       </button>
                     )}
+                    <button disabled={busyId === r.id} onClick={() => onPaid(r)}
+                      title="The M-Pesa portal shows this payout was paid"
+                      className="inline-flex items-center gap-1 rounded-lg border border-emerald-200 px-2 py-1 text-xs font-medium text-emerald-700 hover:bg-emerald-50 disabled:opacity-50 dark:border-emerald-500/30 dark:text-emerald-400 dark:hover:bg-emerald-500/10">
+                      <CheckCircle2 className="h-3.5 w-3.5" /> Paid
+                    </button>
                     <button disabled={busyId === r.id} onClick={() => onFail(r)}
                       className="inline-flex items-center gap-1 rounded-lg border border-red-200 px-2 py-1 text-xs font-medium text-red-600 hover:bg-red-50 disabled:opacity-50 dark:border-red-500/30 dark:text-red-400 dark:hover:bg-red-500/10">
                       <XCircle className="h-3.5 w-3.5" /> Fail
@@ -184,15 +205,41 @@ function ReasonModal({ row, reason, setReason, onCancel, onConfirm }: {
           <h2 className="text-base font-semibold">Mark payout #{row.id} failed</h2>
         </div>
         <p className="mb-3 text-sm text-slate-500">
-          The rail will be re-queried first — if it actually succeeded, the payout is finalised instead. Reserved funds are restored on failure. State the reason:
+          Check the M-Pesa portal first. M-Pesa can&apos;t confirm a payout&apos;s outcome from here, and failing one that was actually paid restores the funds to the pool, so the member is paid twice. Fail it only if the portal has no such payment. State the reason:
         </p>
         <textarea value={reason} onChange={(e) => setReason(e.target.value)} rows={3} autoFocus
-          placeholder="e.g. Rail confirms the B2C never left the float; member re-paid manually."
+          placeholder="e.g. No B2C to this number on the M-Pesa portal for this date."
           className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm outline-none focus:border-blue-500 dark:border-slate-700 dark:bg-slate-950" />
         <div className="mt-4 flex justify-end gap-2">
           <button onClick={onCancel} className="rounded-lg px-3.5 py-2 text-sm font-medium text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800">Cancel</button>
           <button onClick={onConfirm} disabled={reason.trim().length < 4}
             className="rounded-lg bg-red-600 px-3.5 py-2 text-sm font-medium text-white hover:bg-red-700 disabled:opacity-50">Continue</button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function ReceiptModal({ row, receipt, setReceipt, onCancel, onConfirm }: {
+  row: FinopsRow; receipt: string; setReceipt: (v: string) => void; onCancel: () => void; onConfirm: () => void
+}) {
+  return (
+    <div className="fixed inset-0 z-40 flex items-center justify-center bg-slate-900/40 p-4 backdrop-blur-sm">
+      <div className="w-full max-w-md rounded-2xl border border-slate-200 bg-white p-6 shadow-xl dark:border-slate-800 dark:bg-slate-900">
+        <div className="mb-3 flex items-center gap-2">
+          <CheckCircle2 className="h-5 w-5 text-emerald-600" />
+          <h2 className="text-base font-semibold">Confirm payout #{row.id} was paid</h2>
+        </div>
+        <p className="mb-3 text-sm text-slate-500">
+          Use this when the M-Pesa portal shows KES {row.amount} sent to {row.recipient_phone || 'the member'}. It settles the payout so it can never be reversed. Enter the M-Pesa receipt:
+        </p>
+        <input value={receipt} onChange={(e) => setReceipt(e.target.value)} autoFocus
+          placeholder="e.g. TIA7X2K9QP"
+          className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 font-mono text-sm uppercase outline-none focus:border-blue-500 dark:border-slate-700 dark:bg-slate-950" />
+        <div className="mt-4 flex justify-end gap-2">
+          <button onClick={onCancel} className="rounded-lg px-3.5 py-2 text-sm font-medium text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800">Cancel</button>
+          <button onClick={onConfirm} disabled={receipt.trim().length < 6}
+            className="rounded-lg bg-emerald-600 px-3.5 py-2 text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-50">Confirm paid</button>
         </div>
       </div>
     </div>

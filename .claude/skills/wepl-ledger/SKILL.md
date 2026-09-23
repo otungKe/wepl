@@ -286,14 +286,19 @@ Current as of master `68e8cf6`, 2026-09-21. Re-check before relying on any of
 it; the three items the first draft of this skill listed have since been fixed
 and are described above as history, not as live bugs.
 
-- **`ledger/tasks.py::_query_safaricom_status` can only ever return
-  `"UNKNOWN"`.** It fires a Daraja `TransactionStatusQuery`, whose real answer
-  arrives asynchronously on the `ResultURL`, and then returns `"UNKNOWN"` on
-  every path including success. So the `== "SUCCESS"` branch in
-  `recover_stale_processing_transactions` is **unreachable**: every payout still
-  `PROCESSING` after 60 minutes is force-failed and reversed, including one
-  Safaricom actually settled. Do not read the two-tier recovery docstring as a
-  description of behaviour.
+- **M-Pesa cannot tell us a stuck payout's outcome.** The Daraja
+  `TransactionStatusQuery` answers asynchronously on the `ResultURL`, under the
+  query's own ConversationID, so `request_payout_result` reports `unknown` on
+  every path and nothing yet correlates the later answer to its payout. Until
+  2026-09-23 the stale sweep treated `unknown` as failure and reversed every
+  payout stuck past 60 minutes — a double payout whenever Safaricom had paid.
+  **Fixed:** `payouts.py::recover_stale_processing_transactions` now reverses
+  only on a rail-confirmed failure; an unknown payout stays `PROCESSING` on the
+  FinOps desk until its late callback lands or an operator uses `confirm_paid`
+  (with the M-Pesa receipt) or `mark_failed`. The rule to keep: **a payout of
+  unknown outcome is never reversed by a machine.** `tests_stale_payout_sweep.py`
+  holds it end to end. What is still open is the correlation of the query's
+  answer, which needs one captured sandbox payload to confirm the field names.
 - **`apps/ledger` is now a leaf and must stay one (ADR-0033).** It imports
   `apps/core` and nothing else; `ledger/tasks.py` holds only `reconcile_ledger`.
   Anything the ledger needs from above is *handed* to it — `chokepoint.py` for
