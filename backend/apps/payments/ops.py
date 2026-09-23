@@ -212,28 +212,30 @@ class PaymentOpsService:
         uses (``PaymentService.resolve``), so operator recovery never leaves an
         intent↔FT drift or a privileged shortcut. Best-effort and idempotent — a
         missing or already-terminal intent is a no-op."""
-        ref = rail_for(ft).conversation_id
         try:
             from apps.payments.models import PaymentIntent
-            from apps.payments.providers.registry import get_provider
             from apps.payments.services import PaymentService
-            if ref:
+            intent = (PaymentIntent.objects
+                      .filter(financial_transaction=ft,
+                              direction=PaymentIntent.Direction.PAYOUT,
+                              status=PaymentIntent.Status.PENDING)
+                      .order_by('-created_at')
+                      .first())
+            if intent is None:
+                return
+            if intent.provider_ref:
+                # The intent's own provider, not whichever one is configured
+                # now: the payout was sent on the rail that minted it.
                 PaymentService.resolve(
-                    provider=get_provider().name, provider_ref=ref,
+                    provider=intent.provider, provider_ref=intent.provider_ref,
                     success=success, receipt=receipt, failure_message=reason or '')
                 return
             # No rail reference: the dispatch died between minting the intent
             # and recording the rail's answer. The intent is still the payout's
             # rail record, so settle it by its link instead of leaving it open.
-            intent = (PaymentIntent.objects
-                      .filter(financial_transaction=ft,
-                              direction=PaymentIntent.Direction.PAYOUT,
-                              status=PaymentIntent.Status.PENDING)
-                      .first())
-            if intent is not None:
-                intent.transition_to(
-                    PaymentIntent.Status.SUCCEEDED if success else PaymentIntent.Status.FAILED,
-                    receipt=receipt, failure_message=reason or '')
+            intent.transition_to(
+                PaymentIntent.Status.SUCCEEDED if success else PaymentIntent.Status.FAILED,
+                receipt=receipt, failure_message=reason or '')
         except Exception:
             logger.exception("PaymentOps: intent settlement failed for FT %s", ft.id)
 
