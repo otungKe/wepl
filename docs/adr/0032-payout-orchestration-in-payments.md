@@ -84,13 +84,15 @@ consumer still propagates. The ADR-0030 slice that has to move this code finds
 it already moved, out of the coverage-gated ledger core.
 
 **Costs.** One deploy window in which two task names are live; the shims are
-deletable once the queues have drained. `apps/payments/payouts.py` still reads
+deletable once the queues have drained.
+
+When this was written, `apps/payments/payouts.py` still read
 `FinancialTransaction.mpesa_conversation_id` — the rail vocabulary left in the
-ledger *model*. That is the other half of #159 and is not fixed here: renaming
-those columns is migration-bearing, and ADR-0030 plans to remove them outright,
-so renaming first would be a migration written to be thrown away. Payments is
-the rail layer, so reading a Daraja-named column from there is a wart rather
-than a boundary breach.
+ledger *model*, and the other half of #159. Renaming those columns would have
+been a migration written to be thrown away, since ADR-0030 planned to remove
+them outright; that removal has since landed (`ledger.0021`), so the
+correlation id now lives on the `PaymentIntent` and the ledger carries no
+Daraja vocabulary at all.
 
 **Not addressed.** The pre-existing stale-recovery limitation recorded against
 ADR-0028 stands: because the requery is asynchronous, tier-2 recovery cannot

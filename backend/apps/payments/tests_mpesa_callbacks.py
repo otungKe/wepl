@@ -9,6 +9,7 @@ from apps.core.models import OutboxDelivery, OutboxEvent
 from apps.ledger.models import FinancialTransaction
 from apps.ledger.writer import create_fin_transaction
 from apps.mpesa.models import MpesaSTKRequest
+from apps.payments.models import PaymentIntent
 from apps.payments.providers import registry
 from apps.payments.providers.fake import FakeProvider
 
@@ -74,7 +75,12 @@ class B2CResultViewTests(APITestCase):
             amount=Decimal("500"), initiated_by=self.user, recipient_phone="254700000701",
             initial_state=FinancialTransaction.State.PROCESSING,
         )
-        FinancialTransaction.objects.filter(pk=self.ft.pk).update(mpesa_conversation_id="AG_1")
+        # The dispatch's rail record: the correlation id lives on the intent
+        # (ADR-0030), which is what the callback resolves the movement through.
+        self.intent = PaymentIntent.objects.create(
+            provider="fake", direction=PaymentIntent.Direction.PAYOUT,
+            amount=self.ft.amount, idempotency_key=f"pi-payout-{self.ft.id}",
+            provider_ref="AG_1", financial_transaction=self.ft)
 
     def tearDown(self):
         registry.use_provider(None)
@@ -86,7 +92,8 @@ class B2CResultViewTests(APITestCase):
         self.assertEqual(resp.status_code, 200)
         self.ft.refresh_from_db()
         self.assertEqual(self.ft.state, FinancialTransaction.State.SUCCESS)
-        self.assertEqual(self.ft.mpesa_receipt, "NLJ7RT61SV")
+        self.intent.refresh_from_db()
+        self.assertEqual(self.intent.receipt, "NLJ7RT61SV")
 
     def test_failure_marks_ft_failed(self):
         resp = self.client.post(self.URL, {

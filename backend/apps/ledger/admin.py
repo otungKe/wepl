@@ -19,10 +19,14 @@ class ExchangeRateAdmin(admin.ModelAdmin):
 
 @admin.register(FinancialTransaction)
 class FinancialTransactionAdmin(admin.ModelAdmin):
+    # Rail columns left the ledger in ADR-0030; the receipt and the correlation
+    # id are on the PaymentIntent, which the ops console shows through the
+    # money-activity seam. Django admin searches the intent by relation.
     list_display  = ('id', 'op_type', 'state', 'amount', 'initiated_by', 'recipient_phone',
-                     'context_type', 'context_id', 'mpesa_receipt', 'created_at')
+                     'context_type', 'context_id', 'created_at')
     list_filter   = ('op_type', 'state')
-    search_fields = ('idempotency_key', 'mpesa_receipt', 'mpesa_conversation_id',
+    search_fields = ('idempotency_key', 'payment_intents__receipt',
+                     'payment_intents__provider_ref',
                      'initiated_by__phone_number')
     readonly_fields = ('idempotency_key', 'created_at', 'updated_at')
     ordering = ('-created_at',)

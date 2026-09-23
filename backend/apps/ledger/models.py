@@ -116,22 +116,6 @@ class FinancialTransaction(models.Model):
         on_delete=models.PROTECT, related_name='financial_transactions',
     )
 
-    # ── External payment tracking — RETIRED, awaiting removal (ADR-0030) ───────
-    # Rail vocabulary has no business in the book of record. PaymentIntent
-    # (ADR-0014) is now authoritative for this dimension: the payout dispatch
-    # records the intent *before* calling the rail, migration
-    # payments.0008 carried every historical value across, and no code reads
-    # these columns any more — readers go through apps.payments.money_activity,
-    # which still consults them only as a documented fallback. They are written
-    # and otherwise unused so the previous release keeps working during the
-    # deploy overlap (additive-first, P-7/E-2); the next slice drops all three
-    # along with that fallback. Do not add a reader.
-    #
-    # mpesa_checkout_id has never been written by any code path.
-    mpesa_checkout_id     = models.CharField(max_length=255, null=True, blank=True, unique=True)
-    mpesa_conversation_id = models.CharField(max_length=255, null=True, blank=True, unique=True)
-    mpesa_receipt         = models.CharField(max_length=50,  null=True, blank=True, unique=True)
-
     # ── Metadata ──────────────────────────────────────────────────────────────
     note           = models.TextField(blank=True)
     failure_reason = models.TextField(blank=True)
@@ -185,8 +169,7 @@ class FinancialTransaction(models.Model):
         self._committed_state = self.state
 
     def transition_to(self, new_state: str, *,
-                      failure_reason: str = '',
-                      mpesa_receipt: str = '') -> None:
+                      failure_reason: str = '') -> None:
         """
         Atomically advance the state machine.
 
@@ -205,8 +188,6 @@ class FinancialTransaction(models.Model):
         update_kwargs: dict = {'state': new_state, 'updated_at': timezone.now()}
         if failure_reason:
             update_kwargs['failure_reason'] = failure_reason
-        if mpesa_receipt:
-            update_kwargs['mpesa_receipt'] = mpesa_receipt
 
         rows = FinancialTransaction.objects.filter(
             pk=self.pk, state=self.state,
@@ -223,8 +204,6 @@ class FinancialTransaction(models.Model):
         self.state = new_state
         self._committed_state = new_state
         self._in_transition = False
-        if mpesa_receipt:
-            self.mpesa_receipt = mpesa_receipt
 
 
 

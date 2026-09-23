@@ -4,15 +4,14 @@
     python manage.py intent_coverage --sample 50  # more example rows
     python manage.py intent_coverage --strict     # exit non-zero unless ready
 
-Read-only: reports, never writes or repairs. This answers the question ADR-0030
-Slice A depends on — can PaymentIntent become authoritative for the rail
-dimension, or is a backfill needed first? Intents are populated best-effort
-(ADR-0014), so coverage must be measured rather than assumed.
+Read-only: reports, never writes or repairs. The payout side is covered by
+construction (the dispatch mints an intent before calling the rail); what this
+measures is the collection gap — the STK chokepoint mints its intent with no
+financial_transaction, and the paybill path mints none at all.
 
 The movements that should have an intent are found from the ledger (a journal
-touching a settlement account), not from FT's ``mpesa_*`` columns — those are
-written on the payout path only, so asking them would measure the one subset
-that is covered by construction. See ``apps/payments/coverage.py``.
+touching a settlement account), which is the only evidence there is: FT carries
+no rail columns (ADR-0030). See ``apps/payments/coverage.py``.
 """
 from django.core.management.base import BaseCommand
 
@@ -26,7 +25,7 @@ class Command(BaseCommand):
         parser.add_argument('--sample', type=int, default=20,
                             help='How many example problem rows to show (default 20).')
         parser.add_argument('--strict', action='store_true',
-                            help='Exit non-zero unless coverage is complete and agreeing.')
+                            help='Exit non-zero unless every rail movement has an intent.')
 
     def _rows(self, rows):
         for row in rows:
@@ -54,21 +53,13 @@ class Command(BaseCommand):
         self.stdout.write(
             f"rail movements: {r['total_rail_backed']}  "
             f"covered: {r['covered']} ({r['coverage_pct']}%)  "
-            f"uncovered: {r['uncovered']}  mismatched: {r['mismatched']}"
+            f"uncovered: {r['uncovered']}"
         )
         self.stdout.write(
             f"  linkable (intent exists, not linked): {r['linkable']}\n"
             f"  missing  (no intent anywhere):        {r['missing']}\n"
             f"  unattributable (needs triage):        {r['unattributable']}"
         )
-        self.stdout.write(
-            f"\nFT rail columns still populated: {r['legacy_rail_columns']}  "
-            f"of which without an agreeing intent: {r['legacy_at_risk']}"
-        )
-        if r['legacy_at_risk']:
-            self.stdout.write(self.style.WARNING(
-                "  ^ dropping FT's mpesa_* columns would lose this rail data outright."))
-
         if r['gap']:
             self.stdout.write("\nuncovered by op_type: " + str(r['uncovered_by_op_type']))
             self.stdout.write("uncovered by state:   " + str(r['uncovered_by_state']))
@@ -82,23 +73,16 @@ class Command(BaseCommand):
                 "or a payout still in flight):")
             self._rows(r['review_sample'])
 
-        if r['mismatched']:
-            self.stdout.write("\nexamples (intent disagrees with FT):")
-            for row in r['mismatch_sample']:
-                self.stdout.write(f"  FT-{row['ft_id']}: " + "; ".join(row['problems']))
-
         if r['verdict'] == READY:
             self.stdout.write(self.style.SUCCESS(
-                "\nEvery rail movement has an agreeing PaymentIntent — no backfill "
-                "needed for the Slice A cutover."))
+                "\nEvery rail movement has a PaymentIntent — no backfill needed."))
             return
 
         if r['verdict'] == NEEDS_BACKFILL:
             self.stdout.write(self.style.WARNING(
                 f"\nNOT ready: {r['linkable']} intent(s) need linking to their FT and "
-                f"{r['missing']} need minting from rail records"
-                + (f", plus {r['mismatched']} mismatch(es) to triage" if r['mismatched'] else "")
-                + ", before PaymentIntent can be authoritative for the rail dimension."))
+                f"{r['missing']} need minting from rail records, before every rail "
+                "movement is represented by an intent."))
         elif r['verdict'] == NEEDS_REVIEW:
             self.stdout.write(self.style.WARNING(
                 f"\nNOT ready: every correlated movement is covered, but "

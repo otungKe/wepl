@@ -6,11 +6,10 @@ dissolve: callers migrate onto this seam now, and its internals move off FT (ont
 the ``JournalEntry`` idempotency_key + ``PaymentIntent``) across ADR-0030's later
 slices **without changing this API**.
 
-Today it is anchored on a ``FinancialTransaction`` and reads the rail dimension from
-the linked ``PaymentIntent`` (the rail source of truth, ADR-0014), falling back to
-FT's own ``mpesa_*`` columns while they still exist (they are removed in Slice A).
-"Prefer the intent, fall back to FT" means no reader loses data during the
-migration.
+Today it is anchored on a ``FinancialTransaction`` and reads the rail dimension
+from the linked ``PaymentIntent``, which is the only source of it: FT's
+``mpesa_*`` columns are gone (ADR-0030), their values carried into intents by
+``payments.0008``.
 
 It is a **view, never a source of truth** (ADR-0002): nothing here is stored.
 
@@ -57,7 +56,10 @@ class MoneyActivity:
 
 
 def rail_for(ft) -> RailInfo:
-    """Rail info, preferring the linked PaymentIntent over FT's legacy columns.
+    """Rail info from the movement's linked PaymentIntent.
+
+    A movement with no intent never touched a rail (an internal reallocation, a
+    surplus distribution), and correctly reports an empty ``RailInfo``.
 
     Uses ``.all()`` and picks the latest intent in Python rather than
     ``.order_by(...).first()``, so a caller that has done
@@ -67,23 +69,20 @@ def rail_for(ft) -> RailInfo:
     """
     intents = list(ft.payment_intents.all())
     intent = max(intents, key=lambda i: i.pk) if intents else None
-    if intent is not None and intent.provider_ref:
-        is_payout = intent.direction == PaymentIntent.Direction.PAYOUT
-        return RailInfo(
-            provider=intent.provider,
-            direction=intent.direction,
-            status=intent.status,
-            checkout_id=(ft.mpesa_checkout_id or "") if is_payout else intent.provider_ref,
-            conversation_id=intent.provider_ref if is_payout else (ft.mpesa_conversation_id or ""),
-            receipt=intent.receipt or ft.mpesa_receipt or "",
-        )
-    # No usable intent (internal movement, or intent not yet populated) → fall back
-    # to FT's own rail columns while they exist.
+    if intent is None:
+        return RailInfo()
+
+    # The correlation id means different things by direction: a CheckoutRequestID
+    # going in, a ConversationID going out. One field on the intent, two names
+    # here, because that is what operators and Safaricom call them.
+    is_payout = intent.direction == PaymentIntent.Direction.PAYOUT
     return RailInfo(
-        provider="mpesa" if (ft.mpesa_conversation_id or ft.mpesa_checkout_id) else "",
-        checkout_id=ft.mpesa_checkout_id or "",
-        conversation_id=ft.mpesa_conversation_id or "",
-        receipt=ft.mpesa_receipt or "",
+        provider=intent.provider,
+        direction=intent.direction,
+        status=intent.status,
+        checkout_id="" if is_payout else intent.provider_ref,
+        conversation_id=intent.provider_ref if is_payout else "",
+        receipt=intent.receipt or "",
     )
 
 
@@ -107,16 +106,12 @@ def financial_transaction_for_ref(provider_ref: str, *, provider: str = ""):
 
     The reverse of ``rail_for``: a callback arrives carrying only the rail's own
     id, and the movement it settles has to be found from it. The link lives on
-    ``PaymentIntent.financial_transaction`` (ADR-0014), which is authoritative for
-    the rail dimension; FT's ``mpesa_conversation_id`` is the legacy path and is
-    tried second so a row written before the backfill still resolves. That
-    fallback goes with the column in ADR-0030's next slice.
+    ``PaymentIntent.financial_transaction`` (ADR-0014), which is the only place
+    it lives now that FT's ``mpesa_conversation_id`` is gone (ADR-0030).
 
     Returns None when nothing matches — a callback for a movement this system
     never initiated.
     """
-    from apps.ledger.models import FinancialTransaction
-
     if not provider_ref:
         return None
 
@@ -125,8 +120,4 @@ def financial_transaction_for_ref(provider_ref: str, *, provider: str = ""):
     if provider:
         intents = intents.filter(provider=provider)
     intent = intents.select_related('financial_transaction').order_by('-pk').first()
-    if intent is not None:
-        return intent.financial_transaction
-
-    return FinancialTransaction.objects.filter(
-        mpesa_conversation_id=provider_ref).first()
+    return intent.financial_transaction if intent is not None else None

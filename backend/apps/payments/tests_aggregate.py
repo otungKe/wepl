@@ -365,7 +365,7 @@ class OperatorRecoverySettlesIntentTests(TestCase):
         self.addCleanup(registry.use_provider, None)
 
     def _payout(self, state, conv="CONV1"):
-        ft = make_ft(state=state, mpesa_conversation_id=conv)
+        ft = make_ft(state=state)
         PaymentService.record_initiation(
             provider=self.fake.name, direction=D.PAYOUT, amount=ft.amount,
             idempotency_key=f"pi-{ft.id}", provider_ref=conv, financial_transaction=ft)

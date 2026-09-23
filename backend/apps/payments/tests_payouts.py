@@ -27,6 +27,22 @@ from apps.payments.providers import registry
 User = get_user_model()
 
 
+def mark_dispatched(ft, provider_ref: str, **over) -> PaymentIntent:
+    """Give an FT the rail record a dispatched payout would have.
+
+    The correlation id lives on the intent now (ADR-0030) — FT has no rail
+    columns — so a test that needs "this payout was already sent" has to say so
+    the way the dispatch path does.
+    """
+    kwargs = dict(
+        provider="fake", direction=PaymentIntent.Direction.PAYOUT,
+        amount=ft.amount, idempotency_key=f"pi-payout-{ft.id}",
+        provider_ref=provider_ref, financial_transaction=ft,
+    )
+    kwargs.update(over)
+    return PaymentIntent.objects.create(**kwargs)
+
+
 class _ProviderMixin:
     """Install a FakeProvider for the duration of a test."""
 
@@ -54,7 +70,8 @@ class ExecutePayoutDispatchTests(_ProviderMixin, TestCase):
         self.ft.refresh_from_db()
         self.assertTrue(result.startswith("dispatched:"))
         self.assertEqual(self.ft.state, FinancialTransaction.State.PROCESSING)
-        self.assertEqual(self.ft.mpesa_conversation_id, provider.payouts[0]['provider_ref'])
+        intent = PaymentIntent.objects.get(financial_transaction=self.ft)
+        self.assertEqual(intent.provider_ref, provider.payouts[0]['provider_ref'])
 
     def test_dispatch_passes_money_and_reference_to_the_provider(self):
         provider = self.use_fake()
@@ -132,7 +149,7 @@ class ExecutePayoutGuardTests(_ProviderMixin, TestCase):
 
     def test_already_dispatched(self):
         ft = self._ft("guard-dispatched", initial_state=FinancialTransaction.State.PROCESSING)
-        FinancialTransaction.objects.filter(pk=ft.pk).update(mpesa_conversation_id="AG_X")
+        mark_dispatched(ft, "AG_X")
         self.assertEqual(execute_payout(ft.id), "b2c_already_sent")
         self.assertEqual(self.provider.payouts, [])
 
@@ -170,8 +187,7 @@ class QueryPayoutStatusTests(_ProviderMixin, TestCase):
 
     def test_maps_the_ports_states(self):
         provider = self.use_fake()
-        FinancialTransaction.objects.filter(pk=self.ft.pk).update(mpesa_conversation_id="AG_1")
-        self.ft.refresh_from_db()
+        mark_dispatched(self.ft, "AG_1")
         for state, expected in (("success", "SUCCESS"), ("failed", "FAILED"),
                                 ("unknown", "UNKNOWN"), ("pending", "UNKNOWN")):
             with patch.object(provider, "request_payout_result",
@@ -180,8 +196,7 @@ class QueryPayoutStatusTests(_ProviderMixin, TestCase):
 
     def test_a_rail_error_is_unknown_not_a_crash(self):
         provider = self.use_fake()
-        FinancialTransaction.objects.filter(pk=self.ft.pk).update(mpesa_conversation_id="AG_1")
-        self.ft.refresh_from_db()
+        mark_dispatched(self.ft, "AG_1")
         with patch.object(provider, "request_payout_result", side_effect=RuntimeError("boom")):
             self.assertEqual(_query_payout_status(self.ft), "UNKNOWN")
 
@@ -193,8 +208,7 @@ class QueryPayoutStatusTests(_ProviderMixin, TestCase):
 
     def test_recovery_passes_the_ft_reference_to_the_port(self):
         provider = self.use_fake()
-        FinancialTransaction.objects.filter(pk=self.ft.pk).update(mpesa_conversation_id="AG_1")
-        self.ft.refresh_from_db()
+        mark_dispatched(self.ft, "AG_1")
         with patch.object(provider, "request_payout_result",
                           return_value=StatusResult(state="unknown")) as m:
             _query_payout_status(self.ft)

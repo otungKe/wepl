@@ -1,11 +1,17 @@
 """PaymentIntent becomes authoritative for the rail dimension (ADR-0030).
 
-FT's ``mpesa_*`` columns are written on the payout path only, and ADR-0030 drops
-them. Before that can happen the intent has to be the thing every reader
-consults and every dispatch records — not a best-effort shadow written after the
-money already moved. These tests pin that inversion: the intent exists before
-the rail is called, the correlation id lands on it, and the callback, the
-operator levers and the stale sweep all find the movement through it.
+FT's ``mpesa_*`` columns were written on the payout path only, and ADR-0030 has
+now dropped them. The intent had first to become the thing every reader consults
+and every dispatch records — not a best-effort shadow written after the money
+already moved. These tests pin that inversion: the intent exists before the rail
+is called, the correlation id lands on it, and the callback, the operator levers
+and the stale sweep all find the movement through it.
+
+The backfill that carried the columns' values into intents
+(``payments.0008``) was exercised against the live models while they still
+existed. Its inputs cannot be constructed any more, so those tests went with the
+columns; the migration itself stays in the chain and is a no-op on a database
+that never had them.
 """
 from decimal import Decimal
 from unittest.mock import patch
@@ -76,13 +82,13 @@ class IntentIsRecordedBeforeDispatchTests(_PayoutCase):
             PaymentIntent.objects.filter(financial_transaction=ft).count(), 1)
         self.assertEqual(len(self.provider.payouts), 1)
 
-    def test_the_double_send_guard_reads_the_intent_not_the_column(self):
+    def test_the_double_send_guard_reads_the_intent(self):
         ft = self._ft(initial_state=FinancialTransaction.State.PROCESSING)
         PaymentIntent.objects.create(
             provider="fake", direction=PaymentIntent.Direction.PAYOUT,
             amount=ft.amount, idempotency_key="pi-elsewhere",
             provider_ref="ALREADY_SENT", financial_transaction=ft)
-        # FT's own column is empty — only the intent knows it was dispatched.
+        # The intent is the only record that this payout already went out.
         self.assertEqual(execute_payout(ft.id), "b2c_already_sent")
         self.assertEqual(self.provider.payouts, [])
 
@@ -92,87 +98,27 @@ class RailLookupTests(_PayoutCase):
         ft = self._ft()
         execute_payout(ft.id)
         ref = self.provider.payouts[0]["provider_ref"]
-        # Clear the legacy column so only the intent can answer.
-        FinancialTransaction.objects.filter(pk=ft.pk).update(mpesa_conversation_id=None)
         found = money_activity.financial_transaction_for_ref(ref, provider="fake")
         self.assertEqual(found.id, ft.id)
 
-    def test_a_legacy_row_with_no_intent_still_resolves_from_the_column(self):
-        ft = self._ft(key="rail-auth-legacy")
-        FinancialTransaction.objects.filter(pk=ft.pk).update(
-            mpesa_conversation_id="AG_LEGACY")
-        found = money_activity.financial_transaction_for_ref("AG_LEGACY")
-        self.assertEqual(found.id, ft.id)
+    def test_a_movement_with_no_intent_cannot_be_reached_by_reference(self):
+        """There is no column left to fall back to: no intent, no rail identity."""
+        self._ft(key="rail-auth-no-intent")
+        self.assertIsNone(money_activity.financial_transaction_for_ref("AG_NOTHING"))
 
     def test_an_unknown_reference_resolves_to_nothing(self):
         self.assertIsNone(money_activity.financial_transaction_for_ref("AG_NOBODY"))
         self.assertIsNone(money_activity.financial_transaction_for_ref(""))
 
-    def test_rail_info_prefers_the_intent_over_the_column(self):
+    def test_rail_info_reads_the_intent(self):
         ft = self._ft()
         execute_payout(ft.id)
         ref = self.provider.payouts[0]["provider_ref"]
-        FinancialTransaction.objects.filter(pk=ft.pk).update(
-            mpesa_conversation_id="STALE_COLUMN")
-        ft.refresh_from_db()
         self.assertEqual(money_activity.rail_for(ft).conversation_id, ref)
 
-
-class BackfillMigrationTests(TestCase):
-    """The data migration's logic, exercised against the live models — the
-    columns still exist, so the same two branches apply."""
-
-    def setUp(self):
-        self.user = User.objects.create(phone_number="+254700000902")
-
-    def _ft(self, key, **columns):
-        ft, _ = create_fin_transaction(
-            idempotency_key=key, op_type=FinancialTransaction.OpType.DISBURSEMENT,
-            amount=Decimal("400"), initiated_by=self.user,
-            recipient_phone="254700000902")
-        if columns:
-            FinancialTransaction.objects.filter(pk=ft.pk).update(**columns)
-            ft.refresh_from_db()
-        return ft
-
-    def _run(self):
-        # The migration module's name starts with a digit, so it is imported by
-        # path rather than with a plain `from ... import`.
-        import importlib
-
-        from django.apps import apps as django_apps
-        mod = importlib.import_module(
-            "apps.payments.migrations.0008_backfill_payout_intents")
-        mod.backfill(django_apps, None)
-
-    def test_an_unlinked_intent_is_attached_rather_than_duplicated(self):
-        ft = self._ft("bf-link", mpesa_conversation_id="AG_LINK")
-        PaymentIntent.objects.create(
-            provider="mpesa", direction=PaymentIntent.Direction.PAYOUT,
-            amount=ft.amount, idempotency_key="pi-orphan", provider_ref="AG_LINK")
-        self._run()
-        self.assertEqual(PaymentIntent.objects.filter(provider_ref="AG_LINK").count(), 1)
-        self.assertEqual(
-            PaymentIntent.objects.get(provider_ref="AG_LINK").financial_transaction_id,
-            ft.id)
-
-    def test_a_movement_with_no_intent_gets_one_minted_from_its_columns(self):
-        ft = self._ft("bf-mint", mpesa_conversation_id="AG_MINT",
-                      mpesa_receipt="RCP_MINT")
-        self._run()
-        intent = PaymentIntent.objects.get(idempotency_key=f"pi-payout-{ft.id}")
-        self.assertEqual(intent.provider_ref, "AG_MINT")
-        self.assertEqual(intent.receipt, "RCP_MINT")
-        self.assertEqual(intent.financial_transaction_id, ft.id)
-        self.assertEqual(intent.amount, ft.amount)
-
-    def test_running_it_twice_changes_nothing(self):
-        ft = self._ft("bf-idem", mpesa_conversation_id="AG_IDEM")
-        self._run()
-        self._run()
-        self.assertEqual(PaymentIntent.objects.filter(financial_transaction=ft).count(), 1)
-
-    def test_a_movement_with_no_rail_columns_is_left_alone(self):
-        ft = self._ft("bf-internal")
-        self._run()
-        self.assertFalse(PaymentIntent.objects.filter(financial_transaction=ft).exists())
+    def test_an_ft_with_no_intent_has_no_rail(self):
+        ft = self._ft(key="rail-auth-internal")
+        rail = money_activity.rail_for(ft)
+        self.assertFalse(rail.has_rail)
+        self.assertEqual(rail.conversation_id, "")
+        self.assertEqual(rail.receipt, "")

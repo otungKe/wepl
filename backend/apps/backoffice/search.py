@@ -48,10 +48,8 @@ def _transactions(q: str, limit: int) -> list[dict]:
     from django.db.models import Q
     from apps.ledger.models import FinancialTransaction
     from .views_transactions import _ref_to_pk
-    # Receipt lives on the PaymentIntent (ADR-0014); FT's column is still
-    # matched for rows written before the backfill (ADR-0030 drops it next).
+    # The receipt lives on the PaymentIntent (ADR-0014/0030).
     cond = (Q(payment_intents__receipt__iexact=q)
-            | Q(mpesa_receipt__iexact=q)
             | Q(initiated_by__phone_number__icontains=q)
             | Q(idempotency_key__iexact=q))
     pk = _ref_to_pk(q)   # bare id or WEPL-TXN-000123

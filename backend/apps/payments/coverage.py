@@ -1,34 +1,30 @@
-"""PaymentIntent coverage of rail-backed FinancialTransactions (ADR-0030 Slice A).
+"""PaymentIntent coverage of rail-backed FinancialTransactions (ADR-0030).
 
-Before ``PaymentIntent`` can become **authoritative** for the rail dimension — and
-before FT's ``mpesa_*`` columns can be dropped — every FT that moved money over a
-rail must actually *have* an intent, carrying the same correlation id and receipt.
-Intents are populated best-effort today (ADR-0014 wires them at the provider
-chokepoints inside ``try/except`` so payment bookkeeping can never break the money
-path), so coverage is an open question, not a given.
+``PaymentIntent`` is now the rail record: FT's ``mpesa_*`` columns are gone and
+the payout path mints an intent before it calls the rail. The **payout** side is
+therefore covered by construction. The **collection** side is not — the STK
+chokepoint mints its intent with no ``financial_transaction`` and nothing ever
+fills it in, and the paybill (C2B) path never had an initiation to record at all.
 
-This module answers it. It is **read-only**: it reports, it never writes and never
-repairs. A backfill (if the report says one is needed) is a separate, deliberate
-step.
+This module measures that remaining gap. It is **read-only**: it reports, it
+never writes and never repairs. A backfill is a separate, deliberate step, and
+this report is what decides whether one is needed.
 
 Finding the movements that *should* have an intent
 --------------------------------------------------
-The obvious test — "does this FT carry a ``mpesa_*`` column?" — is wrong, and
-wrong in the dangerous direction. Those columns are written **only on the payout
-path** (``apps/ledger/tasks.py`` stamps ``mpesa_conversation_id``, the B2C callback
-stamps ``mpesa_receipt``); ``create_fin_transaction`` takes no rail arguments at
-all, so *every* collection FT — contributions, welfare, shares, advance
-repayments, STK and paybill alike — has all three NULL. Payouts are also the only
-path that links its intent to its FT. Asking FT's columns therefore measures the
-one subset that is covered by construction, and reports "100%, ready for cutover"
-on a database where the entire collection side is missing.
+Not by asking the movement whether it looks rail-ish — that question is what
+made the first version of this report wrong, and wrong in the dangerous
+direction. It asked FT's own ``mpesa_*`` columns, which were written on the
+payout path only, so it measured the one subset that was covered by construction
+and answered "100%, ready for cutover" on a database whose entire collection half
+was missing.
 
-So the rail leg is discovered from the **ledger** instead, which cannot be
-sidestepped by a column nobody writes: money crosses the external boundary only
-by moving through a settlement account (``coa.MPESA_FLOAT``), so an FT whose
-journal touches one moved real money. That catches collections and payouts alike,
-and correctly leaves out the purely internal movements (ownership reallocation,
-surplus distribution) that never touch the boundary.
+The rail leg is discovered from the **ledger** instead, which no missing column
+can hide: money crosses the external boundary only by moving through a settlement
+account (``coa.MPESA_FLOAT``), so an FT whose journal touches one moved real
+money. That catches collections and payouts alike, and correctly leaves out the
+purely internal movements (ownership reallocation, surplus distribution) that
+never touch the boundary.
 
 Vocabulary
 ----------
@@ -47,9 +43,6 @@ Vocabulary
                      posting) look like this, and so does a payout still in
                      flight before dispatch. Needs a human, so it is never
                      silently counted as ready.
-*Mismatched*         covered, but the intent's ``provider_ref``/``receipt``
-                     disagrees with the FT's columns — coverage without
-                     agreement, which would silently change reads at cutover.
 """
 from __future__ import annotations
 
@@ -86,15 +79,6 @@ def _looks_like_receipt(token: str) -> bool:
             and any(c.isalpha() for c in token)
             and any(c.isdigit() for c in token))
 
-# FTs still carrying rail evidence in their own columns. This is no longer how
-# the rail leg is *found*, but it is exactly the set whose data would be lost if
-# Slice A dropped the columns — so it is still measured, separately.
-_LEGACY_RAIL_COLUMNS = (
-    ~Q(mpesa_conversation_id__isnull=True) & ~Q(mpesa_conversation_id='')
-    | ~Q(mpesa_checkout_id__isnull=True) & ~Q(mpesa_checkout_id='')
-    | ~Q(mpesa_receipt__isnull=True) & ~Q(mpesa_receipt='')
-)
-
 # Verdicts, in ascending order of "safe to proceed".
 NEEDS_BACKFILL = 'needs_backfill'
 NEEDS_REVIEW = 'needs_review'
@@ -120,22 +104,25 @@ def settlement_backed_ft_ids():
 def rail_backed_transactions():
     """Every FT that moved money over a rail, intents prefetched.
 
-    The union of the ledger-derived settlement set and the FTs still carrying
-    legacy rail columns — the latter so a payout whose journal is missing (the
-    very drift this report exists to surface) cannot slip out of the denominator.
+    Purely ledger-derived now. The old definition also unioned in FTs carrying
+    legacy ``mpesa_*`` columns, so that a payout whose journal was missing could
+    not slip out of the denominator; those columns are gone (ADR-0030), and the
+    journal is the only evidence left — which is the evidence this report always
+    argued was the right one.
     """
     from apps.ledger.models import FinancialTransaction
     return (FinancialTransaction.objects
-            .filter(Q(id__in=settlement_backed_ft_ids()) | _LEGACY_RAIL_COLUMNS)
+            .filter(id__in=settlement_backed_ft_ids())
             .prefetch_related('payment_intents'))
 
 
 def receipt_hint(ft) -> str:
-    """The rail receipt recorded against this FT, if any.
+    """The rail receipt recoverable from this FT, if any.
 
-    Payouts carry it in a column. Collections do not: ``create_fin_transaction``
-    has no rail parameters, so the receipt survives only inside the idempotency
-    key the service built from it — ``contrib-stk-<receipt>``,
+    FT stores no receipt of its own any more (ADR-0030), and
+    ``create_fin_transaction`` never took rail parameters, so on an uncovered
+    movement the receipt survives only inside the idempotency key the service
+    built from it — ``contrib-stk-<receipt>``,
     ``contrib-<fund_id>-<receipt>``, ``welfare-contrib-<fund_id>-<user_id>-<receipt>``,
     ``shares-<fund_id>-<user_id>-<receipt>``, ``advance-repay-<advance_id>-<receipt>``.
 
@@ -144,14 +131,12 @@ def receipt_hint(ft) -> str:
     that is a sentinel (``-manual``) or a bare row id (``welfare-claim-42``) is
     rejected, so an off-rail posting is not mistaken for a gap.
     """
-    if ft.mpesa_receipt:
-        return ft.mpesa_receipt
     tail = (ft.idempotency_key or '').rsplit('-', 1)[-1]
     return tail if _looks_like_receipt(tail) else ''
 
 
-def _unlinked_intent_index() -> tuple[dict[str, int], dict[str, int]]:
-    """Intents with no FT of their own, indexed by receipt and by provider ref.
+def _unlinked_intent_index() -> dict[str, int]:
+    """Intents with no FT of their own, indexed by receipt.
 
     These are the collection intents the STK chokepoint mints before its FT
     exists (``record_initiation`` is called with no ``financial_transaction``,
@@ -160,44 +145,23 @@ def _unlinked_intent_index() -> tuple[dict[str, int], dict[str, int]]:
     """
     from apps.payments.models import PaymentIntent
     by_receipt: dict[str, int] = {}
-    by_ref: dict[str, int] = {}
-    for pk, receipt, ref in (PaymentIntent.objects
-                             .filter(financial_transaction__isnull=True)
-                             .values_list('id', 'receipt', 'provider_ref')):
-        if receipt:
-            by_receipt.setdefault(receipt, pk)
-        if ref:
-            by_ref.setdefault(ref, pk)
-    return by_receipt, by_ref
+    for pk, receipt in (PaymentIntent.objects
+                        .filter(financial_transaction__isnull=True)
+                        .exclude(receipt='')
+                        .values_list('id', 'receipt')):
+        by_receipt.setdefault(receipt, pk)
+    return by_receipt
 
 
-def _mismatches(ft, intents) -> list[str]:
-    """Where an intent exists but disagrees with the FT's own rail columns."""
-    out = []
-    refs = {i.provider_ref for i in intents if i.provider_ref}
-    receipts = {i.receipt for i in intents if i.receipt}
-
-    ft_ref = ft.mpesa_conversation_id or ft.mpesa_checkout_id or ''
-    if ft_ref and refs and ft_ref not in refs:
-        out.append(f"provider_ref {sorted(refs)} != FT {ft_ref!r}")
-    if ft.mpesa_receipt and receipts and ft.mpesa_receipt not in receipts:
-        out.append(f"receipt {sorted(receipts)} != FT {ft.mpesa_receipt!r}")
-    return out
-
-
-def _classify_uncovered(ft, by_receipt, by_ref) -> tuple[str, int | None]:
+def _classify_uncovered(ft, by_receipt) -> tuple[str, int | None]:
     """Why this settlement-backed FT has no intent — and whether one can be found.
 
     Returns ``(bucket, linkable_intent_id)``.
     """
-    ref = ft.mpesa_conversation_id or ft.mpesa_checkout_id or ''
-    if ref and ref in by_ref:
-        return 'linkable', by_ref[ref]
-
     receipt = receipt_hint(ft)
     if receipt and receipt in by_receipt:
         return 'linkable', by_receipt[receipt]
-    if receipt or ref:
+    if receipt:
         # Real rail evidence, but nothing to link it to — an intent has to be
         # minted from the rail's own records (the paybill case).
         return 'missing', None
@@ -212,45 +176,25 @@ def intent_coverage(*, sample: int = 20) -> dict:
     """Report PaymentIntent coverage over every FT that moved money over a rail.
 
     Returns counts plus a bounded sample of the problem rows, so the caller can
-    decide whether a backfill is needed before the Slice A cutover.
+    decide whether a backfill is needed.
     """
-    by_receipt, by_ref = _unlinked_intent_index()
+    by_receipt = _unlinked_intent_index()
 
-    total = covered = mismatched = 0
+    total = covered = 0
     linkable = missing = unattributable = 0
-    legacy_rail = legacy_at_risk = 0
     uncovered_by_op: dict[str, int] = {}
     uncovered_by_state: dict[str, int] = {}
     uncovered_by_bucket: dict[str, int] = {}
     uncovered_sample: list[dict] = []
-    mismatch_sample: list[dict] = []
     review_sample: list[dict] = []
 
     for ft in rail_backed_transactions().iterator(chunk_size=500):
         total += 1
-        intents = list(ft.payment_intents.all())
-        has_legacy = bool(ft.mpesa_conversation_id or ft.mpesa_checkout_id
-                          or ft.mpesa_receipt)
-        if has_legacy:
-            legacy_rail += 1
-
-        if intents:
+        if ft.payment_intents.all():
             covered += 1
-            problems = _mismatches(ft, intents)
-            if problems:
-                mismatched += 1
-                if has_legacy:
-                    legacy_at_risk += 1
-                if len(mismatch_sample) < sample:
-                    mismatch_sample.append({'ft_id': ft.id, 'problems': problems})
             continue
 
-        if has_legacy:
-            # Rail data living only on FT, with no intent to carry it forward:
-            # dropping the columns in Slice A would lose it outright.
-            legacy_at_risk += 1
-
-        bucket, intent_id = _classify_uncovered(ft, by_receipt, by_ref)
+        bucket, intent_id = _classify_uncovered(ft, by_receipt)
         _bump(uncovered_by_bucket, bucket)
         if bucket == 'linkable':
             linkable += 1
@@ -265,9 +209,6 @@ def intent_coverage(*, sample: int = 20) -> dict:
         row = {
             'ft_id': ft.id, 'op_type': ft.op_type, 'state': ft.state,
             'bucket': bucket,
-            'conversation_id': ft.mpesa_conversation_id or '',
-            'checkout_id': ft.mpesa_checkout_id or '',
-            'receipt': ft.mpesa_receipt or '',
             'receipt_hint': receipt_hint(ft),
             'linkable_intent_id': intent_id,
         }
@@ -286,7 +227,7 @@ def intent_coverage(*, sample: int = 20) -> dict:
 
     if total == 0:
         verdict = NO_DATA
-    elif gap or mismatched:
+    elif gap:
         verdict = NEEDS_BACKFILL
     elif unattributable:
         verdict = NEEDS_REVIEW
@@ -298,29 +239,22 @@ def intent_coverage(*, sample: int = 20) -> dict:
         'covered': covered,
         'uncovered': uncovered,
         'coverage_pct': pct,          # None when there is nothing to measure
-        'mismatched': mismatched,
         # The gap, split by what closing it actually takes.
         'linkable': linkable,         # backfill = set financial_transaction_id
         'missing': missing,           # backfill = mint an intent from rail records
         'unattributable': unattributable,   # triage: off-rail, or still in flight
         'gap': gap,
-        # The Slice A column-drop question: rail data that today lives only on
-        # FT, and would be lost outright if the columns went away.
-        'legacy_rail_columns': legacy_rail,
-        'legacy_at_risk': legacy_at_risk,
         'uncovered_by_op_type': uncovered_by_op,
         'uncovered_by_state': uncovered_by_state,
         'uncovered_by_bucket': uncovered_by_bucket,
         'uncovered_sample': uncovered_sample,
-        'mismatch_sample': mismatch_sample,
         'review_sample': review_sample,
         # No settlement-backed FTs at all means this database cannot answer the
         # question (an empty dev DB, or the wrong target) — deliberately NOT the
         # same as "ready", so an empty run can never green-light the cutover.
         'no_data': total == 0,
         'verdict': verdict,
-        # Authoritative only when every rail movement has an agreeing intent,
-        # and nothing was left unexplained — and only when there was something
-        # to check.
+        # Authoritative only when every rail movement has an intent and nothing
+        # was left unexplained — and only when there was something to check.
         'ready_for_cutover': verdict == READY,
     }

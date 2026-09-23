@@ -13,7 +13,7 @@ counts exactly like a top-level one) and assert five things:
 * ``apps.core`` is the foundation and depends on no sibling app.
 * ``apps.ledger`` is the book of record and depends on nothing but ``core`` —
   including the ADR-0007 controls chokepoint, which is registered *into* the
-  ledger rather than imported *by* it.
+  ledger rather than imported *by* it — and stores no rail vocabulary either.
 * ``apps.mpesa`` is a Daraja wire client and depends on no sibling app at all.
 * ``apps.verification`` is the identity ledger and depends on nothing but
   ``core``: what a decision *does* elsewhere registers into
@@ -208,6 +208,52 @@ class LedgerIsALeafTests(SimpleTestCase):
             "inside post_journal registers into apps.ledger.chokepoint (ADR-0007) "
             "instead of being imported here.\n"
             f"Found: {stray}",
+        )
+
+    def test_ledger_models_carry_no_rail_vocabulary(self):
+        """No ledger model field is named after a payment rail (#159, ADR-0030).
+
+        The import check above says the ledger does not *call* a rail. This says
+        it does not *store* one either — which is the half of #159 that survived
+        the payout-orchestration move, as three Daraja-named columns on
+        ``FinancialTransaction``. They were dropped in ``ledger.0021``: the rail
+        dimension is ``payments.PaymentIntent``'s, read through
+        ``apps.payments.money_activity``, and a column here would be a second
+        copy of it — which is how they drifted in the first place (the payout
+        path wrote them, the collection path never did).
+
+        Field declarations only. ``coa.MPESA_FLOAT`` is a chart-of-accounts code
+        for the settlement account, not a rail detail, and prose describing a
+        counterparty's registered M-Pesa name is not a field.
+        """
+        rail_words = ("mpesa", "daraja", "safaricom", "stk", "b2c", "c2b")
+        offenders: dict[str, list[str]] = {}
+        for path in sorted((APPS_DIR / "ledger").rglob("*.py")):
+            if "migrations" in path.parts or _is_test_module(path):
+                continue
+            tree = ast.parse(path.read_text(), filename=str(path))
+            for node in ast.walk(tree):
+                if not isinstance(node, ast.Assign):
+                    continue
+                call = node.value
+                if not (isinstance(call, ast.Call)
+                        and isinstance(call.func, ast.Attribute)
+                        and isinstance(call.func.value, ast.Name)
+                        and call.func.value.id == "models"):
+                    continue
+                for target in node.targets:
+                    name = getattr(target, "id", "")
+                    if any(word in name.lower() for word in rail_words):
+                        offenders.setdefault(
+                            str(path.relative_to(APPS_DIR)), []).append(name)
+
+        self.assertEqual(
+            offenders, {},
+            "A rail-named field was added to a ledger model. The ledger answers "
+            "what a balance is, never which rail carried it: the correlation id "
+            "and the receipt belong to payments.PaymentIntent (ADR-0014/0030), "
+            "read through apps.payments.money_activity.\n"
+            f"Found: {offenders}",
         )
 
     def test_ledger_is_not_in_any_cycle(self):

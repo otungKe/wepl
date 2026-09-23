@@ -224,9 +224,9 @@ class B2CResultView(APIView):
         # ── Resolve the FinancialTransaction ──────────────────────────────────
         from apps.ledger.models import FinancialTransaction
         from . import money_activity
-        # The correlation id belongs to the PaymentIntent (ADR-0014/0030); the
-        # seam resolves it to the movement, still falling back to FT's own column
-        # for rows written before the backfill.
+        # The correlation id belongs to the PaymentIntent (ADR-0014/0030) and
+        # nowhere else now that FT's rail columns are gone; the seam resolves it
+        # to the movement.
         ft = money_activity.financial_transaction_for_ref(
             conversation_id, provider=get_provider().name)
         if ft is None:
@@ -249,10 +249,9 @@ class B2CResultView(APIView):
             # always carries its event — closing the SUCCESS-but-unpropagated gap.
             try:
                 with transaction.atomic():
-                    ft.transition_to(
-                        FinancialTransaction.State.SUCCESS,
-                        mpesa_receipt=receipt or None,
-                    )
+                    # The receipt is recorded on the PaymentIntent by the
+                    # resolve() above — the ledger holds no rail fields (ADR-0030).
+                    ft.transition_to(FinancialTransaction.State.SUCCESS)
                     # Capture the recipient's registered M-Pesa name if disclosed.
                     if event.counterparty_name and not ft.counterparty_name:
                         ft.counterparty_name = event.counterparty_name
