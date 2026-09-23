@@ -1,7 +1,7 @@
 """Tests for the money-activity read projection (ADR-0030).
 
-Cover the "prefer PaymentIntent, fall back to FT columns" rail logic that lets
-readers migrate off FinancialTransaction without losing data.
+The rail dimension is read from ``PaymentIntent`` and nowhere else: FT's
+``mpesa_*`` columns are gone, so a movement with no intent simply has no rail.
 """
 from decimal import Decimal
 
@@ -61,21 +61,12 @@ class MoneyActivityTests(TestCase):
         self.assertEqual(ma.rail.checkout_id, "ws_CO_9")         # collection → provider_ref
         self.assertEqual(ma.rail.conversation_id, "")
 
-    def test_receipt_falls_back_to_ft_when_intent_blank(self):
-        FinancialTransaction.objects.filter(pk=self.ft.pk).update(mpesa_receipt="FTRCP")
-        self.ft.refresh_from_db()
+    def test_a_blank_receipt_on_the_intent_stays_blank(self):
+        """There is no second place to look any more — the intent is the record."""
         self._intent(receipt="")
         ma = money_activity.for_financial_transaction(self.ft)
-        self.assertEqual(ma.rail.receipt, "FTRCP")
-
-    def test_falls_back_to_ft_columns_without_intent(self):
-        FinancialTransaction.objects.filter(pk=self.ft.pk).update(
-            mpesa_conversation_id="FTCONV", mpesa_receipt="FTRCP")
-        self.ft.refresh_from_db()
-        ma = money_activity.for_financial_transaction(self.ft)
-        self.assertEqual(ma.rail.conversation_id, "FTCONV")
-        self.assertEqual(ma.rail.receipt, "FTRCP")
-        self.assertEqual(ma.rail.provider, "mpesa")
+        self.assertEqual(ma.rail.receipt, "")
+        self.assertEqual(ma.rail.conversation_id, "AG_CONV_1")
 
     def test_no_rail_for_internal_movement(self):
         ma = money_activity.for_financial_transaction(self.ft)

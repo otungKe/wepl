@@ -28,7 +28,7 @@ has a better home:
 | `context_type`/`context_id` (:98-99) | business workflow | the `disbursement_request` / `welfare_claim` / `emergency_advance` / `standing_order` rows |
 | `initiated_by` (:102) | party | `JournalEntry.created_by` **and** `PaymentIntent.initiated_by` |
 | `recipient_phone` (:106), `counterparty_name` (:111) | rail detail | `PaymentIntent` (rail payout target / rail-disclosed name) |
-| `mpesa_checkout_id`/`conversation_id`/`receipt` (:120-122) | rail | **`PaymentIntent.provider_ref` / `receipt` — already duplicated** |
+| `mpesa_checkout_id`/`conversation_id`/`receipt` | rail | **`PaymentIntent.provider_ref` / `receipt` — dropped from FT in `ledger.0021`** |
 | `failure_reason` (:126) | rail/business failure | `PaymentIntent.failure_code` / `failure_message` (structured) |
 | `note` (:125) | metadata | `JournalEntry.narration` |
 | `tenant` (:114) | cross-cutting | both `JournalEntry` and `PaymentIntent` carry it |
@@ -126,17 +126,37 @@ strangler is already half-run (PaymentIntent is the shadow):
 Each slice keeps the trial balance at zero and the ledger authoritative throughout,
 exactly as the `ContributionTransaction` retirement did.
 
-**Implementation status (2026-09-21).** The seams are in; the deletions are not.
-Merged: the money-activity read projection (`apps/payments/money_activity.py`,
-moved out of `apps/ledger` by ADR-0033) that
-readers migrate onto ahead of the model dying, the settlement registry
-(`apps/contributions/settlement_targets.py`), the back-office readers
-(`apps/backoffice/views_transactions.py`, `views_exports.py`, `views_finops.py`), and
-the Slice-A readiness gate (`apps/payments/coverage.py`, `manage.py intent_coverage`)
-that measures how much rail movement an intent can already account for. **Not done:**
-the gate has never been run against real data, no backfill is written, FT still carries
-its `mpesa_*` columns and its `reference` handle, and the model is still there. So
-Slice A is prepared, not complete, and B–D have not started.
+**Implementation status (2026-09-23). Slice A is complete.** Merged: the
+money-activity read projection (`apps/payments/money_activity.py`, moved out of
+`apps/ledger` by ADR-0033) that readers migrate onto ahead of the model dying,
+the settlement registry (`apps/contributions/settlement_targets.py`), the
+back-office readers (`apps/backoffice/views_transactions.py`, `views_exports.py`,
+`views_finops.py`), and the Slice-A readiness gate
+(`apps/payments/coverage.py`, `manage.py intent_coverage`).
+
+The promotion itself landed in two deploys, because Render serves the previous
+instance while migrations run (additive-first, P-7/E-2):
+
+1. **Stop reading, carry the data.** The payout dispatch now records its
+   `PaymentIntent` *before* calling the rail rather than in a swallowing
+   `try/except` afterwards — the defect that let a dispatched payout exist with
+   no rail record at all — and every reader, the B2C callback included, goes
+   through the money-activity seam. Migration `payments.0008` carried the
+   historical column values into intents.
+2. **Drop.** `ledger.0021` removes `mpesa_checkout_id`,
+   `mpesa_conversation_id` and `mpesa_receipt`, along with
+   `transition_to(mpesa_receipt=…)` and the seam's column fallbacks. It depends
+   on `payments.0008` so a fresh database backfills before it drops. A CI guard
+   fails the build if a rail-named field returns to a ledger model, which is
+   also what closes the second half of #159.
+
+`PaymentIntent` is therefore authoritative for the rail dimension, and no Daraja
+vocabulary remains in `apps/ledger`. **Still open:** the collection side of
+coverage — the STK chokepoint mints an intent with no `financial_transaction`
+and the paybill (C2B) path never had an initiation to record, so pay-ins can
+still be rail-backed with no intent linked. `manage.py intent_coverage`
+measures exactly that and has never been run against real data. FT keeps its
+`reference` handle and the model is still there; B–D have not started.
 
 ## Consequences
 

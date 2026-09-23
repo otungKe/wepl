@@ -17,6 +17,7 @@ from apps.payments.payouts import (
     _handle_payout_failure, recover_stale_processing_transactions,
 )
 from apps.ledger.writer import create_fin_transaction
+from apps.payments.models import PaymentIntent
 
 User = get_user_model()
 
@@ -61,9 +62,14 @@ class StaleRecoverySuccessCutoverTests(TestCase):
             amount=Decimal("500"), initiated_by=self.user, recipient_phone="254700000711",
             initial_state=FinancialTransaction.State.PROCESSING,
         )
-        # Age it past the 60-min auto-recover threshold and give it a conv id.
+        # The dispatch's rail record — the correlation id lives on the intent
+        # (ADR-0030), which is where the sweep reads it from.
+        PaymentIntent.objects.create(
+            provider="fake", direction=PaymentIntent.Direction.PAYOUT,
+            amount=self.ft.amount, idempotency_key=f"pi-payout-{self.ft.id}",
+            provider_ref="AG_STALE", financial_transaction=self.ft)
+        # Age it past the 60-min auto-recover threshold.
         FinancialTransaction.objects.filter(pk=self.ft.pk).update(
-            mpesa_conversation_id="AG_STALE",
             updated_at=timezone.now() - timedelta(hours=2),
         )
 

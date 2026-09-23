@@ -2,15 +2,15 @@
 
 The report decides whether PaymentIntent can become authoritative for the rail
 dimension, so its failure modes matter more than its happy path: an empty
-database must not read as "ready", internal (rail-less) movements must not count
-as gaps, and an intent that disagrees with the FT must be flagged even though it
-technically "covers" it.
+database must not read as "ready" and internal (rail-less) movements must not
+count as gaps.
 
-Above all it must see the **collection** side. FT's ``mpesa_*`` columns are
-written on the payout path only, so a report that looks for them measures the
-one subset that is covered by construction and calls a database with no
-collection coverage at all "100% ready". ``test_real_collection_*`` drives the
-actual contribution service to keep that from coming back.
+Above all it must see the **collection** side. The report's first version looked
+for FT's ``mpesa_*`` columns, which were written on the payout path only, so it
+measured the one subset that was covered by construction and called a database
+with no collection coverage at all "100% ready". Those columns are gone now
+(ADR-0030) and the rail leg is read from the journal, which no missing column
+can hide; the collection tests below keep that regression from coming back.
 """
 from decimal import Decimal
 
@@ -36,18 +36,26 @@ class IntentCoverageTests(TestCase):
         self.user = User.objects.create(phone_number="+254700000740")
         self._n = 0
 
-    def _ft(self, **rail):
+    def _ft(self, *, with_journal=True):
+        """A payout movement. Rail-backed means its journal moved money across
+        the boundary — FT carries no rail columns to say so (ADR-0030)."""
         self._n += 1
+        key = f"ft-cov-{self._n}"
         ft, _ = create_fin_transaction(
-            idempotency_key=f"ft-cov-{self._n}",
+            idempotency_key=key,
             op_type=FinancialTransaction.OpType.DISBURSEMENT,
             amount=Decimal("100"), initiated_by=self.user,
             recipient_phone="254700000740",
             initial_state=FinancialTransaction.State.PROCESSING,
         )
-        if rail:
-            FinancialTransaction.objects.filter(pk=ft.pk).update(**rail)
-            ft.refresh_from_db()
+        if with_journal:
+            post_journal(
+                idempotency_key=f"je-{key}", op_type=pm.Op.DISBURSEMENT,
+                lines=pm.disbursement_lines(
+                    member=self.user, fund_type="contribution", fund_id=1,
+                    amount=Money("100")),
+                financial_transaction=ft, created_by=self.user,
+            )
         return ft
 
     def _intent(self, ft, *, provider_ref="", receipt=""):
@@ -99,7 +107,7 @@ class IntentCoverageTests(TestCase):
         self.assertIsNone(r['coverage_pct'])
 
     def test_internal_movement_is_not_counted_as_a_gap(self):
-        self._ft()  # no rail columns, no journal → no rail leg
+        self._ft(with_journal=False)  # nothing crossed the boundary
         r = intent_coverage()
         self.assertEqual(r['total_rail_backed'], 0)
         self.assertTrue(r['no_data'])
@@ -126,7 +134,7 @@ class IntentCoverageTests(TestCase):
     # ── the payout path (what the old report measured) ───────────────────────
 
     def test_rail_backed_without_intent_is_uncovered(self):
-        ft = self._ft(mpesa_conversation_id="CONV_1")
+        ft = self._ft()
         r = intent_coverage()
         self.assertEqual(r['total_rail_backed'], 1)
         self.assertEqual(r['uncovered'], 1)
@@ -134,63 +142,41 @@ class IntentCoverageTests(TestCase):
         self.assertFalse(r['ready_for_cutover'])
         self.assertEqual(r['uncovered_by_op_type'],
                          {FinancialTransaction.OpType.DISBURSEMENT: 1})
-        self.assertEqual(r['uncovered_sample'][0]['ft_id'], ft.id)
+        # No intent and no receipt to recover — a payout dispatched before the
+        # intent became the record leaves nothing to correlate, so it is a
+        # triage question rather than a backfill.
+        self.assertEqual(r['review_sample'][0]['ft_id'], ft.id)
+        self.assertEqual(r['review_sample'][0]['bucket'], 'unattributable')
 
-    def test_full_agreeing_coverage_is_ready(self):
-        ft = self._ft(mpesa_conversation_id="CONV_2", mpesa_receipt="RCP_2")
+    def test_full_coverage_is_ready(self):
+        ft = self._ft()
         self._intent(ft, provider_ref="CONV_2", receipt="RCP_2")
         r = intent_coverage()
         self.assertEqual(r['covered'], 1)
         self.assertEqual(r['uncovered'], 0)
-        self.assertEqual(r['mismatched'], 0)
         self.assertEqual(r['coverage_pct'], 100.0)
         self.assertEqual(r['verdict'], READY)
         self.assertTrue(r['ready_for_cutover'])
 
-    def test_disagreeing_intent_is_covered_but_mismatched(self):
-        """Coverage without agreement would silently change reads at cutover."""
-        ft = self._ft(mpesa_conversation_id="CONV_3", mpesa_receipt="RCP_3")
-        self._intent(ft, provider_ref="SOMETHING_ELSE", receipt="RCP_3")
-        r = intent_coverage()
-        self.assertEqual(r['covered'], 1)
-        self.assertEqual(r['mismatched'], 1)
-        self.assertFalse(r['ready_for_cutover'])
-        self.assertIn("provider_ref", r['mismatch_sample'][0]['problems'][0])
-
-    def test_receipt_only_rail_evidence_counts(self):
-        """A collection FT may carry only a receipt — still rail-backed."""
-        self._ft(mpesa_receipt="RCP_4")
-        r = intent_coverage()
-        self.assertEqual(r['total_rail_backed'], 1)
-        self.assertEqual(r['uncovered'], 1)
-
-    def test_blank_intent_fields_do_not_count_as_disagreement(self):
-        """A best-effort intent with blanks is covered, not mismatched."""
-        ft = self._ft(mpesa_conversation_id="CONV_5", mpesa_receipt="RCP_5")
+    def test_an_intent_with_blank_rail_fields_still_covers(self):
+        """Coverage asks whether the rail record exists, not whether it is
+        complete — an intent minted before dispatch has a blank ref."""
+        ft = self._ft()
         self._intent(ft, provider_ref="", receipt="")
         r = intent_coverage()
         self.assertEqual(r['covered'], 1)
-        self.assertEqual(r['mismatched'], 0)
-
-    def test_rail_columns_without_an_intent_are_flagged_as_at_risk(self):
-        """Slice A drops FT's mpesa_* columns; this is the data that would go
-        with them."""
-        self._ft(mpesa_conversation_id="CONV_6", mpesa_receipt="RCP_6")
-        r = intent_coverage()
-        self.assertEqual(r['legacy_rail_columns'], 1)
-        self.assertEqual(r['legacy_at_risk'], 1)
+        self.assertEqual(r['uncovered'], 0)
 
     # ── the collection blind spot ────────────────────────────────────────────
 
     def test_collection_with_no_rail_columns_is_still_counted(self):
-        """The regression this report exists to prevent: a pay-in carries no
-        mpesa_* column at all, and must not be mistaken for an internal
-        movement."""
+        """The regression this report exists to prevent: a pay-in has nothing on
+        the FT to mark it as rail-backed, and must not be mistaken for an
+        internal movement."""
         self._collection_ft(idempotency_key="contrib-stk-SGH4KLM9N2")
         r = intent_coverage()
         self.assertEqual(r['total_rail_backed'], 1)
         self.assertEqual(r['covered'], 0)
-        self.assertEqual(r['legacy_rail_columns'], 0)
         self.assertFalse(r['ready_for_cutover'])
 
     def test_orphan_stk_intent_makes_a_collection_linkable(self):
@@ -232,7 +218,7 @@ class IntentCoverageTests(TestCase):
     def test_unattributable_alone_still_withholds_ready(self):
         """Ready means "we checked everything", so anything unexplained blocks —
         the whole failure this report was rewritten to prevent."""
-        ft = self._ft(mpesa_conversation_id="CONV_7", mpesa_receipt="RCP_7")
+        ft = self._ft()
         self._intent(ft, provider_ref="CONV_7", receipt="RCP_7")
         self._collection_ft(idempotency_key="contrib-7-99-manual")
         r = intent_coverage()
@@ -283,11 +269,13 @@ class ReceiptHintTests(TestCase):
         self.assertEqual(self._key("advance-disb-7"), "")
         self.assertEqual(self._key("welfare-contrib-3-9-None"), "")
 
-    def test_prefers_the_column_when_the_ft_has_one(self):
+    def test_the_idempotency_key_is_the_only_source_left(self):
+        """FT used to carry a receipt column and the hint preferred it. The
+        column is gone (ADR-0030), so a key with no receipt in it yields
+        nothing — and the movement is classified ``unattributable`` rather than
+        silently counted as ready."""
         ft, _ = create_fin_transaction(
-            idempotency_key="contrib-stk-SGH4KLM9N9",
+            idempotency_key="advance-disb-7",
             op_type=FinancialTransaction.OpType.DISBURSEMENT,
             amount=Decimal("1"), initiated_by=self.user)
-        FinancialTransaction.objects.filter(pk=ft.pk).update(mpesa_receipt="FROM_COLUMN_1")
-        ft.refresh_from_db()
-        self.assertEqual(receipt_hint(ft), "FROM_COLUMN_1")
+        self.assertEqual(receipt_hint(ft), "")

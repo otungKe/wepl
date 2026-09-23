@@ -155,14 +155,9 @@ def execute_payout(self, fin_transaction_id: int) -> str:
         _handle_payout_failure(ft, err)
         return "no_conversation_id"
 
-    # Correlate the accepted dispatch. The intent carries the id from here on;
-    # FT's column is still written so nothing reading it breaks mid-migration,
-    # and both land together (ADR-0030 drops the column in the next slice).
-    with transaction.atomic():
-        PaymentService.attach_provider_ref(intent, provider_ref)
-        FinancialTransaction.objects.filter(pk=ft.pk).update(
-            mpesa_conversation_id=provider_ref
-        )
+    # Correlate the accepted dispatch. The intent is where the rail's id lives
+    # (ADR-0030); FT carries no rail columns any more.
+    PaymentService.attach_provider_ref(intent, provider_ref)
 
     logger.info(
         "execute_payout: FT %s dispatched — provider_ref=%s", ft.id, provider_ref

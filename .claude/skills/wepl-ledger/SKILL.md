@@ -235,23 +235,27 @@ the transaction without reading ADR-0007 first.
 derive from lines, all accept `as_of` / `fund_type` / `fund_id` / `op_type` /
 `tenant_id`. All endpoints in `ledger/views.py` are `IsAdminUser`.
 `payments/money_activity.py` is the ADR-0030 read projection: a **view, never a
-source of truth** — prefer the linked `PaymentIntent`, fall back to FT's columns
-while they exist. It lives in payments, not the ledger, because the rail dimension
-is the payments layer's business (ADR-0033).
+source of truth**. The rail dimension is read from the linked `PaymentIntent` and
+nowhere else — FT's `mpesa_*` columns were dropped in `ledger.0021`, so an FT with
+no intent simply has no rail. It lives in payments, not the ledger, because the
+rail dimension is the payments layer's business (ADR-0033).
 
 ## Do not assume
 
 - Do not assume `FinancialTransaction` is authoritative. It is being dissolved.
-- Do not assume FT's `mpesa_*` columns are populated: they are written **only on
-  the payout path**, and `mpesa_checkout_id` is never written anywhere.
+- Do not look for rail detail on `FinancialTransaction`. Its `mpesa_*` columns
+  are gone (`ledger.0021`); the correlation id and receipt are the
+  `PaymentIntent`'s, read through `payments/money_activity.py`. A CI guard fails
+  the build if a rail-named field is added back to a ledger model.
 - Do not assume FT state means the money moved.
 - Do not assume `AccountBalance` is the truth — replay is.
 - Do not assume the deferred balance trigger will fire in a `TestCase`; it fires
   at COMMIT, which a `TestCase` never reaches. Use `TransactionTestCase`.
-- Do not assume every movement has a `PaymentIntent` (best-effort, `try/except`)
-  or that an intent has an FT (collection intents do not).
-- Do not assume `apps/ledger` is provider-agnostic today (`tasks.py` calls
-  Daraja directly — issue #159).
+- Do not assume every movement has a `PaymentIntent`. Payouts do — the dispatch
+  records the intent *before* calling the rail — but collections still do not:
+  the STK chokepoint mints an intent with no `financial_transaction` and the
+  paybill (C2B) path never had an initiation to record. `manage.py
+  intent_coverage` measures that gap.
 - Do not assume `Proposed` ADR behaviour exists: ADR-0027's builders are merged,
   ADR-0024's fee/excise/withholding postings are not.
 

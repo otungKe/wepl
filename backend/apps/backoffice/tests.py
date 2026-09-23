@@ -25,6 +25,25 @@ def make_staff(email, *roles, password="s3cret-pass!!", active=True, superuser=F
     return acct
 
 
+def attach_rail(ft, *, receipt="", provider_ref="", direction=None, provider="mpesa"):
+    """Give a FinancialTransaction the rail record a real movement would have.
+
+    FT stopped carrying ``mpesa_receipt`` / ``mpesa_conversation_id`` in
+    ADR-0030: the rail dimension is the PaymentIntent's, and that is where the
+    ops console reads it from. Fixtures have to say it the same way.
+    """
+    from apps.payments.models import PaymentIntent
+    if direction is None:
+        direction = (PaymentIntent.Direction.PAYOUT
+                     if ft.op_type == "DISBURSEMENT"
+                     else PaymentIntent.Direction.COLLECTION)
+    return PaymentIntent.objects.create(
+        provider=provider, direction=direction, amount=ft.amount,
+        idempotency_key=f"pi-{ft.idempotency_key}", provider_ref=provider_ref,
+        receipt=receipt, financial_transaction=ft,
+    )
+
+
 def op_client(staff):
     c = APIClient()
     c.credentials(HTTP_AUTHORIZATION=f"Bearer {issue_staff_token(staff)}")
@@ -509,8 +528,8 @@ class OpsTransactionsModuleTests(TestCase):
         self.ft = FinancialTransaction.objects.create(
             op_type="CONTRIBUTION", amount=Decimal("1500.00"),
             idempotency_key="ops-tx-test-1", initiated_by=self.member,
-            mpesa_receipt="QA12ZZ99XY",
         )
+        attach_rail(self.ft, receipt="QA12ZZ99XY")
         self.ft.transition_to("PROCESSING")
         self.ft.transition_to("SUCCESS")
         post_journal(
@@ -577,8 +596,8 @@ class OpsTransactionsModuleTests(TestCase):
         ft = FinancialTransaction.objects.create(
             op_type="DISBURSEMENT", amount=Decimal("2000.00"),
             idempotency_key="cp-name-1", initiated_by=self.member,
-            recipient_phone="254712345678", counterparty_name="JOHN DOE",
-            mpesa_receipt="CPNAME01")
+            recipient_phone="254712345678", counterparty_name="JOHN DOE")
+        attach_rail(ft, receipt="CPNAME01")
         c = op_client(self.support_agent)
         # Registry row carries it.
         row = c.get("/api/ops/transactions/", {"q": "CPNAME01"}).data["results"][0]
@@ -598,7 +617,8 @@ class OpsTransactionsModuleTests(TestCase):
         pool = ContributionService.create_contribution(self.member, {"title": "Test Pool"})
         ft = FinancialTransaction.objects.create(
             op_type="CONTRIBUTION", amount=Decimal("10.00"), idempotency_key="pool-linked-1",
-            initiated_by=self.member, contribution=pool, mpesa_receipt="POOLRCPT1")
+            initiated_by=self.member, contribution=pool)
+        attach_rail(ft, receipt="POOLRCPT1")
 
         res = op_client(self.support_agent).get("/api/ops/transactions/", {"q": "POOLRCPT1"})
         self.assertEqual(res.status_code, 200)
@@ -867,8 +887,8 @@ class FinopsModuleTests(TestCase):
         ft = FinancialTransaction.objects.create(
             op_type="DISBURSEMENT", amount=Decimal("2000.00"), idempotency_key=key,
             initiated_by=self.member, recipient_phone="254700000201",
-            mpesa_conversation_id=conv,
         )
+        attach_rail(ft, provider_ref=conv)
         ft.transition_to("PROCESSING")
         post_journal(
             idempotency_key=f"{key}-journal", op_type="DISBURSEMENT",
@@ -981,7 +1001,9 @@ class FinopsModuleTests(TestCase):
         self.assertEqual(res.status_code, 200)
         self.assertEqual(res.data["result"]["outcome"], "resent")
         ft.refresh_from_db()
-        self.assertTrue(ft.mpesa_conversation_id)         # dispatched to the rail
+        from apps.payments.money_activity import rail_for
+        # Dispatched to the rail: the correlation id is on the intent (ADR-0030).
+        self.assertTrue(rail_for(ft).conversation_id)
         self.assertEqual(ft.state, "PROCESSING")
 
     def test_retry_payout_guards(self):
@@ -1017,8 +1039,8 @@ class MakerCheckerTests(TestCase):
         ft = FinancialTransaction.objects.create(
             op_type="DISBURSEMENT", amount=Decimal("3000.00"), idempotency_key=key,
             initiated_by=self.member, recipient_phone="254700000301",
-            mpesa_conversation_id=f"{key}-conv", mpesa_receipt=f"{key}-rcpt",
         )
+        attach_rail(ft, provider_ref=f"{key}-conv", receipt=f"{key}-rcpt")
         ft.transition_to("PROCESSING")
         ft.transition_to("SUCCESS")
         post_journal(
@@ -1163,7 +1185,8 @@ class IdentityAndReferenceTests(TestCase):
         from apps.ledger.models import FinancialTransaction
         ft = FinancialTransaction.objects.create(
             op_type="CONTRIBUTION", amount=Decimal("10.00"), idempotency_key="idref-1",
-            initiated_by=self.member, mpesa_receipt="UG98TARRBR")
+            initiated_by=self.member)
+        attach_rail(ft, receipt="UG98TARRBR")
         expected = f"WEPL-TXN-{ft.pk:06d}"
         self.assertEqual(ft.reference, expected)
 
@@ -1214,9 +1237,10 @@ class ExportsTests(TestCase):
     def test_transactions_export_streams_csv_and_audits(self):
         from decimal import Decimal
         from apps.ledger.models import FinancialTransaction
-        FinancialTransaction.objects.create(
+        exported = FinancialTransaction.objects.create(
             op_type="CONTRIBUTION", amount=Decimal("100.00"), idempotency_key="exp-tx-1",
-            initiated_by=self.member, mpesa_receipt="RCPTEXP1")
+            initiated_by=self.member)
+        attach_rail(exported, receipt="RCPTEXP1")
         res = op_client(self.finance).get("/api/ops/exports/transactions/")
         self.assertEqual(res.status_code, 200)
         self.assertIn("text/csv", res["Content-Type"])
