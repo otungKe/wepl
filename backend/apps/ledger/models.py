@@ -116,7 +116,18 @@ class FinancialTransaction(models.Model):
         on_delete=models.PROTECT, related_name='financial_transactions',
     )
 
-    # ── External payment tracking ──────────────────────────────────────────────
+    # ── External payment tracking — RETIRED, awaiting removal (ADR-0030) ───────
+    # Rail vocabulary has no business in the book of record. PaymentIntent
+    # (ADR-0014) is now authoritative for this dimension: the payout dispatch
+    # records the intent *before* calling the rail, migration
+    # payments.0008 carried every historical value across, and no code reads
+    # these columns any more — readers go through apps.payments.money_activity,
+    # which still consults them only as a documented fallback. They are written
+    # and otherwise unused so the previous release keeps working during the
+    # deploy overlap (additive-first, P-7/E-2); the next slice drops all three
+    # along with that fallback. Do not add a reader.
+    #
+    # mpesa_checkout_id has never been written by any code path.
     mpesa_checkout_id     = models.CharField(max_length=255, null=True, blank=True, unique=True)
     mpesa_conversation_id = models.CharField(max_length=255, null=True, blank=True, unique=True)
     mpesa_receipt         = models.CharField(max_length=50,  null=True, blank=True, unique=True)

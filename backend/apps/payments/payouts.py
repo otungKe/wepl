@@ -28,8 +28,10 @@ PROCESSING, so retry attempts proceed to the rail call without a TransitionError
 import logging
 
 from celery import shared_task
+from django.db import transaction
 
 from apps.core.exceptions import TransitionError
+from apps.payments.money_activity import rail_for
 
 logger = logging.getLogger(__name__)
 
@@ -70,11 +72,12 @@ def execute_payout(self, fin_transaction_id: int) -> str:
         return "already_succeeded"
     if ft.state == FinancialTransaction.State.FAILED:
         return "already_failed"
-    if ft.mpesa_conversation_id:
+    dispatched_ref = rail_for(ft).conversation_id
+    if dispatched_ref:
         # The payout was already dispatched — waiting for callback
         logger.info(
             "execute_payout: FT %s already dispatched (ref=%s)",
-            ft.id, ft.mpesa_conversation_id,
+            ft.id, dispatched_ref,
         )
         return "b2c_already_sent"
 
@@ -99,8 +102,29 @@ def execute_payout(self, fin_transaction_id: int) -> str:
     reference = f"WEPL-{ft.op_type[:4].upper()}-{ft.id}"
     remarks   = f"{ft.get_op_type_display()} #{ft.id}"
 
+    from apps.payments.providers.registry import get_provider
+    from apps.payments.services import PaymentService
+    from apps.payments.models import PaymentIntent
+
+    # The intent is the rail's record of this movement (ADR-0014), and ADR-0030
+    # makes it authoritative — so it is minted BEFORE the rail is called, not
+    # after. Minting first means a crash mid-dispatch leaves an intent to
+    # reconcile against instead of a payout with no rail record at all, and a
+    # failure here is safe to raise because nothing has been sent yet. (It used
+    # to be a best-effort write after dispatch, which is precisely how a
+    # dispatched payout could end up uncovered.) Idempotent on the FT-keyed
+    # idempotency key, so a retry re-uses the same row.
+    intent = PaymentService.record_initiation(
+        provider=get_provider().name,
+        direction=PaymentIntent.Direction.PAYOUT,
+        amount=ft.amount,
+        idempotency_key=f"pi-payout-{ft.id}",
+        financial_transaction=ft,
+        op_type=ft.op_type,
+        tenant_id=ft.tenant_id,
+    )
+
     try:
-        from apps.payments.providers.registry import get_provider
         from apps.ledger.money import Money
         result = get_provider().initiate_payout(
             phone=ft.recipient_phone,
@@ -131,27 +155,14 @@ def execute_payout(self, fin_transaction_id: int) -> str:
         _handle_payout_failure(ft, err)
         return "no_conversation_id"
 
-    FinancialTransaction.objects.filter(pk=ft.pk).update(
-        mpesa_conversation_id=provider_ref
-    )
-
-    # Provider-agnostic payment aggregate (ADR-0014) — best-effort, linked to the FT.
-    try:
-        from apps.payments.providers.registry import get_provider
-        from apps.payments.services import PaymentService
-        from apps.payments.models import PaymentIntent
-        PaymentService.record_initiation(
-            provider=get_provider().name,
-            direction=PaymentIntent.Direction.PAYOUT,
-            amount=ft.amount,
-            idempotency_key=f"pi-payout-{ft.id}",
-            provider_ref=provider_ref,
-            financial_transaction=ft,
-            op_type=ft.op_type,
-            tenant_id=ft.tenant_id,
+    # Correlate the accepted dispatch. The intent carries the id from here on;
+    # FT's column is still written so nothing reading it breaks mid-migration,
+    # and both land together (ADR-0030 drops the column in the next slice).
+    with transaction.atomic():
+        PaymentService.attach_provider_ref(intent, provider_ref)
+        FinancialTransaction.objects.filter(pk=ft.pk).update(
+            mpesa_conversation_id=provider_ref
         )
-    except Exception:
-        logger.exception("record_initiation (payout) failed for FT %s", ft.id)
 
     logger.info(
         "execute_payout: FT %s dispatched — provider_ref=%s", ft.id, provider_ref
@@ -181,21 +192,25 @@ def recover_stale_processing_transactions() -> dict:
     warn_at    = now - timedelta(minutes=15)
     recover_at = now - timedelta(minutes=60)
 
-    all_stale = FinancialTransaction.objects.filter(
-        state=FinancialTransaction.State.PROCESSING,
-        updated_at__lt=warn_at,
-    ).order_by("updated_at")
+    all_stale = (FinancialTransaction.objects
+                 .filter(state=FinancialTransaction.State.PROCESSING,
+                         updated_at__lt=warn_at)
+                 .prefetch_related("payment_intents")
+                 .order_by("updated_at"))
 
     warned    = 0
     recovered = 0
 
     for ft in all_stale:
+        # One read of the rail dimension per movement; the prefetch above keeps
+        # that off the per-row query budget.
+        rail = rail_for(ft)
         if ft.updated_at < recover_at:
             # ── Tier 2: query the rail, then auto-recover ─────────────────────
             # Try the rail's status facility first so we know the real outcome.
             # If the query confirms SUCCESS we record it correctly rather than
             # writing a false reversal.
-            rail_state = _query_payout_status(ft)
+            rail_state = _query_payout_status(ft, provider_ref=rail.conversation_id)
 
             if rail_state == "SUCCESS":
                 logger.info(
@@ -207,7 +222,7 @@ def recover_stale_processing_transactions() -> dict:
                     from django.db import transaction
 
                     from apps.core.events import emit_event
-                    receipt = ft.mpesa_receipt or ""
+                    receipt = rail.receipt or ""
                     # Discovery → one durable settlement event (ADR-0028); the
                     # inline settlement consumer propagates it. Atomic with the
                     # transition (same posture as the B2C callback), so a won
@@ -232,14 +247,14 @@ def recover_stale_processing_transactions() -> dict:
                     "forcing FAILED and writing reversal.",
                     ft.id, ft.op_type, ft.amount,
                     ft.context_type, ft.context_id,
-                    ft.mpesa_conversation_id, rail_state,
+                    rail.conversation_id, rail_state,
                 )
                 try:
                     _handle_payout_failure(
                         ft,
                         f"Auto-recovered after 60 min in PROCESSING "
                         f"(rail_state={rail_state}, "
-                        f"provider_ref={ft.mpesa_conversation_id}).",
+                        f"provider_ref={rail.conversation_id}).",
                     )
                     recovered += 1
                 except Exception:
@@ -251,7 +266,7 @@ def recover_stale_processing_transactions() -> dict:
                 "provider_ref=%s stuck > 15 min — awaiting rail callback.",
                 ft.id, ft.op_type, ft.amount,
                 ft.context_type, ft.context_id,
-                ft.mpesa_conversation_id,
+                rail.conversation_id,
             )
             warned += 1
 
@@ -294,7 +309,7 @@ def _legacy_recover_stale_processing_transactions() -> dict:
 # Internal helpers
 # ---------------------------------------------------------------------------
 
-def _query_payout_status(ft) -> str:
+def _query_payout_status(ft, *, provider_ref: str | None = None) -> str:
     """
     Ask the rail for a stuck payout's outcome, through the PaymentProvider port.
     Returns "SUCCESS", "FAILED", or "UNKNOWN" (on error or inconclusive result).
@@ -303,14 +318,16 @@ def _query_payout_status(ft) -> str:
     result callback — so the adapter reports ``unknown`` and the callback updates
     the FT when it arrives. Rails that answer inline map straight through.
     """
-    if not ft.mpesa_conversation_id:
+    if provider_ref is None:
+        provider_ref = rail_for(ft).conversation_id
+    if not provider_ref:
         return "UNKNOWN"
 
     try:
         from apps.payments.providers.registry import get_provider
 
         result = get_provider().request_payout_result(
-            provider_ref=ft.mpesa_conversation_id,
+            provider_ref=provider_ref,
             remarks=f"Status query for FT-{ft.id}",
         )
     except Exception as exc:

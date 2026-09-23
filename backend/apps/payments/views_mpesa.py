@@ -223,11 +223,15 @@ class B2CResultView(APIView):
 
         # ── Resolve the FinancialTransaction ──────────────────────────────────
         from apps.ledger.models import FinancialTransaction
-        try:
-            ft = FinancialTransaction.objects.get(mpesa_conversation_id=conversation_id)
-        except FinancialTransaction.DoesNotExist:
+        from . import money_activity
+        # The correlation id belongs to the PaymentIntent (ADR-0014/0030); the
+        # seam resolves it to the movement, still falling back to FT's own column
+        # for rows written before the backfill.
+        ft = money_activity.financial_transaction_for_ref(
+            conversation_id, provider=get_provider().name)
+        if ft is None:
             logger.warning(
-                "B2CResultView: no FinancialTransaction with conversation_id=%s — ignoring.",
+                "B2CResultView: no FinancialTransaction for conversation_id=%s — ignoring.",
                 conversation_id,
             )
             return Response({"ResultCode": 0, "ResultDesc": "Accepted"})

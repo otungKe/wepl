@@ -29,6 +29,7 @@ from django.db import transaction
 
 from apps.core.exceptions import TransitionError
 from apps.ledger.models import FinancialTransaction as FT
+from apps.payments.money_activity import rail_for
 
 logger = logging.getLogger(__name__)
 
@@ -56,10 +57,11 @@ class PaymentOpsService:
         cls._guard_payout(ft)
         if ft.state not in _OPEN_STATES:
             return cls._result("noop", ft, "Movement is already terminal.")
-        if not ft.mpesa_conversation_id:
+        provider_ref = rail_for(ft).conversation_id
+        if not provider_ref:
             return cls._result("unknown", ft, "No rail reference to query yet.")
 
-        state = cls._query_state(ft.mpesa_conversation_id)
+        state = cls._query_state(provider_ref)
         if state == "success":
             return cls._apply_success(ft, actor_label=actor_label)
         if state == "failed":
@@ -83,7 +85,7 @@ class PaymentOpsService:
             raise ValidationError(
                 "A failed payout can't be re-sent — its funds were restored. "
                 "Re-initiate the disbursement from the source flow.")
-        if ft.mpesa_conversation_id:
+        if rail_for(ft).conversation_id:
             raise ValidationError(
                 "This payout was already dispatched to the rail — use Requery to fetch its result.")
 
@@ -93,7 +95,7 @@ class PaymentOpsService:
         # double-send if a callback lands mid-flight.
         execute_payout.apply(args=[ft.id])
         ft.refresh_from_db()
-        if ft.mpesa_conversation_id:
+        if rail_for(ft).conversation_id:
             logger.info("FinOps: payout FT %s re-dispatched by %s", ft.id, actor_label or "ops")
             return cls._result("resent", ft, "Re-dispatched to the rail; awaiting confirmation.")
         if ft.state == FT.State.FAILED:
@@ -137,8 +139,9 @@ class PaymentOpsService:
         if ft.state not in _OPEN_STATES:
             raise ValidationError("Only a pending or processing movement can be failed.")
 
-        if ft.mpesa_conversation_id:
-            if cls._query_state(ft.mpesa_conversation_id) == "success":
+        provider_ref = rail_for(ft).conversation_id
+        if provider_ref:
+            if cls._query_state(provider_ref) == "success":
                 # The rail says it actually went through — heal, don't strand.
                 return cls._apply_success(ft, actor_label=actor_label)
         return cls._apply_failure(ft, reason=reason, actor_label=actor_label)
@@ -166,7 +169,7 @@ class PaymentOpsService:
         uses (``PaymentService.resolve``), so operator recovery never leaves an
         intent↔FT drift or a privileged shortcut. Best-effort and idempotent — a
         missing or already-terminal intent is a no-op."""
-        ref = ft.mpesa_conversation_id
+        ref = rail_for(ft).conversation_id
         if not ref:
             return
         try:

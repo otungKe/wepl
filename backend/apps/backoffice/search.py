@@ -48,19 +48,24 @@ def _transactions(q: str, limit: int) -> list[dict]:
     from django.db.models import Q
     from apps.ledger.models import FinancialTransaction
     from .views_transactions import _ref_to_pk
-    cond = (Q(mpesa_receipt__iexact=q)
+    # Receipt lives on the PaymentIntent (ADR-0014); FT's column is still
+    # matched for rows written before the backfill (ADR-0030 drops it next).
+    cond = (Q(payment_intents__receipt__iexact=q)
+            | Q(mpesa_receipt__iexact=q)
             | Q(initiated_by__phone_number__icontains=q)
             | Q(idempotency_key__iexact=q))
     pk = _ref_to_pk(q)   # bare id or WEPL-TXN-000123
     if pk is not None:
         cond |= Q(pk=pk)
-    qs = (FinancialTransaction.objects.filter(cond)
-          .select_related("initiated_by").order_by("-id")[:limit])
+    from apps.payments.money_activity import rail_for
+    qs = (FinancialTransaction.objects.filter(cond).distinct()
+          .select_related("initiated_by").prefetch_related("payment_intents")
+          .order_by("-id")[:limit])
     return [{
         "type": "transaction", "id": ft.id,
         "label": f"{ft.reference} · {ft.get_op_type_display()}",
         "sublabel": f"KES {ft.amount} · {ft.state.lower()}"
-                    + (f" · {ft.mpesa_receipt}" if ft.mpesa_receipt else ""),
+                    + (f" · {receipt}" if (receipt := rail_for(ft).receipt) else ""),
         "url": f"/admin/transactions/{ft.id}",
     } for ft in qs]
 
