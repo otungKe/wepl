@@ -47,6 +47,17 @@ class OrgOwnershipTests(TestCase):
         self.assertEqual(acct.type, Account.Type.LIABILITY)
         self.assertIn("-O", acct.code)   # org namespace marker
 
+    def test_pool_still_resolves_once_an_org_holds_a_position(self):
+        # The org sub-ledger is user-owner-less like the pool control account;
+        # resolving the pool must not match it (MultipleObjectsReturned before).
+        org_acct = coa.org_fund_account(org=self.org, fund_type="contribution", fund_id=self.cid)
+        pool = coa.pool_account(fund_type="contribution", fund_id=self.cid)
+        self.assertNotEqual(pool.pk, org_acct.pk)
+        self.assertIsNone(pool.owner_org_id)
+        bob = User.objects.create(phone_number="+254700000991")
+        self._fund(bob, "500", "org-after")   # member_fund_account → pool_account
+        self.assertEqual(member_fund_balance(bob, "contribution", self.cid), Decimal("500.0000"))
+
     def test_reallocate_member_position_to_org_conserves_the_pool(self):
         self._fund(self.alice, "1000", "org-f1")
         post_journal(

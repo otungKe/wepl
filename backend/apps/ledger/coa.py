@@ -171,7 +171,7 @@ def retained_surplus_account(*, fund_id: int) -> Account:
     """
     gl = gl_account(RETAINED_SURPLUS)
     acct, _ = Account.objects.get_or_create(
-        owner=None, fund_type='retained', fund_id=fund_id,
+        owner=None, owner_org=None, fund_type='retained', fund_id=fund_id,
         defaults={
             'code':   pool_code(RETAINED_SURPLUS, fund_id),
             'name':   f"Pool #{fund_id} · retained surplus",
@@ -195,8 +195,10 @@ def pool_account(*, fund_type: str, fund_id: int) -> Account:
     if parent_code is None:
         raise ValueError(f"Unknown fund_type {fund_type!r} for pool account.")
     gl = gl_account(parent_code)
+    # owner_org=None too: an organization's position on the same fund is also
+    # user-owner-less, and must never be mistaken for the pool itself.
     acct, _ = Account.objects.get_or_create(
-        owner=None, fund_type=fund_type, fund_id=fund_id,
+        owner=None, owner_org=None, fund_type=fund_type, fund_id=fund_id,
         defaults={
             'code':   pool_code(parent_code, fund_id),
             'name':   f"Pool #{fund_id} · {fund_type} payable",
