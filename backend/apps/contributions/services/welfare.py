@@ -30,7 +30,7 @@ class WelfareService:
             idempotency_key=f"je-{idem_key}",
             op_type=_pm.Op.WELFARE_CONTRIBUTION,
             lines=_pm.welfare_contribution_lines(
-                member=user, fund_id=fund.id, amount=Money(str(amount)),
+                fund_id=fund.id, amount=Money(str(amount)),
             ),
             narration=f"Welfare contribution by {user.phone_number}",
             financial_transaction=ft,
@@ -177,13 +177,13 @@ class WelfareService:
         ):
             return  # already in progress
 
-        # Double-entry posting (P0-05): reserve welfare funds for the claimant.
+        # Double-entry posting (P0-05): reserve the claim out of the welfare
+        # pool. The fund pays it; the claimant owes nothing (ADR-0027 §0.2).
         post_journal(
             idempotency_key=f"je-{idem_key}",
             op_type=_pm.Op.WELFARE_CLAIM,
             lines=_pm.welfare_claim_lines(
-                member=claim.claimant, fund_id=fund.id,
-                amount=Money(str(claim.amount_requested)),
+                fund_id=fund.id, amount=Money(str(claim.amount_requested)),
             ),
             narration=f"Welfare claim #{claim.id}",
             financial_transaction=ft,

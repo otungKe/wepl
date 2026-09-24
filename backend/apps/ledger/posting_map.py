@@ -10,8 +10,8 @@ recipes are proven balanced by tests_posting_map.py).
 Recipe summary (DR / CR):
     contribution            DR 1000 Float          / CR member SL (+ CR 4000 Fee)
     disbursement            DR member SL            / CR 1000 Float
-    welfare contribution    DR 1000 Float          / CR member welfare SL
-    welfare claim           DR member welfare SL    / CR 1000 Float
+    welfare premium         DR 1000 Float          / CR welfare pool
+    welfare claim           DR welfare pool         / CR 1000 Float
     advance disbursement    DR member AR (1200)     / CR 1000 Float
     advance repayment       DR 1000 Float           / CR member AR (+ CR 4100 Interest)
     standing order          (uses the contribution recipe, op_type=STANDING_ORDER)
@@ -201,12 +201,28 @@ def distribute_surplus_lines(*, fund_id, allocations: list[Allocation]) -> list[
                  note="distribute surplus")] + credits
 
 
-def welfare_contribution_lines(*, member, fund_id, amount: Money) -> list[Line]:
-    return contribution_lines(member=member, fund_type='welfare', fund_id=fund_id, gross=amount)
+def welfare_contribution_lines(*, fund_id, amount: Money) -> list[Line]:
+    """A welfare premium (ADR-0027 §0.2): a transfer into the fund itself. It
+    credits the welfare pool control account, not the payer — a premium buys
+    cover, not a share, so nobody holds a refundable welfare balance. Who paid
+    is recorded on the journal and its transaction, not in an account."""
+    _require_positive(amount, "welfare premium")
+    return [
+        Line(coa.mpesa_float_account(), DEBIT, amount.amount, note="welfare premium in"),
+        Line(coa.pool_account(fund_type='welfare', fund_id=fund_id), CREDIT, amount.amount,
+             note="welfare pool"),
+    ]
 
 
-def welfare_claim_lines(*, member, fund_id, amount: Money) -> list[Line]:
-    return disbursement_lines(member=member, fund_type='welfare', fund_id=fund_id, amount=amount)
+def welfare_claim_lines(*, fund_id, amount: Money) -> list[Line]:
+    """A welfare claim is paid from the fund (ADR-0027 §0.2): it draws down the
+    welfare pool, never the claimant, who owes the fund nothing for it."""
+    _require_positive(amount, "welfare claim")
+    return [
+        Line(coa.pool_account(fund_type='welfare', fund_id=fund_id), DEBIT, amount.amount,
+             note="welfare claim"),
+        Line(coa.mpesa_float_account(), CREDIT, amount.amount, note="cash out"),
+    ]
 
 
 def advance_disbursement_lines(*, member, advance_id, principal: Money) -> list[Line]:

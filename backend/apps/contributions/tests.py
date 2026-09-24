@@ -170,8 +170,9 @@ class WelfareLedgerPostingTests(TestCase):
         fund = WelfareService.get_or_create_community_fund(self.community)
         WelfareService.contribute_to_welfare(
             fund.id, self.alice, Decimal("500"), mpesa_receipt="WR1")
-        member = coa.member_fund_account(user=self.alice, fund_type="welfare", fund_id=fund.id)
-        self.assertEqual(account_balance(member), Decimal("500.0000"))
+        # ADR-0027 §0.2: a premium funds the welfare pool, not the payer.
+        pool = coa.pool_account(fund_type="welfare", fund_id=fund.id)
+        self.assertEqual(account_balance(pool), Decimal("500.0000"))
         self.assertEqual(account_balance(coa.mpesa_float_account()), Decimal("500.0000"))
         self.assertTrue(trial_balance()["balanced"])
 
