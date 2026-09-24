@@ -119,3 +119,31 @@ class VotedPayoutSplitTests(TestCase):
         je = JournalEntry.objects.get(idempotency_key=f"je-disb-exec-{req.id}")
         self.assertEqual(je.op_type, pm.Op.DISBURSEMENT)
         self.assertEqual(je.lines.count(), 4)   # three shares + float
+
+    # The split must not change whose payout it reads as in the history.
+
+    def test_shared_history_names_the_requester(self):
+        from apps.contributions.history import contribution_history_qs
+        req = self._approve(self.dan, "1000")
+        ft = FinancialTransaction.objects.get(idempotency_key=f"disb-exec-{req.id}")
+        row = contribution_history_qs(self.c).get(pk=ft.pk)
+        self.assertEqual(row.party_id, self.dan.id)
+
+    def test_requester_with_no_share_still_sees_their_payout(self):
+        from apps.contributions.history import member_history_qs
+        req = self._approve(self.dan, "1000")
+        ft = FinancialTransaction.objects.get(idempotency_key=f"disb-exec-{req.id}")
+        self.assertIn(ft.pk, member_history_qs(self.dan).values_list("pk", flat=True))
+
+    def test_received_counts_the_payout_for_the_requester_only(self):
+        from apps.contributions.history import member_summary
+        self._approve(self.alice, "1000")
+        self.assertEqual(member_summary(self.alice)["total_received"], Decimal("1000"))
+        self.assertEqual(member_summary(self.bob)["total_received"], Decimal("0"))
+
+    def test_reversed_payout_is_not_received(self):
+        from apps.contributions.history import member_summary
+        req = self._approve(self.alice, "1000")
+        ft = FinancialTransaction.objects.get(idempotency_key=f"disb-exec-{req.id}")
+        reverse_financial_transaction(ft, note="payout failed")
+        self.assertEqual(member_summary(self.alice)["total_received"], Decimal("0"))
