@@ -34,3 +34,26 @@ class S3CredentialGuardTests(SimpleTestCase):
         self.assertIn('AWS_ACCESS_KEY_ID', msg)
         self.assertIn('AWS_SECRET_ACCESS_KEY', msg)
         self.assertNotIn('AWS_STORAGE_BUCKET_NAME', msg)
+
+
+class CallbackAllowlistGuardTests(SimpleTestCase):
+    LIVE = 'https://api.safaricom.co.ke'
+    SANDBOX = 'https://sandbox.safaricom.co.ke'
+
+    def test_live_daraja_with_empty_allowlist_refuses_to_boot(self):
+        with self.assertRaises(ImproperlyConfigured):
+            from apps.core.deploy_checks import check_callback_allowlist
+            check_callback_allowlist(mpesa_base_url=self.LIVE, allowlist=[])
+
+    def test_live_daraja_with_allowlist_boots(self):
+        from apps.core.deploy_checks import check_callback_allowlist
+        check_callback_allowlist(mpesa_base_url=self.LIVE, allowlist=['196.201.214.0/24'])
+
+    def test_sandbox_boots_with_empty_allowlist(self):
+        from apps.core.deploy_checks import check_callback_allowlist
+        check_callback_allowlist(mpesa_base_url=self.SANDBOX, allowlist=[])
+
+    def test_malformed_entry_refuses_to_boot_even_on_sandbox(self):
+        from apps.core.deploy_checks import check_callback_allowlist
+        with self.assertRaises(ImproperlyConfigured):
+            check_callback_allowlist(mpesa_base_url=self.SANDBOX, allowlist=['196.201.214.x'])

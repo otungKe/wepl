@@ -19,7 +19,8 @@ Behaviour notes carried over from that file:
   - B2CResultView: resolves FinancialTransaction by conversation_id, claims the
     transition and emits one durable settlement event (ADR-0028).
   - Callback views: SafaricomIPPermission applied (no-op when
-    SAFARICOM_CALLBACK_IPS is empty, enforced in production).
+    SAFARICOM_CALLBACK_IPS is empty, which production.py forbids against live
+    Daraja).
 """
 import logging
 from datetime import datetime
@@ -34,7 +35,7 @@ from rest_framework.views import APIView
 from apps.core.exceptions import TransitionError
 from apps.mpesa import tasks as rail_tasks
 from apps.mpesa.models import MpesaSTKRequest, MpesaC2BTransaction
-from apps.mpesa.permissions import SafaricomIPPermission
+from apps.mpesa.permissions import SafaricomIPPermission, allowlist_enforced
 from apps.mpesa.services import MpesaService
 
 logger = logging.getLogger(__name__)
@@ -67,7 +68,7 @@ class STKCallbackView(APIView):
             PaymentService.record_provider_event(
                 provider=get_provider().name, event_type='collection_callback',
                 payload=request.data, provider_ref=checkout_id,
-                signature_verified=True,   # gated by SafaricomIPPermission
+                signature_verified=allowlist_enforced(),
             )
             PaymentService.resolve(
                 provider=get_provider().name, provider_ref=checkout_id,
@@ -211,7 +212,7 @@ class B2CResultView(APIView):
             PaymentService.record_provider_event(
                 provider=get_provider().name, event_type='payout_result',
                 payload=request.data, provider_ref=conversation_id,
-                signature_verified=True,   # gated by SafaricomIPPermission
+                signature_verified=allowlist_enforced(),
             )
             PaymentService.resolve(
                 provider=get_provider().name, provider_ref=conversation_id,

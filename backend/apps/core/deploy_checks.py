@@ -49,3 +49,34 @@ def check_s3_credentials(*, use_s3: bool, bucket: str, access_key: str, secret_k
             "USE_S3 is enabled but these required credentials are missing: "
             + ", ".join(missing)
         )
+
+
+def check_callback_allowlist(*, mpesa_base_url: str, allowlist) -> None:
+    """Refuse to boot against live Daraja with M-Pesa callbacks open to anyone.
+
+    The callback endpoints credit members and settle payouts on what the body
+    says. With ``SAFARICOM_CALLBACK_IPS`` empty, anyone who can reach them can
+    post a fake "paid". That is tolerable against the sandbox, where no real
+    money moves, and nowhere else. Every entry must also parse as an address or
+    CIDR range, so a typo fails here rather than blocking Safaricom later.
+    """
+    import ipaddress
+    from urllib.parse import urlparse
+
+    for entry in allowlist:
+        try:
+            ipaddress.ip_network(entry.strip(), strict=False)
+        except ValueError:
+            raise ImproperlyConfigured(
+                f"SAFARICOM_CALLBACK_IPS entry {entry!r} is not an IP address or CIDR range."
+            )
+
+    host = (urlparse(mpesa_base_url).hostname or '').lower()
+    if host.startswith('sandbox.') or not host:
+        return
+    if not [e for e in allowlist if e.strip()]:
+        raise ImproperlyConfigured(
+            f"MPESA_BASE_URL points at live Daraja ({host}) but SAFARICOM_CALLBACK_IPS "
+            "is empty, so anyone could post a fake payment callback. Set it to "
+            "Safaricom's callback ranges before going live."
+        )
