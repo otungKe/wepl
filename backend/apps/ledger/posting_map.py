@@ -13,7 +13,7 @@ Recipe summary (DR / CR):
     welfare premium         DR 1000 Float          / CR welfare pool
     welfare claim           DR welfare pool         / CR 1000 Float
     advance disbursement    DR member AR (1200)     / CR 1000 Float
-    advance repayment       DR 1000 Float           / CR member AR (+ CR 4100 Interest)
+    advance repayment       DR 1000 Float           / CR member AR (+ CR pool retained surplus)
     standing order          (uses the contribution recipe, op_type=STANDING_ORDER)
 """
 from __future__ import annotations
@@ -236,11 +236,13 @@ def advance_disbursement_lines(*, member, advance_id, principal: Money) -> list[
     ]
 
 
-def advance_repayment_lines(*, member, advance_id, principal: Money,
+def advance_repayment_lines(*, member, advance_id, pool_id, principal: Money,
                             interest: Money | None = None) -> list[Line]:
-    """Member repays an advance: cash in, clear the receivable, recognise any
-    interest as income. Either portion may be zero (e.g. a pure-interest or
-    pure-principal payment), but the total must be positive."""
+    """Member repays an advance: cash in, clear the receivable, and credit any
+    interest to the lending pool's retained surplus. The group lent its own
+    money, so the return is the group's (ADR-0027 §0.3) — Wepl books none of
+    it. Either portion may be zero (e.g. a pure-interest or pure-principal
+    payment), but the total must be positive."""
     interest = interest or Money.zero(principal.currency)
     if principal.is_negative or interest.is_negative:
         raise ValueError("repayment principal/interest must be non-negative")
@@ -251,5 +253,6 @@ def advance_repayment_lines(*, member, advance_id, principal: Money,
     if principal.is_positive:
         lines.append(Line(ar, CREDIT, principal.amount, note="clear receivable"))
     if interest.is_positive:
-        lines.append(Line(coa.interest_income_account(), CREDIT, interest.amount, note="interest"))
+        lines.append(Line(coa.retained_surplus_account(fund_id=pool_id), CREDIT,
+                          interest.amount, note="interest to pool surplus"))
     return lines

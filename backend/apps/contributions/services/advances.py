@@ -237,7 +237,7 @@ class EmergencyAdvanceService:
             initial_state=FinancialTransaction.State.SUCCESS,
         )
         # Double-entry posting (P0-06): split the repayment into principal (clears
-        # the receivable) and interest (income). Outstanding principal is the AR
+        # the receivable) and interest (the pool's surplus, ADR-0027 §0.3). Outstanding principal is the AR
         # sub-ledger balance, so the principal portion never over-clears it.
         ar_acct = _coa.member_receivable_account(user=user, fund_id=advance.id)
         outstanding = account_balance(ar_acct)
@@ -247,7 +247,7 @@ class EmergencyAdvanceService:
             idempotency_key=f"je-{idem_key}",
             op_type=_pm.Op.ADVANCE_REPAYMENT,
             lines=_pm.advance_repayment_lines(
-                member=user, advance_id=advance.id,
+                member=user, advance_id=advance.id, pool_id=contribution.id,
                 principal=Money(str(principal_portion)),
                 interest=Money(str(interest_portion)),
             ),
