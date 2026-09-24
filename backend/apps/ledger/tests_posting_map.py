@@ -83,11 +83,13 @@ class PostingMapTests(TestCase):
         self._post("a2", pm.Op.ADVANCE_DISBURSEMENT, pm.advance_disbursement_lines(
             member=self.bob, advance_id=3, principal=Money("800")))
         self._post("a3", pm.Op.ADVANCE_REPAYMENT, pm.advance_repayment_lines(
-            member=self.bob, advance_id=3, principal=Money("800"), interest=Money("80")))
+            member=self.bob, advance_id=3, pool_id=1, principal=Money("800"), interest=Money("80")))
         ar = coa.member_receivable_account(user=self.bob, fund_id=3)
         self.assertEqual(account_balance(ar), Decimal("0.0000"))            # cleared
         self.assertEqual(account_balance(self.float), Decimal("80.0000"))   # net: -800 +880
-        self.assertEqual(account_balance(coa.interest_income_account()), Decimal("80.0000"))
+        # ADR-0027 §0.3: the interest is the lending pool's, not Wepl's income.
+        self.assertEqual(account_balance(coa.retained_surplus_account(fund_id=1)), Decimal("80.0000"))
+        self.assertEqual(account_balance(coa.interest_income_account()), Decimal("0.0000"))
         self.assertTrue(trial_balance()["balanced"])
 
     def test_every_recipe_balances_and_is_idempotent(self):
@@ -148,8 +150,8 @@ class PostingMapTests(TestCase):
     def test_advance_repayment_interest_only(self):
         # principal already cleared elsewhere → a pure-interest payment is valid
         self._post("ar-int", pm.Op.ADVANCE_REPAYMENT, pm.advance_repayment_lines(
-            member=self.bob, advance_id=99, principal=Money("0"), interest=Money("50")))
-        self.assertEqual(account_balance(coa.interest_income_account()), Decimal("50.0000"))
+            member=self.bob, advance_id=99, pool_id=1, principal=Money("0"), interest=Money("50")))
+        self.assertEqual(account_balance(coa.retained_surplus_account(fund_id=1)), Decimal("50.0000"))
         self.assertEqual(account_balance(self.float), Decimal("50.0000"))
         self.assertTrue(trial_balance()["balanced"])
 
@@ -157,10 +159,10 @@ class PostingMapTests(TestCase):
         self._post("ar-disb", pm.Op.ADVANCE_DISBURSEMENT, pm.advance_disbursement_lines(
             member=self.bob, advance_id=99, principal=Money("200")))
         self._post("ar-prin", pm.Op.ADVANCE_REPAYMENT, pm.advance_repayment_lines(
-            member=self.bob, advance_id=99, principal=Money("200"), interest=Money("0")))
+            member=self.bob, advance_id=99, pool_id=1, principal=Money("200"), interest=Money("0")))
         ar = coa.member_receivable_account(user=self.bob, fund_id=99)
         self.assertEqual(account_balance(ar), Decimal("0.0000"))
-        self.assertEqual(account_balance(coa.interest_income_account()), Decimal("0.0000"))
+        self.assertEqual(account_balance(coa.retained_surplus_account(fund_id=1)), Decimal("0.0000"))
         self.assertTrue(trial_balance()["balanced"])
 
     def test_balance_helper_variants(self):

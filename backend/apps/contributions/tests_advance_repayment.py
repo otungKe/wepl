@@ -177,3 +177,16 @@ class AmountRepaidIsDerivedTests(TestCase):
             self.advance.id, self.alice, Decimal("2500"), mpesa_receipt="BLK1")
         totals = advance_repaid_totals([self.advance.id])
         self.assertEqual(totals[self.advance.id], self._fresh().amount_repaid)
+
+
+class AdvanceInterestToPoolTests(AdvanceRepaymentReplayTests):
+    """ADR-0027 §0.3: an advance is the group lending its own money, so the
+    interest it earns is the pool's retained surplus, not Wepl's income."""
+
+    def test_interest_credits_the_pool_surplus_not_platform_income(self):
+        EmergencyAdvanceService.repay(
+            self.advance.id, self.alice, Decimal("5500"), mpesa_receipt="RPY_INT")
+        self.assertEqual(
+            account_balance(coa.retained_surplus_account(fund_id=self.c.id)), Decimal("500"))
+        self.assertEqual(account_balance(coa.interest_income_account()), Decimal("0"))
+        self.assertTrue(trial_balance()['balanced'])
