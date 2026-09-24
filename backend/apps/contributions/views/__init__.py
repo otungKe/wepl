@@ -10,6 +10,7 @@ from .disbursement import DisbursementRequestListCreateView, DisbursementVoteVie
 from .pools import (
     ExternalIncomeView, PoolExpenseRequestView, SurplusDistributionRequestView,
     PoolActionListView, PoolActionApproveView, PoolActionRejectView, PoolActionCancelView,
+    WindUpRequestView,
 )
 from .shares import CommunitySharesFundView, CommunitySharesContributeView
 from .welfare import WelfareClaimVoteView, WelfareFundView, WelfareContributeView, WelfareClaimListCreateView, WelfareActivityView
@@ -45,6 +46,7 @@ __all__ = [
     "PoolExpenseRequestView",
     "SurplusDistributionRequestView",
     "PoolActionListView",
+    "WindUpRequestView",
     "PoolActionApproveView",
     "PoolActionRejectView",
     "PoolActionCancelView",

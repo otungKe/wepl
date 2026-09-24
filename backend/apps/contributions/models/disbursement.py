@@ -31,11 +31,15 @@ class DisbursementRequest(models.Model):
     # A payout is money the group spends, split across shares (ADR-0027 §0.1).
     # An exit is a leaving member asking for their own share back (§0.4): the
     # group votes it like any payout, and must decide it by ``decide_by``.
+    # A wind-up pays every member out through one of these per member, created
+    # already approved by the group's wind-up vote (services/wind_up.py).
     KIND_PAYOUT = 'payout'
     KIND_EXIT = 'exit'
+    KIND_WINDUP = 'windup'
     KIND_CHOICES = (
         (KIND_PAYOUT, 'Payout'),
         (KIND_EXIT,   'Exit settlement'),
+        (KIND_WINDUP, 'Wind-up payout'),
     )
     EXIT_DECISION_DAYS = 30
 

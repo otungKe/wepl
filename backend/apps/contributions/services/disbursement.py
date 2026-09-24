@@ -204,11 +204,14 @@ class DisbursementService:
         """Settle an approved exit: set any unpaid advance off against the
         member's share, pay out the rest of the share, and end their membership.
         Runs inside ``_schedule_execution``'s transaction."""
-        member = req.requested_by
+        DisbursementService._set_off_advances(contribution, req.requested_by, key=f"exit-setoff-{req.id}")
+        DisbursementService._pay_out_share(req, contribution)
 
-        # 1. Set-off. The debt comes out of the member's share, as a repayment
-        #    would, so the advance reads as repaid and the pool's lent cash is
-        #    no longer counted as out on loan.
+    @staticmethod
+    def _set_off_advances(contribution, member, *, key) -> None:
+        """Take what ``member`` still owes on advances from this pool out of
+        their share, as a repayment would, so each advance reads as repaid and
+        the pool's lent cash is no longer counted as out on loan."""
         for advance in DisbursementService._open_advances(contribution, member).select_for_update():
             owed = advance.balance_due
             if owed <= 0:
@@ -217,9 +220,8 @@ class DisbursementService:
                 _coa.member_receivable_account(user=member, fund_id=advance.id)), Decimal('0'))
             principal = min(owed, outstanding)
             interest = owed - principal
-            key = f"exit-setoff-{req.id}-{advance.id}"
             ft, _ = create_fin_transaction(
-                idempotency_key=key,
+                idempotency_key=f"{key}-{advance.id}",
                 op_type=FinancialTransaction.OpType.ADVANCE_REPAYMENT,
                 amount=owed,
                 initiated_by=member,
@@ -229,7 +231,7 @@ class DisbursementService:
                 initial_state=FinancialTransaction.State.SUCCESS,
             )
             post_journal(
-                idempotency_key=f"je-{key}",
+                idempotency_key=f"je-{key}-{advance.id}",
                 op_type=_pm.Op.ADVANCE_REPAYMENT,
                 lines=_pm.advance_setoff_lines(
                     member=member, advance_id=advance.id, pool_id=contribution.id,
@@ -241,8 +243,12 @@ class DisbursementService:
             )
             advance.transition_to('REPAID')
 
-        # 2. Payout: the whole share as it stands now, not as quoted when the
-        #    request was made — group spending or income since then is theirs too.
+    @staticmethod
+    def _pay_out_share(req: 'DisbursementRequest', contribution) -> None:
+        """Pay ``req.requested_by`` their whole share as it stands now, not as
+        quoted when the request was made — group spending or income since then
+        is theirs too — and end their membership."""
+        member = req.requested_by
         share = member_fund_balance(member, 'contribution', contribution.id)
         if share <= 0:
             raise ValidationError("The member has no share left to pay out.")
@@ -270,7 +276,8 @@ class DisbursementService:
             return
 
         # Unlike a group payout this is the member's own claim, so only their
-        # share is drawn down.
+        # share is drawn down. The request is kept so a failed payout resets it
+        # to APPROVED and restores the share, exactly as for any payout.
         post_journal(
             idempotency_key=f"je-{idem_key}",
             op_type=_pm.Op.DISBURSEMENT,
@@ -278,7 +285,7 @@ class DisbursementService:
                 member=member, fund_type='contribution', fund_id=contribution.id,
                 amount=Money(str(share)),
             ),
-            narration="Exit settlement: share paid out",
+            narration=req.reason[:120],
             financial_transaction=ft,
             created_by=member,
         )
@@ -286,15 +293,17 @@ class DisbursementService:
         ContributionParticipant.objects.filter(
             contribution=contribution, user=member).update(is_active=False)
 
+        winding_up = req.kind == DisbursementRequest.KIND_WINDUP
         AuditService.log(
-            "contribution.exit_settled", actor=member, target=req,
+            "contribution.wind_up_paid" if winding_up else "contribution.exit_settled",
+            actor=member, target=req,
             tenant=getattr(contribution.community, "tenant_id", None),
             metadata={"amount": str(share), "contribution_id": contribution.id},
         )
         _notify(
             user=member,
             notification_type='disbursement_executed',
-            title="Exit approved",
+            title=f"{contribution.title} is wound up" if winding_up else "Exit approved",
             message=(
                 f"Your share of KES {share:,.2f} from '{contribution.title}' is "
                 f"being sent to {req.recipient_phone}."
