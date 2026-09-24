@@ -371,7 +371,7 @@ class ContributionService:
         if not can(admin_user, "contribution.admin", contribution):
             raise PermissionDenied("Only a contribution admin can spend pool funds.")
 
-        pool = fund_balance('contribution', contribution.id)
+        pool = pool_cash(contribution.id)
         if amount > pool:
             raise ValidationError(
                 f"Expense of {amount} exceeds the pool balance of {pool}.")

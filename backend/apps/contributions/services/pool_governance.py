@@ -44,7 +44,7 @@ class PoolGovernanceService:
 
         # Funds must be available now (re-checked at execution too).
         if action == PoolActionRequest.Action.EXPENSE:
-            if amount > fund_balance('contribution', contribution.id):
+            if amount > pool_cash(contribution.id):
                 raise ValidationError("Expense exceeds the pool balance.")
         else:  # DISTRIBUTION
             surplus = account_balance(_c.retained_surplus_account(fund_id=contribution.id))

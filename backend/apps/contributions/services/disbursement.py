@@ -17,9 +17,9 @@ class DisbursementService:
             from apps.communities.services import require_active_community
             require_active_community(contribution.community, 'request a payout')
 
-        # Balance check — pool balance from the ledger (contribution row is locked
-        # above, serialising concurrent disbursements on this contribution).
-        if Decimal(str(amount)) > fund_balance('contribution', contribution.id):
+        # Balance check — cash the pool holds, from the ledger (contribution row
+        # is locked above, serialising concurrent disbursements on it).
+        if Decimal(str(amount)) > pool_cash(contribution.id):
             raise ValidationError("Amount exceeds current pool balance.")
 
         # Quorum check: ensure at least one eligible voter exists excluding the requester.
@@ -126,7 +126,7 @@ class DisbursementService:
         """
         contribution = Contribution.objects.select_for_update().get(id=req.contribution_id)
 
-        if fund_balance('contribution', contribution.id) < req.amount:
+        if pool_cash(contribution.id) < req.amount:
             raise ValidationError("Insufficient pool balance at execution time.")
 
         # Governance cooldown check (Issue 16): block execution if voting_threshold
