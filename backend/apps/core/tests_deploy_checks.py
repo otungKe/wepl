@@ -57,3 +57,24 @@ class CallbackAllowlistGuardTests(SimpleTestCase):
         from apps.core.deploy_checks import check_callback_allowlist
         with self.assertRaises(ImproperlyConfigured):
             check_callback_allowlist(mpesa_base_url=self.SANDBOX, allowlist=['196.201.214.x'])
+
+
+class ClientIpTests(SimpleTestCase):
+    def _ip(self, xff=None, remote=None):
+        from django.test import RequestFactory
+        from apps.core.client_ip import client_ip
+        meta = {}
+        if xff is not None:
+            meta['HTTP_X_FORWARDED_FOR'] = xff
+        if remote is not None:
+            meta['REMOTE_ADDR'] = remote
+        return client_ip(RequestFactory().get('/', **meta))
+
+    def test_first_forwarded_entry(self):
+        self.assertEqual(self._ip('41.90.1.2, 10.0.0.1', '10.0.0.2'), '41.90.1.2')
+
+    def test_garbage_forwarded_entry_falls_back_to_socket(self):
+        self.assertEqual(self._ip('not-an-ip', '10.0.0.2'), '10.0.0.2')
+
+    def test_nothing_usable_is_none(self):
+        self.assertIsNone(self._ip("'; drop", 'nonsense'))

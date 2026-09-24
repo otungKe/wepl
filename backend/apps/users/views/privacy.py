@@ -10,7 +10,7 @@ class PrivacyPreferencesView(APIView):
             (each: 'everyone' | 'members' | 'nobody')
             discoverable (bool), show_online_status (bool)
     """
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsActiveSession]
 
     def get(self, request):
         prefs, _ = PrivacyPreferences.objects.get_or_create(user=request.user)

@@ -20,12 +20,8 @@ _TOUCH_EVERY = timedelta(seconds=60)
 
 
 def _client_ip(request) -> str | None:
-    if request is None:
-        return None
-    xff = request.META.get("HTTP_X_FORWARDED_FOR", "")
-    if xff:
-        return xff.split(",")[0].strip()
-    return request.META.get("REMOTE_ADDR") or None
+    from apps.core.client_ip import client_ip
+    return client_ip(request)
 
 
 def _device_label(request) -> str:

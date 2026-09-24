@@ -149,6 +149,10 @@ REST_FRAMEWORK = {
         # pin — is registered into it at startup, not subclassed (ADR-0033).
         'apps.users.auth.SessionJWTAuthentication',
     ),
+    # Deny by default: a view that names no permission needs a completed login
+    # (an active-stage token), never just the OTP step. Public and stage-specific
+    # endpoints opt out explicitly. tests_permission_defaults.py holds the line.
+    'DEFAULT_PERMISSION_CLASSES': ('apps.users.auth.IsActiveSession',),
     'EXCEPTION_HANDLER': 'apps.core.exceptions.custom_exception_handler',
     # Fail-open throttles: a Redis outage degrades rate limiting instead of
     # 500-ing every endpoint (the throttle runs in initial(), before the view).

@@ -28,7 +28,6 @@ from datetime import datetime
 from django.db import transaction
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
-from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
@@ -305,7 +304,6 @@ class B2CTimeoutView(APIView):
 
 class PendingSTKStatusView(APIView):
     """Poll the status of an STK Push request."""
-    permission_classes = [IsAuthenticated]
 
     def get(self, request, checkout_request_id):
         stk = get_object_or_404(

@@ -14,12 +14,8 @@ logger = logging.getLogger(__name__)
 
 
 def _client_ip(request):
-    if request is None:
-        return None
-    xff = request.META.get("HTTP_X_FORWARDED_FOR", "")
-    if xff:
-        return xff.split(",")[0].strip()
-    return request.META.get("REMOTE_ADDR") or None
+    from apps.core.client_ip import client_ip
+    return client_ip(request)
 
 
 def record_action(

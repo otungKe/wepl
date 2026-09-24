@@ -1,6 +1,5 @@
 from rest_framework.views import APIView
 from rest_framework.response import Response
-from rest_framework.permissions import IsAuthenticated
 from rest_framework import status
 
 from .models import Notification, NotificationPreferences
@@ -30,7 +29,6 @@ VALID_PLATFORMS = {'android', 'ios'}
 # =====================================
 class NotificationListView(APIView):
 
-    permission_classes = [IsAuthenticated]
 
     def get(self, request):
         notifications = NotificationService.get_for_user(request.user)
@@ -43,7 +41,6 @@ class NotificationListView(APIView):
 # =====================================
 class UnreadCountView(APIView):
 
-    permission_classes = [IsAuthenticated]
 
     def get(self, request):
         count = NotificationService.unread_count(request.user)
@@ -55,7 +52,6 @@ class UnreadCountView(APIView):
 # =====================================
 class MarkReadView(APIView):
 
-    permission_classes = [IsAuthenticated]
 
     def post(self, request, notification_id):
         NotificationService.mark_read(notification_id, request.user)
@@ -67,7 +63,6 @@ class MarkReadView(APIView):
 # =====================================
 class MarkAllReadView(APIView):
 
-    permission_classes = [IsAuthenticated]
 
     def post(self, request):
         NotificationService.mark_all_read(request.user)
@@ -79,7 +74,6 @@ class MarkAllReadView(APIView):
 # =====================================
 class DeleteNotificationView(APIView):
 
-    permission_classes = [IsAuthenticated]
 
     def delete(self, request, notification_id):
         NotificationService.delete_one(notification_id, request.user)
@@ -91,7 +85,6 @@ class DeleteNotificationView(APIView):
 # =====================================
 class DeleteAllNotificationsView(APIView):
 
-    permission_classes = [IsAuthenticated]
 
     def delete(self, request):
         NotificationService.delete_all(request.user)
@@ -111,7 +104,6 @@ class DeviceRegisterView(APIView):
     UNREGISTERED response from Firebase (Issue 19).
     """
 
-    permission_classes = [IsAuthenticated]
 
     def post(self, request):
         fcm_token = request.data.get('fcm_token', '').strip()
@@ -145,7 +137,6 @@ class NotificationPreferencesView(APIView):
     Accepted fields: push_enabled, payments, contributions, reminders,
                      communities, advances.
     """
-    permission_classes = [IsAuthenticated]
 
     def get(self, request):
         prefs, _ = NotificationPreferences.objects.get_or_create(user=request.user)

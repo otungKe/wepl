@@ -8,6 +8,9 @@ service guarantees the rest of the platform depends on.
 from django.contrib.auth import get_user_model
 from django.test import TestCase
 from rest_framework.test import APIClient
+from rest_framework_simplejwt.tokens import AccessToken
+
+from apps.users.auth import STAGE_ACTIVE, STAGE_CLAIM
 
 from .models import Notification, NotificationPreferences, UserDevice
 from .services import NotificationService
@@ -22,9 +25,11 @@ def make_user(phone):
 
 
 def client_for(user) -> APIClient:
-    # Notification endpoints use IsAuthenticated, so a plain force_authenticate suffices.
+    # Notification endpoints need a completed login (IsActiveSession, the default).
+    token = AccessToken.for_user(user)
+    token[STAGE_CLAIM] = STAGE_ACTIVE
     c = APIClient()
-    c.force_authenticate(user=user)
+    c.force_authenticate(user=user, token=token)
     return c
 
 

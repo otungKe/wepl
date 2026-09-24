@@ -165,6 +165,16 @@ class ResetPINView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
+        # The SMS code proves the phone, not that the account may be used: an
+        # ops-applied login restriction holds here exactly as at PIN login.
+        from ..services import RestrictionService
+        if RestrictionService.blocks_login(request.user):
+            logger.warning("PIN reset blocked by account restriction for %s", request.user.phone_number)
+            return Response(
+                {"error": "This account is suspended. Please contact support."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
         PINService.set_pin(request.user, pin)
         logger.info("PIN reset for %s — active session issued", request.user.phone_number)
 

@@ -20,7 +20,7 @@ class AccountDeletionView(APIView):
       4. Blacklist all outstanding JWT refresh tokens
       5. Anonymise User record: clear PII, disable account, invalidate credentials
     """
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsActiveSession]
 
     def delete(self, request):
         user = request.user

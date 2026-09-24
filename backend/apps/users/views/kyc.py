@@ -270,7 +270,7 @@ class KYCCheckEmailView(APIView):
     The caller should warn the user but allow them to proceed if they
     confirm the email is theirs.
     """
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsActiveSession]
 
     def get(self, request):
         email = request.query_params.get('email', '').strip().lower()
@@ -404,7 +404,7 @@ class KYCCheckIDView(APIView):
     The current user's own KYC row is excluded so re-submission after
     rejection doesn't falsely flag their own ID as taken.
     """
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsActiveSession]
 
     def get(self, request):
         id_number = request.query_params.get('id_number', '').strip()
@@ -425,7 +425,7 @@ class KYCCheckIDView(APIView):
 
 class KYCResendEmailView(APIView):
     """POST /api/users/kyc/resend-verification/ — resend the verification email."""
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsActiveSession]
 
     def post(self, request):
         from django.utils import timezone
