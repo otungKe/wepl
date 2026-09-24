@@ -1,7 +1,7 @@
 """Maker-checker governance for collective-fund spend (ADR-0027).
 
-Spending pool funds (an expense) or declaring a distribution moves the group's
-money, so it never executes on one admin's say-so: an admin *requests*, and it
+Spending pool funds (an expense), declaring a distribution or winding the pool
+up moves the group's money, so it never executes on one admin's say-so: an admin *requests*, and it
 posts through the ledger only once the group has approved it under its own
 voting threshold — the same rule a voted payout follows (ADR-0027 §0.1). Quorum
 is checked up front to surface deadlock, and the maker never approves. External income (money in) is benign
@@ -11,6 +11,7 @@ from ._common import *  # shared imports + helpers (ADR-0013 view split)
 
 from ..models import PoolActionRequest, PoolActionApproval
 from .contribution import ContributionService
+from .wind_up import WindUpService
 
 class PoolGovernanceService:
 
@@ -25,9 +26,6 @@ class PoolGovernanceService:
         from apps.ledger.balances import account_balance
         from apps.ledger import coa as _c
 
-        amount = Decimal(str(amount))
-        if amount <= 0:
-            raise ValidationError("Amount must be greater than 0")
         if action not in PoolActionRequest.Action.values:
             raise ValidationError(f"Unknown action {action!r}.")
         if apportion not in ('pro_rata', 'per_capita'):
@@ -37,8 +35,25 @@ class PoolGovernanceService:
         require(admin_user, "contribution.admin", contribution,
                 "Only a contribution admin can propose a collective-fund action.")
 
+        if action == PoolActionRequest.Action.WIND_UP:
+            # A wind-up pays out everything, so its amount is not the
+            # proposer's to choose: it records what the pool holds now, and
+            # execution pays what it holds then.
+            WindUpService.check(contribution)
+            amount = WindUpService.total(contribution)
+            if PoolActionRequest.objects.filter(
+                    contribution=contribution, action=action,
+                    status=PoolActionRequest.Status.PENDING).exists():
+                raise ValidationError("A wind-up is already awaiting approval.")
+
+        amount = Decimal(str(amount))
+        if amount <= 0:
+            raise ValidationError("Amount must be greater than 0")
+
         # Funds must be available now (re-checked at execution too).
-        if action == PoolActionRequest.Action.EXPENSE:
+        if action == PoolActionRequest.Action.WIND_UP:
+            pass
+        elif action == PoolActionRequest.Action.EXPENSE:
             if amount > pool_cash(contribution.id):
                 raise ValidationError("Expense exceeds the pool balance.")
         else:  # DISTRIBUTION
@@ -93,7 +108,10 @@ class PoolGovernanceService:
     def _execute(req, *, decided_by):
         """Run the approved action through the ledger and record the result. The
         underlying services re-validate funds and re-check the admin gate."""
-        if req.action == PoolActionRequest.Action.EXPENSE:
+        if req.action == PoolActionRequest.Action.WIND_UP:
+            WindUpService.execute(req)
+            ft = None
+        elif req.action == PoolActionRequest.Action.EXPENSE:
             ft = ContributionService.record_pool_expense(
                 req.requested_by, req.contribution_id, req.amount,
                 apportion=req.apportion, reason=req.memo)

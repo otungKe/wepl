@@ -17,6 +17,7 @@ class PoolActionRequest(models.Model):
     class Action(models.TextChoices):
         EXPENSE      = 'EXPENSE',      'Pool expense'
         DISTRIBUTION = 'DISTRIBUTION', 'Surplus distribution'
+        WIND_UP      = 'WIND_UP',      'Wind-up'
 
     class Status(models.TextChoices):
         PENDING   = 'PENDING',   'Pending approval'
