@@ -195,6 +195,23 @@ def advance_repaid(advance_id: int) -> Decimal:
     return advance_repaid_totals([advance_id]).get(advance_id, Decimal('0'))
 
 
+def advances_outstanding(advance_ids) -> Decimal:
+    """Principal still owed across many advances: the summed balance of their
+    receivable sub-ledgers (ASSET, debit-normal; ``coa.member_receivable_account``).
+
+    A pool that lends to a member still owes every member their share, but the
+    lent cash has left the float; this is the part of the pool that is out on
+    loan rather than on hand (ADR-0027 §0.3).
+    """
+    ids = list(advance_ids)
+    if not ids:
+        return Decimal('0')
+    agg = AccountBalance.objects.filter(
+        account__fund_type='advance', account__fund_id__in=ids,
+    ).aggregate(d=Sum('debit_total'), c=Sum('credit_total'))
+    return (agg['d'] or Decimal('0')) - (agg['c'] or Decimal('0'))
+
+
 def fund_member_balances(fund_type: str, fund_id: int) -> dict:
     """{user_id: signed balance} for every member of one fund, in one query."""
     out: dict = {}

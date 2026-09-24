@@ -190,3 +190,61 @@ class AdvanceInterestToPoolTests(AdvanceRepaymentReplayTests):
             account_balance(coa.retained_surplus_account(fund_id=self.c.id)), Decimal("500"))
         self.assertEqual(account_balance(coa.interest_income_account()), Decimal("0"))
         self.assertTrue(trial_balance()['balanced'])
+
+
+class LentCashIsNotSpendableTests(TestCase):
+    """ADR-0027 §0.3: an advance is the pool lending its own money. Every
+    member's share is intact, but the lent cash has left the float, so no spend
+    check may count it until it is repaid."""
+
+    def setUp(self):
+        coa.seed_chart_of_accounts()
+        self.alice = make_user("+254700000860")
+        approve_kyc(self.alice)
+        self.bob = make_user("+254700000861")
+        approve_kyc(self.bob)
+        community = make_community(self.alice, "Lending Chama")
+        from apps.communities.services import CommunityService
+        CommunityService.join_community(self.bob, community)
+        CommunityMembership.objects.filter(community=community, user=self.bob).update(role="admin")
+        self.c = ContributionService.create_contribution(self.alice, {
+            "title": "Pool", "contribution_type": "POOL",
+            "visibility": "closed", "community": community,
+        })
+        ContributionService.join_contribution(self.c.id, self.bob)
+        ContributionService.contribute(self.alice, self.c.id, Decimal("10000"))
+        ContributionService.contribute(self.bob, self.c.id, Decimal("5000"))
+        CommunityMembership.objects.filter(community=community).update(
+            joined_at=timezone.now() - timedelta(days=90))
+        self.advance = EmergencyAdvanceService.request_advance(
+            self.c.id, self.alice, Decimal("5000"), Decimal("10"), None)
+        EmergencyAdvanceService.approve_advance(self.advance.id, self.bob)
+
+    def test_lent_principal_is_out_of_pool_cash_but_shares_are_intact(self):
+        from apps.contributions.services._common import pool_cash
+        from apps.ledger.balances import fund_balance
+        self.assertEqual(fund_balance("contribution", self.c.id), Decimal("15000"))
+        self.assertEqual(pool_cash(self.c.id), Decimal("10000"))
+
+    def test_a_payout_cannot_spend_lent_cash(self):
+        from django.core.exceptions import ValidationError
+        from apps.contributions.services import DisbursementService
+        with self.assertRaisesMessage(ValidationError, "exceeds current pool balance"):
+            DisbursementService.create_request(
+                self.c.id, self.bob, Decimal("12000"), "Venue", "+254700000999")
+
+    def test_repaid_principal_is_spendable_again(self):
+        from apps.contributions.services._common import pool_cash
+        EmergencyAdvanceService.repay(
+            self.advance.id, self.alice, Decimal("5500"), mpesa_receipt="RPY_BACK")
+        # Principal back on hand; the 500 interest sits in the pool's surplus.
+        self.assertEqual(pool_cash(self.c.id), Decimal("15000"))
+
+    def test_a_second_advance_cannot_lend_the_same_cash(self):
+        from django.core.exceptions import ValidationError
+        second = EmergencyAdvanceService.request_advance(
+            self.c.id, self.bob, Decimal("4000"), Decimal("10"), None)
+        # 10,000 on hand covers it; drain it first with a pool expense.
+        ContributionService.record_pool_expense(self.bob, self.c.id, Decimal("7000"))
+        with self.assertRaisesMessage(ValidationError, "Insufficient pool balance"):
+            EmergencyAdvanceService.approve_advance(second.id, self.alice)

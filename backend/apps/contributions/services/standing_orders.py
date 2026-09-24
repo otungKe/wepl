@@ -64,7 +64,7 @@ class StandingOrderService:
         contribution = Contribution.objects.select_for_update().get(
             id=order.contribution_id
         )
-        if fund_balance('contribution', contribution.id) < order.amount:
+        if pool_cash(contribution.id) < order.amount:
             raise ValidationError("Insufficient funds in the contribution pool.")
 
         if order.payee_type == 'fixed':
