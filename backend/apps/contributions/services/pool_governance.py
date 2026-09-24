@@ -1,21 +1,16 @@
 """Maker-checker governance for collective-fund spend (ADR-0027).
 
-Spending pool funds (an expense) or declaring a distribution moves *members'*
-money, so it never executes on one admin's say-so: an admin *requests*, a second
-admin *approves*, and only then does it post through the ledger. Mirrors the
-disbursement governance pattern (quorum check up front to surface deadlock, a
-distinct approver, execution on threshold). External income (money in) is benign
+Spending pool funds (an expense) or declaring a distribution moves the group's
+money, so it never executes on one admin's say-so: an admin *requests*, and it
+posts through the ledger only once the group has approved it under its own
+voting threshold — the same rule a voted payout follows (ADR-0027 §0.1). Quorum
+is checked up front to surface deadlock, and the maker never approves. External income (money in) is benign
 and bypasses this — it stays a direct admin action.
 """
 from ._common import *  # shared imports + helpers (ADR-0013 view split)
 
 from ..models import PoolActionRequest, PoolActionApproval
 from .contribution import ContributionService
-
-# One distinct admin checker beyond the maker. (Richer, threshold-configurable
-# governance is a future refinement — see ADR-0027.)
-REQUIRED_APPROVALS = 1
-
 
 class PoolGovernanceService:
 
@@ -51,9 +46,10 @@ class PoolGovernanceService:
             if amount > surplus:
                 raise ValidationError("Distribution exceeds the retained surplus.")
 
-        # Deadlock guard: a distinct admin must exist to approve (maker-checker).
+        # Deadlock guard: someone other than the maker must be able to approve
+        # under the group's own voting threshold — the same one a payout uses.
         FinancialPermissions.assert_quorum_exists(
-            contribution, 'admins', admin_user,
+            contribution, contribution.voting_threshold, admin_user,
             action="approve this collective-fund action")
 
         return PoolActionRequest.objects.create(
@@ -63,14 +59,19 @@ class PoolGovernanceService:
     @staticmethod
     @transaction.atomic
     def approve(admin_user, request_id):
-        """A second admin approves; on reaching the threshold the action executes
-        through the ledger. The maker cannot approve their own request."""
+        """Spending group money is a group decision (ADR-0027 §0.1): approval
+        follows the contribution's voting threshold exactly as a voted payout
+        does — who may vote (``contribution.vote_disbursement``) and how many
+        approvals it takes (``required_approvals``). On reaching it the action
+        executes through the ledger. The maker cannot approve their own request.
+        """
         from apps.core.policy import require
 
         req = PoolActionRequest.objects.select_for_update().get(
             id=request_id, status=PoolActionRequest.Status.PENDING)
-        require(admin_user, "contribution.admin", req.contribution,
-                "Only a contribution admin can approve a collective-fund action.")
+        contribution = req.contribution
+        require(admin_user, "contribution.vote_disbursement", contribution,
+                "You are not authorised to approve this collective-fund action.")
         if req.requested_by_id == admin_user.id:
             raise PermissionDenied("You cannot approve your own request.")
 
@@ -78,7 +79,13 @@ class PoolGovernanceService:
         if not created:
             raise ValidationError("You have already approved this request.")
 
-        if req.approvals.count() >= REQUIRED_APPROVALS:
+        if req.approvals.count() >= contribution.required_approvals():
+            # Same 24 h cooldown as a payout after the threshold was changed.
+            if (contribution.governance_locked_until
+                    and contribution.governance_locked_until > timezone.now()):
+                raise ValidationError(
+                    "Governance rules were recently changed. Spending is locked "
+                    "until the cooldown ends.")
             PoolGovernanceService._execute(req, decided_by=admin_user)
         return req
 
@@ -103,12 +110,12 @@ class PoolGovernanceService:
     @staticmethod
     @transaction.atomic
     def reject(admin_user, request_id, note=''):
-        """A second admin rejects the request (the maker cannot self-reject)."""
+        """An eligible voter rejects the request (the maker cannot self-reject)."""
         from apps.core.policy import require
         req = PoolActionRequest.objects.select_for_update().get(
             id=request_id, status=PoolActionRequest.Status.PENDING)
-        require(admin_user, "contribution.admin", req.contribution,
-                "Only a contribution admin can reject a collective-fund action.")
+        require(admin_user, "contribution.vote_disbursement", req.contribution,
+                "You are not authorised to reject this collective-fund action.")
         if req.requested_by_id == admin_user.id:
             raise PermissionDenied("You cannot reject your own request — cancel it instead.")
         req.status = PoolActionRequest.Status.REJECTED
