@@ -11,6 +11,7 @@ from django.test import TestCase
 
 from apps.ledger import coa, posting_map as pm
 from apps.ledger.balances import account_balance, trial_balance
+from apps.ledger.models import Account
 from apps.ledger.money import Money
 from apps.ledger.posting import post_journal
 
@@ -56,14 +57,18 @@ class PostingMapTests(TestCase):
         self.assertEqual(account_balance(member), Decimal("600.0000"))
         self.assertTrue(trial_balance()["balanced"])
 
-    def test_welfare_contribution_and_claim(self):
+    def test_welfare_premium_and_claim_post_against_the_pool(self):
+        # ADR-0027 §0.2: premiums fund the pool and claims are paid from it; no
+        # member welfare sub-ledger is ever created.
         self._post("w1", pm.Op.WELFARE_CONTRIBUTION, pm.welfare_contribution_lines(
-            member=self.alice, fund_id=7, amount=Money("500")))
+            fund_id=7, amount=Money("500")))
         self._post("w2", pm.Op.WELFARE_CLAIM, pm.welfare_claim_lines(
-            member=self.alice, fund_id=7, amount=Money("200")))
-        welfare = coa.member_fund_account(user=self.alice, fund_type="welfare", fund_id=7)
-        self.assertEqual(account_balance(welfare), Decimal("300.0000"))
+            fund_id=7, amount=Money("200")))
+        pool = coa.pool_account(fund_type="welfare", fund_id=7)
+        self.assertEqual(account_balance(pool), Decimal("300.0000"))
         self.assertEqual(account_balance(self.float), Decimal("300.0000"))
+        self.assertFalse(Account.objects.filter(
+            fund_type="welfare", fund_id=7, owner__isnull=False).exists())
         self.assertTrue(trial_balance()["balanced"])
 
     def test_advance_disbursement_creates_receivable(self):
@@ -93,7 +98,7 @@ class PostingMapTests(TestCase):
             ("r-dis", pm.Op.DISBURSEMENT, pm.disbursement_lines(
                 member=self.alice, fund_type="contribution", fund_id=2, amount=Money("100"))),
             ("r-wc", pm.Op.WELFARE_CONTRIBUTION, pm.welfare_contribution_lines(
-                member=self.bob, fund_id=9, amount=Money("300"))),
+                fund_id=9, amount=Money("300"))),
             ("r-ad", pm.Op.ADVANCE_DISBURSEMENT, pm.advance_disbursement_lines(
                 member=self.bob, advance_id=4, principal=Money("250"))),
         ]
