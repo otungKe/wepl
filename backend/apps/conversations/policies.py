@@ -12,7 +12,8 @@ Community-membership and community-admin decisions are delegated to the
 Actions
 -------
 ``conversation.view``    community member may read the conversation.
-``conversation.delete``  the conversation's creator OR a community admin.
+``conversation.delete``  the conversation's creator (while still a member) OR a
+                         community admin.
 ``message.edit``         the message's sender only.
 ``message.delete``       the message's sender OR a community admin.
 """
@@ -25,7 +26,10 @@ def _resolve_conversation(actor, action: str, conversation) -> bool:
     if action == "conversation.view":
         return can(actor, "community.view", community)
     if action == "conversation.delete":
-        return conversation.created_by_id == actor.id or can(actor, "community.update", community)
+        # A creator who has left or been removed keeps no say over the thread.
+        return can(actor, "community.update", community) or (
+            conversation.created_by_id == actor.id and can(actor, "community.view", community)
+        )
     raise KeyError(f"Unknown conversation action '{action}'.")
 
 
