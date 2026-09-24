@@ -42,7 +42,8 @@ def transaction_type_for(op_type: str) -> str:
 
 # A voted payout is the group's spend (ADR-0027 §0.1): its journal draws every
 # funded member's share, so which sub-ledgers moved no longer says who it was
-# for. The requester — the FT's initiator — is the party it was paid to.
+# for. The requester — the FT's initiator — is the party it was paid to. A
+# split group expense (POOL_EXPENSE journal) is shown as the act of whoever ran it.
 _GROUP_PAYOUT = Q(context_type='disbursement_request')
 # Journals whose member-sub-ledger debits are each member's part of a group
 # spend, not money paid out to that member.
@@ -81,7 +82,9 @@ def contribution_history_qs(contribution):
     return (FinancialTransaction.objects
             .filter(Exists(owned), contribution=contribution)
             .annotate(party_id=Case(
-                When(_GROUP_PAYOUT, then=F('initiated_by_id')),
+                When(_GROUP_PAYOUT | Exists(JournalEntry.objects.filter(
+                         financial_transaction=OuterRef('pk'), op_type='POOL_EXPENSE')),
+                     then=F('initiated_by_id')),
                 default=Subquery(owned.values('account__owner_id')[:1]),
                 output_field=BigIntegerField()))
             .select_related('contribution')

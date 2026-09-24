@@ -113,3 +113,56 @@ class ExecuteDueStandingOrdersTests(TransactionTestCase):
 
     def test_no_due_orders_is_a_quiet_zero(self):
         self.assertEqual(execute_due_standing_orders(), 0)
+
+
+class StandingOrderOwnershipTests(TransactionTestCase):
+    """ADR-0027 §0.1: a standing order spends the group's money. It never
+    charges whoever runs it. A fixed payee is a group expense split across
+    shares; a rotating payee draws their turn from their own share."""
+
+    def setUp(self):
+        from apps.contributions.models import ContributionParticipant
+        coa.seed_chart_of_accounts()
+        self.admin = User.objects.create(phone_number="+254700000990")
+        self.bob = User.objects.create(phone_number="+254700000991")
+        CommunityService.create_community(self.admin, {"name": "Split Rent"})
+        self.contribution = ContributionService.create_contribution(
+            self.admin, {"title": "Rent"})
+        ContributionParticipant.objects.create(
+            contribution=self.contribution, user=self.bob, is_active=True)
+        self.cid = self.contribution.id
+        for member, amount in ((self.admin, "6000"), (self.bob, "4000")):
+            post_journal(
+                idempotency_key=f"so-own-{member.pk}", op_type=pm.Op.CONTRIBUTION,
+                lines=pm.contribution_lines(member=member, fund_type="contribution",
+                                            fund_id=self.cid, gross=Money(amount)))
+
+    def _share(self, member):
+        from apps.ledger.balances import member_fund_balance
+        return member_fund_balance(member, "contribution", self.cid)
+
+    def test_fixed_payee_is_split_across_shares(self):
+        from apps.contributions.services import StandingOrderService
+        order = StandingOrder.objects.create(
+            contribution=self.contribution, created_by=self.admin, amount=Decimal("1000"),
+            frequency="monthly", payee_type="fixed", fixed_payee_phone="+254711000222",
+            next_run_at=timezone.now())
+        with mock.patch("apps.core.dispatch.safe_enqueue"):
+            StandingOrderService.execute_standing_order(order.id, self.admin)
+        self.assertEqual(self._share(self.admin), Decimal("5400"))   # 6000 − 600
+        self.assertEqual(self._share(self.bob), Decimal("3600"))     # 4000 − 400
+        self.assertTrue(trial_balance()["balanced"])
+
+    def test_rotating_payee_draws_their_own_share(self):
+        from apps.contributions.models import StandingOrderSlot
+        from apps.contributions.services import StandingOrderService
+        order = StandingOrder.objects.create(
+            contribution=self.contribution, created_by=self.admin, amount=Decimal("1000"),
+            frequency="monthly", payee_type="rotating", next_run_at=timezone.now())
+        StandingOrderSlot.objects.create(order=order, phone_number=self.bob.phone_number,
+                                         slot_order=1)
+        with mock.patch("apps.core.dispatch.safe_enqueue"):
+            StandingOrderService.execute_standing_order(order.id, self.admin)
+        self.assertEqual(self._share(self.admin), Decimal("6000"))
+        self.assertEqual(self._share(self.bob), Decimal("3000"))
+        self.assertTrue(trial_balance()["balanced"])
