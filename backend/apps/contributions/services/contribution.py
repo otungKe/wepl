@@ -20,6 +20,38 @@ def _apportion_amount(total, weights):
     return shares
 
 
+def _share_allocations(contribution_id, amount, apportion='pro_rata'):
+    """Split a group spend of ``amount`` across the members' shares in a pool
+    (ADR-0027 §0.1): the pool belongs to the group, so anything it pays out is
+    borne by every funded member — ``pro_rata`` (∝ their current share) or
+    ``per_capita`` (equal) — never by whoever asked for it. Returns the
+    ``posting_map.Allocation`` list ``pool_expense_lines`` takes.
+
+    Only member sub-ledgers with a positive share are charged; the pool control
+    account and organization sub-ledgers (no user owner) are not shares.
+    """
+    from apps.ledger.balances import fund_member_balances
+    from django.contrib.auth import get_user_model
+
+    funded = [(uid, bal) for uid, bal
+              in fund_member_balances('contribution', contribution_id).items()
+              if uid is not None and bal > 0]
+    if not funded:
+        raise ValidationError("No funded members to apportion the expense across.")
+
+    if apportion == 'pro_rata':
+        weights = funded
+    elif apportion == 'per_capita':
+        weights = [(uid, Decimal('1')) for uid, _ in funded]
+    else:
+        raise ValidationError(f"Unknown apportion mode {apportion!r}.")
+
+    shares = _apportion_amount(Decimal(str(amount)), weights)
+    users = {u.id: u for u in get_user_model().objects.filter(id__in=[u for u, _ in funded])}
+    return [_pm.Allocation(member=users[uid], amount=Money(str(share)))
+            for uid, share in shares.items() if share > 0]
+
+
 class ContributionService:
 
     @staticmethod
@@ -331,8 +363,6 @@ class ContributionService:
         """
         from apps.core.policy import can
         from apps.core.ids import uuid7
-        from apps.ledger.balances import fund_member_balances
-        from django.contrib.auth import get_user_model
 
         amount = Decimal(str(amount))
         if amount <= 0:
@@ -346,22 +376,7 @@ class ContributionService:
             raise ValidationError(
                 f"Expense of {amount} exceeds the pool balance of {pool}.")
 
-        funded = [(uid, bal) for uid, bal
-                  in fund_member_balances('contribution', contribution.id).items() if bal > 0]
-        if not funded:
-            raise ValidationError("No funded members to apportion the expense across.")
-
-        if apportion == 'pro_rata':
-            weights = funded
-        elif apportion == 'per_capita':
-            weights = [(uid, Decimal('1')) for uid, _ in funded]
-        else:
-            raise ValidationError(f"Unknown apportion mode {apportion!r}.")
-
-        shares = _apportion_amount(amount, weights)
-        users = {u.id: u for u in get_user_model().objects.filter(id__in=[u for u, _ in funded])}
-        allocations = [_pm.Allocation(member=users[uid], amount=Money(str(share)))
-                       for uid, share in shares.items() if share > 0]
+        allocations = _share_allocations(contribution.id, amount, apportion)
 
         idem_key = idempotency_key or f"pool-expense-{contribution.id}-{uuid7()}"
         ft, _ = create_fin_transaction(

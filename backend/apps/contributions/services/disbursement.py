@@ -1,4 +1,5 @@
 from ._common import *  # shared imports + helpers (ADR-0013 split)
+from .contribution import _share_allocations
 
 
 class DisbursementService:
@@ -159,13 +160,16 @@ class DisbursementService:
             # Already scheduled or completed — nothing to do
             return
 
-        # Double-entry posting (P0-05): reserve funds out of the pool.
+        # Double-entry posting (P0-05): reserve funds out of the pool. The group
+        # voted this spend, so it is the group's cost: every funded member's
+        # share bears its pro-rata part, not the requester's alone (ADR-0027
+        # §0.1). A failed payout reverses the whole journal line for line.
         post_journal(
             idempotency_key=f"je-{idem_key}",
             op_type=_pm.Op.DISBURSEMENT,
-            lines=_pm.disbursement_lines(
-                member=req.requested_by, fund_type='contribution',
-                fund_id=contribution.id, amount=Money(str(req.amount)),
+            lines=_pm.pool_expense_lines(
+                fund_type='contribution', fund_id=contribution.id,
+                allocations=_share_allocations(contribution.id, req.amount),
             ),
             narration=f"Disbursement: {req.reason[:120]}",
             financial_transaction=ft,
