@@ -1,4 +1,5 @@
 from ._common import *  # shared imports + helpers (ADR-0013 split)
+from .. import governance
 from .contribution import _share_allocations
 
 
@@ -77,21 +78,15 @@ class DisbursementService:
         require(voter, "contribution.vote_disbursement", contribution,
                 "You are not authorised to vote on this request.")
 
-        vote_obj, created = DisbursementVote.objects.get_or_create(
-            request=req, voter=voter, defaults={'vote': vote_choice}
-        )
-        if not created:
-            raise ValidationError("You have already voted on this disbursement request.")
+        governance.record_vote(req.votes, voter, vote_choice,
+                               already="You have already voted on this disbursement request.")
+        outcome = governance.tally(req.votes, contribution.required_approvals()).outcome
 
-        approvals  = req.votes.filter(vote='APPROVE').count()
-        rejections = req.votes.filter(vote='REJECT').count()
-        required   = contribution.required_approvals()
-
-        if approvals >= required:
+        if outcome == governance.PASSED:
             req.transition_to('APPROVED')
             DisbursementService._schedule_execution(req)
 
-        elif rejections >= required:
+        elif outcome == governance.FAILED:
             req.transition_to('REJECTED')
             _notify(
                 user=req.requested_by,

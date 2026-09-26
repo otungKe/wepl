@@ -1,4 +1,5 @@
 from ._common import *  # shared imports + helpers (ADR-0013 split)
+from .. import governance
 
 
 class AmendmentService:
@@ -47,7 +48,7 @@ class AmendmentService:
                 if contribution.created_by != proposer and is_participant:
                     return 1
                 return 0
-        return contribution.required_approvals()
+        return governance.required_approvals(contribution, threshold)
 
     @staticmethod
     def propose(contribution_id, user, changes: dict, reason: str = ''):
@@ -178,17 +179,12 @@ class AmendmentService:
         require(voter, "contribution.vote_amendment", contribution,
                 "You are not authorised to vote on this amendment.")
 
-        _, created = ContributionAmendmentVote.objects.get_or_create(
-            amendment=amendment, voter=voter, defaults={'vote': vote_choice}
-        )
-        if not created:
-            raise ValidationError("You have already voted on this amendment.")
+        governance.record_vote(amendment.votes, voter, vote_choice,
+                               already="You have already voted on this amendment.")
+        required = AmendmentService._amendment_required(contribution, amendment.proposed_by)
+        outcome = governance.tally(amendment.votes, required).outcome
 
-        approvals  = amendment.votes.filter(vote='APPROVE').count()
-        rejections = amendment.votes.filter(vote='REJECT').count()
-        required   = AmendmentService._amendment_required(contribution, amendment.proposed_by)
-
-        if approvals >= required:
+        if outcome == governance.PASSED:
             AmendmentService._apply(amendment, contribution)
             _notify(
                 user=amendment.proposed_by,
@@ -197,7 +193,7 @@ class AmendmentService:
                 message="Your proposed changes have been approved and applied.",
                 contribution_id=contribution.id,
             )
-        elif rejections >= required:
+        elif outcome == governance.FAILED:
             amendment.status = 'REJECTED'
             amendment.resolved_at = timezone.now()
             amendment.save(update_fields=['status', 'resolved_at'])
