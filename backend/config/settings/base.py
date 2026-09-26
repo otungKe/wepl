@@ -354,7 +354,7 @@ CELERY_BEAT_SCHEDULE = {
 PAYMENT_PROVIDER = config('PAYMENT_PROVIDER', default='')
 
 # ─── SMS / OTP delivery ───────────────────────────────────────────────────────
-# Gateway selection consumed by apps.users.sms.get_sms_gateway():
+# Gateway selection consumed by apps.core.messaging.get_sms_gateway():
 #   'at'      → Africa's Talking (real SMS)
 #   'console' → log the message only (dev / staging / CI)
 #   ''        → auto: 'console' under DEBUG, 'at' otherwise

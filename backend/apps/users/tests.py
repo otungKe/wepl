@@ -150,7 +150,7 @@ class KYCVerificationEmailTaskTests(TestCase):
         from unittest.mock import patch
 
         verify_url = "https://wepl-api.onrender.com/api/users/kyc/verify-email/?token=xyz"
-        with patch("apps.users.tasks.requests.post") as post:
+        with patch("apps.core.messaging.email.requests.post") as post:
             post.return_value.raise_for_status.return_value = None
             send_kyc_verification_email.apply(kwargs={
                 "email": "tester@example.com",

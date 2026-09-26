@@ -13,8 +13,11 @@ This module makes the gateway explicit, configurable via settings.SMS_BACKEND,
 and lazy — AfricasTalkingGateway only validates credentials at first send, not
 at import time.
 
+It lived in ``apps/users/sms.py`` until the boundary audit (step 7): sending a
+text is a platform capability, not a customer-account rule.
+
 Usage:
-    from .sms import get_sms_gateway
+    from apps.core.messaging import get_sms_gateway
     get_sms_gateway().send("Your code is 1234", "254712345678")
 """
 import logging

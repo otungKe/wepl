@@ -5,9 +5,9 @@ from django.core.cache import cache
 from django.core.exceptions import ValidationError
 
 from apps.core.exceptions import RateLimitError, ServiceUnavailable
+from apps.core.messaging import get_sms_gateway
 
 from .models import User
-from .sms import get_sms_gateway
 
 logger = logging.getLogger(__name__)
 
