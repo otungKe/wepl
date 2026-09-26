@@ -118,7 +118,16 @@ USE_S3 = config('USE_S3', default=False, cast=bool)
 # Fail fast if production would store KYC/media on the ephemeral dyno disk. An
 # operator can explicitly accept the risk (deployments with no user media) with
 # ALLOW_EPHEMERAL_MEDIA=true. Mirrors the STAGING_OTP_BYPASS guard above.
-from apps.core.deploy_checks import check_durable_media, check_s3_credentials
+from apps.core.deploy_checks import (
+    check_callback_allowlist, check_durable_media, check_s3_credentials,
+)
+
+# Live Daraja with the callback allowlist empty means anyone can post a fake
+# "paid" to the M-Pesa webhooks. Sandbox is exempt; no real money moves there.
+check_callback_allowlist(
+    mpesa_base_url=MPESA_BASE_URL,                 # noqa: F405
+    allowlist=SAFARICOM_CALLBACK_IPS,              # noqa: F405
+)
 check_durable_media(
     debug=DEBUG,
     use_s3=USE_S3,

@@ -149,6 +149,10 @@ REST_FRAMEWORK = {
         # pin — is registered into it at startup, not subclassed (ADR-0033).
         'apps.users.auth.SessionJWTAuthentication',
     ),
+    # Deny by default: a view that names no permission needs a completed login
+    # (an active-stage token), never just the OTP step. Public and stage-specific
+    # endpoints opt out explicitly. tests_permission_defaults.py holds the line.
+    'DEFAULT_PERMISSION_CLASSES': ('apps.users.auth.IsActiveSession',),
     'EXCEPTION_HANDLER': 'apps.core.exceptions.custom_exception_handler',
     # Fail-open throttles: a Redis outage degrades rate limiting instead of
     # 500-ing every endpoint (the throttle runs in initial(), before the view).
@@ -251,10 +255,15 @@ MPESA_B2C_SECURITY_CREDENTIAL = config('MPESA_B2C_SECURITY_CREDENTIAL', default=
 MPESA_B2C_RESULT_URL          = config('MPESA_B2C_RESULT_URL',          default='')
 MPESA_B2C_TIMEOUT_URL         = config('MPESA_B2C_TIMEOUT_URL',         default='')
 
-# Safaricom callback IP allowlist.  Empty = all IPs allowed (dev/sandbox).
-# In production: populate from Daraja portal or Safaricom account team.
-# Example: ['196.201.214.200', '196.201.216.200']
-SAFARICOM_CALLBACK_IPS: list = []
+# Safaricom callback IP allowlist: comma-separated addresses or CIDR ranges,
+# e.g. "196.201.214.0/24,196.201.216.0/24". Empty = every sender accepted, which
+# is only tolerable against the sandbox; production.py refuses to boot against
+# live Daraja with it empty. Take the list from the Daraja portal / account team.
+SAFARICOM_CALLBACK_IPS = config('SAFARICOM_CALLBACK_IPS', default='', cast=Csv())
+# How many proxies sit between Safaricom and Django, each appending to
+# X-Forwarded-For. The sender is read that many entries from the RIGHT, because
+# everything to the left of it is whatever the caller chose to send.
+SAFARICOM_CALLBACK_PROXY_HOPS = config('SAFARICOM_CALLBACK_PROXY_HOPS', default=1, cast=int)
 
 # ─── Celery ───────────────────────────────────────────────────────────────────
 CELERY_BROKER_URL         = config('REDIS_URL', default='redis://127.0.0.1:6379/0')

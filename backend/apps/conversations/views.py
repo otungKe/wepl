@@ -184,12 +184,7 @@ class ConversationDeleteView(APIView):
 
     def delete(self, request, conversation_id):
         conv = get_object_or_404(Conversation, id=conversation_id)
-        if conv.created_by != request.user:
-            return Response(
-                {"error": "Only the creator can delete this conversation."},
-                status=status.HTTP_403_FORBIDDEN,
-            )
-        conv.delete()
+        ConversationService.delete_conversation(conv, request.user)
         logger.info(
             "ConversationDeleteView: user %s deleted conversation %s",
             request.user.id, conversation_id,
@@ -321,7 +316,12 @@ class MessageReactView(APIView):
     permission_classes = [IsActiveSession]
 
     def post(self, request, message_id):
-        message = get_object_or_404(Message, id=message_id)
+        message = get_object_or_404(Message.objects.select_related('conversation__community'), id=message_id)
+        if not can(request.user, "conversation.view", message.conversation):
+            return Response(
+                {"error": "You must be a member of this community to react."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
         emoji = (request.data.get('emoji') or '').strip()
         if not emoji:
             return Response({"error": "emoji is required"}, status=status.HTTP_400_BAD_REQUEST)

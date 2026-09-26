@@ -14,7 +14,7 @@ class AccountDeletionView(APIView):
     the closure (an open advance, money held in a group, a community still
     relying on this creator) and then erases its own data, in one transaction.
     """
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsActiveSession]
 
     def delete(self, request):
         try:

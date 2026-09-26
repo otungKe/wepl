@@ -136,3 +136,63 @@ class ConversationAuthzApiTests(TestCase):
         r = active_client(self.outsider).delete(
             f"/api/conversations/messages/{self.msg.id}/delete/")
         self.assertEqual(r.status_code, 403)
+
+
+class ConversationOutsiderApiTests(TestCase):
+    """What a signed-in user from outside the group can reach by id."""
+
+    def setUp(self):
+        self.creator  = make_user("254700000011")
+        self.member   = make_user("254700000012")
+        self.outsider = make_user("254700000013")
+        self.community = CommunityService.create_community(self.creator, {"name": "Private chama"})
+        CommunityMembership.objects.create(user=self.member, community=self.community, role=Role.MEMBER)
+        self.conv = Conversation.objects.create(
+            community=self.community, topic="Payouts", created_by=self.member)
+        self.secret = Message.objects.create(
+            conversation=self.conv, sender=self.creator, content="secret payout plan")
+
+        other = CommunityService.create_community(self.outsider, {"name": "Outsider chama"})
+        self.own_conv = Conversation.objects.create(
+            community=other, topic="Ours", created_by=self.outsider)
+
+    def test_outsider_cannot_read_messages(self):
+        r = active_client(self.outsider).get(f"/api/conversations/{self.conv.id}/messages/")
+        self.assertEqual(r.status_code, 403)
+        self.assertNotIn("secret payout plan", r.content.decode())
+
+    def test_member_can_read_messages(self):
+        r = active_client(self.member).get(f"/api/conversations/{self.conv.id}/messages/")
+        self.assertEqual(r.status_code, 200)
+
+    def test_reply_cannot_quote_another_groups_message(self):
+        r = active_client(self.outsider).post(
+            f"/api/conversations/{self.own_conv.id}/messages/",
+            {"content": "quoting", "reply_to_id": self.secret.id}, format="json")
+        self.assertEqual(r.status_code, 201, r.content)
+        self.assertNotIn("secret payout plan", r.content.decode())
+        self.assertIsNone(Message.objects.get(id=r.json()["id"]).reply_to_id)
+
+    def test_reply_within_the_conversation_is_kept(self):
+        r = active_client(self.creator).post(
+            f"/api/conversations/{self.conv.id}/messages/",
+            {"content": "agreed", "reply_to_id": self.secret.id}, format="json")
+        self.assertEqual(r.status_code, 201, r.content)
+        self.assertEqual(Message.objects.get(id=r.json()["id"]).reply_to_id, self.secret.id)
+
+    def test_outsider_cannot_react(self):
+        r = active_client(self.outsider).post(
+            f"/api/conversations/messages/{self.secret.id}/react/", {"emoji": "👍"}, format="json")
+        self.assertEqual(r.status_code, 403)
+        self.assertFalse(self.secret.reactions.exists())
+
+    def test_removed_creator_cannot_delete_the_thread(self):
+        CommunityMembership.objects.filter(user=self.member, community=self.community).update(is_active=False)
+        for url in (f"/api/conversations/{self.conv.id}/delete/", f"/api/conversations/{self.conv.id}/"):
+            r = active_client(self.member).delete(url)
+            self.assertEqual(r.status_code, 403, url)
+        self.assertTrue(Conversation.objects.filter(id=self.conv.id).exists())
+
+    def test_member_creator_can_still_delete_the_thread(self):
+        r = active_client(self.member).delete(f"/api/conversations/{self.conv.id}/delete/")
+        self.assertEqual(r.status_code, 204)

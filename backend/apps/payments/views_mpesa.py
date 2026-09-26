@@ -21,7 +21,8 @@ Behaviour notes carried over from that file:
   - B2CResultView: resolves FinancialTransaction by conversation_id, claims the
     transition and emits one durable settlement event (ADR-0028).
   - Callback views: SafaricomIPPermission applied (no-op when
-    SAFARICOM_CALLBACK_IPS is empty, enforced in production).
+    SAFARICOM_CALLBACK_IPS is empty, which production.py forbids against live
+    Daraja).
 """
 import logging
 from datetime import datetime
@@ -29,7 +30,6 @@ from datetime import datetime
 from django.db import transaction
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
-from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
@@ -37,7 +37,7 @@ from apps.core.events import emit_event
 from apps.core.exceptions import TransitionError
 from apps.mpesa import tasks as rail_tasks
 from apps.mpesa.models import MpesaSTKRequest, MpesaC2BTransaction
-from apps.mpesa.permissions import SafaricomIPPermission
+from apps.mpesa.permissions import SafaricomIPPermission, allowlist_enforced
 from apps.mpesa.services import MpesaService
 
 logger = logging.getLogger(__name__)
@@ -72,7 +72,7 @@ class STKCallbackView(APIView):
             PaymentService.record_provider_event(
                 provider=get_provider().name, event_type='collection_callback',
                 payload=request.data, provider_ref=checkout_id,
-                signature_verified=True,   # gated by SafaricomIPPermission
+                signature_verified=allowlist_enforced(),
             )
             PaymentService.resolve(
                 provider=get_provider().name, provider_ref=checkout_id,
@@ -258,7 +258,7 @@ class B2CResultView(APIView):
             PaymentService.record_provider_event(
                 provider=get_provider().name, event_type='payout_result',
                 payload=request.data, provider_ref=conversation_id,
-                signature_verified=True,   # gated by SafaricomIPPermission
+                signature_verified=allowlist_enforced(),
             )
             PaymentService.resolve(
                 provider=get_provider().name, provider_ref=conversation_id,
@@ -350,7 +350,6 @@ class B2CTimeoutView(APIView):
 
 class PendingSTKStatusView(APIView):
     """Poll the status of an STK Push request."""
-    permission_classes = [IsAuthenticated]
 
     def get(self, request, checkout_request_id):
         stk = get_object_or_404(

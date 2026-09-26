@@ -129,6 +129,9 @@ class ConversationConsumer(AsyncWebsocketConsumer):
             reply_to_id=reply_to_id,
         )
 
+        # Use the reply target the service accepted, never the raw client value:
+        # a message id from another conversation is dropped there.
+        reply_to_id = saved.reply_to_id
         reply_to_data = None
         if reply_to_id:
             rt = await sync_to_async(self._fetch_reply)(reply_to_id)

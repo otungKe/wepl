@@ -60,6 +60,18 @@ class ConversationService:
             )
             raise PermissionDenied("Not a member of this community.")
 
+        # A reply may only quote a message from this same conversation; the
+        # quoted content is echoed back, so anything else would leak it.
+        if reply_to_id is not None:
+            try:
+                reply_to_id = int(reply_to_id)
+            except (TypeError, ValueError):
+                reply_to_id = None
+            if reply_to_id is not None and not Message.objects.filter(
+                id=reply_to_id, conversation_id=conversation.id
+            ).exists():
+                reply_to_id = None
+
         msg = Message.objects.create(
             conversation=conversation,
             sender=sender,
@@ -78,6 +90,8 @@ class ConversationService:
     @staticmethod
     def get_messages(conversation_id, user):
         conversation = get_object_or_404(Conversation, id=conversation_id)
+        if not can(user, "conversation.view", conversation):
+            raise PermissionDenied("You must be a member of this community to read this conversation.")
         membership = CommunityMembership.objects.filter(
             community=conversation.community, user=user, is_active=True
         ).first()
