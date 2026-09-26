@@ -15,6 +15,7 @@ from .approvals import FlaggedAction, register
 
 ACTION_REVERSAL = "finops.reverse"
 ACTION_PHONE_CHANGE = "users.change_phone"
+ACTION_RECOVER_OWNERSHIP = "communities.recover_ownership"
 
 
 def _execute_reversal(params: dict, *, actor_label: str = "") -> dict:
@@ -79,6 +80,31 @@ def _summary_phone_change(params: dict) -> str:
             f"{params.get('old_phone', '?')} → {params.get('new_phone', '?')}")
 
 
+def _execute_recover_ownership(params: dict, *, actor_label: str = "") -> dict:
+    """Hand an orphaned community to one of its active members. The member and
+    the community are re-checked here because approval may land much later."""
+    from apps.communities.models import Community
+    from apps.communities.services import CommunityService
+    try:
+        community = Community.objects.get(pk=params["community_id"])
+    except Community.DoesNotExist:
+        raise ValidationError("The community no longer exists.")
+    if community.created_by_id != params.get("old_owner_id"):
+        raise ValidationError(
+            "The community's owner changed since this request was raised — re-check and re-request.")
+    CommunityService.recover_ownership(
+        community, params["membership_id"], reason=params.get("reason", ""),
+        operator_label=actor_label)
+    community.refresh_from_db()
+    return {"community_id": community.pk, "old_owner_id": params.get("old_owner_id"),
+            "new_owner_id": community.created_by_id}
+
+
+def _summary_recover_ownership(params: dict) -> str:
+    return (f"Recover community #{params.get('community_id')}: hand ownership to "
+            f"membership #{params.get('membership_id')}")
+
+
 def register_all() -> None:
     register(ACTION_REVERSAL, FlaggedAction(
         capability="finops.reverse",
@@ -91,4 +117,10 @@ def register_all() -> None:
         execute=_execute_phone_change,
         summary=_summary_phone_change,
         target_type="user",
+    ))
+    register(ACTION_RECOVER_OWNERSHIP, FlaggedAction(
+        capability="communities.manage",
+        execute=_execute_recover_ownership,
+        summary=_summary_recover_ownership,
+        target_type="community",
     ))

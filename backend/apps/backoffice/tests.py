@@ -1742,3 +1742,50 @@ class CustomerInfoAndActivityTests(TestCase):
         self.assertEqual(acts[0]["op_type"], "DISBURSEMENT")   # newest first
         self.assertEqual(acts[0]["direction"], "PAYOUT")
         self.assertEqual(acts[1]["direction"], "PAYIN")
+
+
+class CommunityOwnershipRecoveryTests(TestCase):
+    """Orphan-community recovery is a maker-checked ops action. It replaced the
+    Django-superuser bypass of the community policy (boundary audit, step 2)."""
+
+    def setUp(self):
+        from apps.communities.models import CommunityMembership
+        from apps.communities.services import CommunityService
+        User = get_user_model()
+        self.owner = User.objects.create_user(phone_number="254700000951")
+        self.heir = User.objects.create_user(phone_number="254700000952")
+        self.community = CommunityService.create_community(self.owner, {"name": "Orphaned Chama"})
+        self.heir_membership = CommunityMembership.objects.create(
+            user=self.heir, community=self.community)
+        self.ops = make_staff("ops-own@imbank.co.ke", "operations")          # communities.manage
+        self.checker = make_staff("fin-own@imbank.co.ke", "finance")         # approvals.decide
+        self.url = f"/api/ops/communities/{self.community.id}/recover-ownership/"
+
+    def test_recovery_end_to_end(self):
+        r = op_client(self.ops).post(
+            self.url, {"membership_id": self.heir_membership.id, "reason": "owner closed account"},
+            format="json", **stepped_up(self.ops))
+        self.assertEqual(r.status_code, 202, r.data)
+        self.community.refresh_from_db()
+        self.assertEqual(self.community.created_by_id, self.owner.id)  # pending, unchanged
+
+        ok = op_client(self.checker).post(
+            f"/api/ops/approvals/{r.data['approval_id']}/decide/", {"decision": "approve"},
+            format="json", **stepped_up(self.checker))
+        self.assertEqual(ok.status_code, 200, ok.data)
+        self.community.refresh_from_db()
+        self.assertEqual(self.community.created_by_id, self.heir.id)
+        from apps.audit.models import AuditEvent
+        self.assertTrue(AuditEvent.objects.filter(
+            action="community.ownership_recovered", target_id=str(self.community.id)).exists())
+
+    def test_request_needs_capability_stepup_and_an_active_member(self):
+        sup = make_staff("sup-own@imbank.co.ke", "support")  # no communities.manage
+        body = {"membership_id": self.heir_membership.id, "reason": "x"}
+        self.assertEqual(op_client(sup).post(
+            self.url, body, format="json", **stepped_up(sup)).status_code, 403)
+        self.assertEqual(op_client(self.ops).post(self.url, body, format="json").status_code, 403)
+        bad = op_client(self.ops).post(
+            self.url, {"membership_id": 999999, "reason": "x"},
+            format="json", **stepped_up(self.ops))
+        self.assertEqual(bad.status_code, 400)

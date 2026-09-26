@@ -84,9 +84,11 @@ class CommunityPolicyTests(TestCase):
     def test_anonymous_is_always_denied(self):
         self.assertFalse(can(AnonymousUser(), "community.view", self.c))
 
-    def test_superuser_bypasses_policy(self):
+    def test_superuser_gets_no_bypass(self):
+        # A Django superuser is not a WEPL authority; operators act in the ops console.
         su = make_user("254700009999", is_superuser=True, is_staff=True)
-        self.assertTrue(can(su, "community.delete", self.c))
+        self.assertFalse(can(su, "community.delete", self.c))
+        self.assertFalse(can(su, "community.finance.manage", self.c))
 
     def test_unknown_action_is_a_config_error_not_an_allow(self):
         # Fail-closed: an unregistered action must never silently authorize.
@@ -277,15 +279,30 @@ class OwnershipTransferTests(TestCase):
             {"membership_id": self.m_member.id}, format="json")
         self.assertEqual(r.status_code, 403)
 
-    def test_superuser_can_transfer_to_recover_orphan(self):
+    def test_superuser_cannot_transfer(self):
         operator = make_user("254700009999")
         operator.is_superuser = True
         operator.is_staff = True
         operator.save(update_fields=["is_superuser", "is_staff"])
-        # operator is not a member, but may reassign ownership (orphan recovery)
-        CommunityService.transfer_ownership(operator, self.c, self.m_admin.id)
+        with self.assertRaises(PermissionDenied):
+            CommunityService.transfer_ownership(operator, self.c, self.m_admin.id)
+
+    def test_operator_recovery_hands_ownership_on(self):
+        # Orphan recovery is the ops console's maker-checked action; this is the
+        # service it executes once a second operator approves.
+        CommunityService.recover_ownership(
+            self.c, self.m_admin.id, reason="owner closed their account",
+            operator_label="ops@wepl.app")
         self.c.refresh_from_db()
         self.assertEqual(self.c.created_by_id, self.admin.id)
+        from apps.audit.models import AuditEvent
+        ev = AuditEvent.objects.get(action="community.ownership_recovered")
+        self.assertEqual(ev.metadata["reason"], "owner closed their account")
+
+    def test_operator_recovery_needs_a_reason(self):
+        with self.assertRaises(ValidationError):
+            CommunityService.recover_ownership(
+                self.c, self.m_admin.id, reason="  ", operator_label="ops@wepl.app")
 
     def test_no_pinned_tenant_is_unrestricted(self):
         # Staff/system contexts (no tenant pinned) operate across tenants.

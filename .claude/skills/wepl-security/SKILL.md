@@ -57,8 +57,8 @@ settings-module guard; copy it rather than importing the module.
 
 `apps/users/tiers.py::AccessPolicy`:
 - **`require_tier1(user, msg)`** — unconditional. Used by the pre-existing money
-  paths (`ContributionService.contribute`, `request_advance`). **Staff and
-  superusers bypass it.**
+  paths (`ContributionService.contribute`, `request_advance`). **Nobody
+  bypasses it** — `is_staff`/`is_superuser` stopped bypassing on 2026-09-26.
 - **`gate(user, msg)`** — flag-aware, for the newer Phase-B surfaces (community
   create/join, contribution create, chat). **It is a no-op while
   `ACCESS_TIER_ENFORCEMENT` is `False`, which is the default.** Do not read a
@@ -130,8 +130,9 @@ Reversals and journals with no FT skip member-facing controls, by design.
 ## Do not assume
 
 - Do not assume `is_staff` means "an operator". It is a flag on a **customer**
-  model that grants a KYC-gate bypass, a tenant-pinning bypass, and
-  `IsAdminUser` access to the ledger reporting endpoints.
+  model that grants Django admin (read-only for money records since 2026-09-26)
+  and `IsAdminUser` access to the ledger reporting endpoints. It no longer
+  bypasses the KYC gate, the tenant pin or community policy.
 - Do not assume a `gate()` call enforces anything today.
 - Do not assume revoking a `UserSession` affects an ops token — the ops token has
   no revocation list, only a 12 h expiry plus the `StaffAccount.is_active` check.

@@ -149,7 +149,7 @@ class TenantContextWiringTests(TestCase):
         SessionJWTAuthentication().authenticate(self._request_with_token(user))
         self.assertEqual(self._guc(), str(default_tenant().id))
 
-    def test_staff_request_not_pinned(self):
+    def test_staff_request_is_pinned_like_any_member(self):
         from django.contrib.auth import get_user_model
         from apps.users.auth import SessionJWTAuthentication
         from apps.tenants.rls import clear_current_tenant
@@ -158,7 +158,10 @@ class TenantContextWiringTests(TestCase):
         staff.is_staff = True
         staff.save()
         SessionJWTAuthentication().authenticate(self._request_with_token(staff))
-        self.assertEqual(self._guc(), '')  # left unset → cross-tenant operator
+        # is_staff grants Django admin, not a cross-tenant API view; operators
+        # work across tenants in the ops console as StaffAccounts.
+        from apps.tenants.resolve import default_tenant
+        self.assertEqual(self._guc(), str(default_tenant().id))
 
     def test_middleware_resets_context(self):
         from django.http import HttpResponse
