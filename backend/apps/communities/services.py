@@ -18,10 +18,9 @@ from django.core.exceptions import PermissionDenied, ValidationError
 from django.db import transaction
 from django.utils import timezone
 
-from apps.activity.models import Activity
-from apps.activity.services import ActivityService
 from apps.users.tiers import AccessPolicy
 from apps.audit.services import AuditService
+from apps.core.events import emit_event
 from apps.core.policy import require
 
 from .models import Community, CommunityJoinRequest, CommunityMembership
@@ -165,12 +164,10 @@ class CommunityService:
             ShareHolding.objects.create(shares_fund=fund, user=user)
 
         logger.info("Community created: '%s' (id=%s) by user %s", community.name, community.id, user.pk)
-        ActivityService.record(
-            actor=user,
-            verb="community_created",
-            params={"community_name": community.name},
-            visibility=Activity.Visibility.COMMUNITY,
-            community=community,
+        emit_event(
+            "community.created", aggregate_key=f"community:{community.id}",
+            body={"actor_id": user.pk, "community_id": community.id,
+                  "community_name": community.name},
         )
         return community
 
@@ -223,12 +220,10 @@ class CommunityService:
             return membership
 
         logger.info("User %s joined community '%s' (id=%s)", user.pk, community.name, community.id)
-        ActivityService.record(
-            actor=user,
-            verb="community_joined",
-            params={"community_name": community.name},
-            visibility=Activity.Visibility.COMMUNITY,
-            community=community,
+        emit_event(
+            "community.member_joined", aggregate_key=f"community:{community.id}",
+            body={"actor_id": user.pk, "community_id": community.id,
+                  "community_name": community.name},
         )
         _notify_admins(
             community,
@@ -285,11 +280,10 @@ class CommunityService:
         membership.member_status = CommunityMembership.MemberStatus.LEFT
         membership.save(update_fields=["is_active", "member_status"])
         logger.info("User %s left community '%s' (id=%s)", user.pk, community.name, community.id)
-        ActivityService.record(
-            actor=user,
-            verb="community_left",
-            params={"community_name": community.name},
-            visibility=Activity.Visibility.PRIVATE,
+        emit_event(
+            "community.member_left", aggregate_key=f"community:{community.id}",
+            body={"actor_id": user.pk, "community_id": community.id,
+                  "community_name": community.name},
         )
         return membership
 
@@ -539,12 +533,12 @@ class CommunityService:
                       **(audit_metadata or {})},
         )
         if actor is not None:
-            ActivityService.record(
-                actor=actor,
-                verb="community_ownership_transferred",
-                params={"community_name": community.name, "new_owner_name": _dn(new_owner)},
-                visibility=Activity.Visibility.COMMUNITY,
-                community=community,
+            emit_event(
+                "community.ownership_transferred",
+                aggregate_key=f"community:{community.id}",
+                body={"actor_id": actor.pk, "community_id": community.id,
+                      "community_name": community.name,
+                      "new_owner_id": new_owner.id, "new_owner_name": _dn(new_owner)},
             )
         from apps.core.events import emit
         emit(
@@ -685,10 +679,10 @@ class CommunityService:
         community.save(update_fields=["status"])
         AuditService.log("community.archived", actor=actor, target=community,
                          tenant=community.tenant_id)
-        ActivityService.record(
-            actor=actor, verb="community_archived",
-            params={"community_name": community.name},
-            visibility=Activity.Visibility.COMMUNITY, community=community,
+        emit_event(
+            "community.archived", aggregate_key=f"community:{community.id}",
+            body={"actor_id": actor.pk, "community_id": community.id,
+                  "community_name": community.name},
         )
         return community
 

@@ -128,6 +128,13 @@ where the coupling is. This ADR took the graph from eleven entangled apps to fou
 stops it getting worse. The rest is sequenced work, and ADR-0013's contributions split
 is where it continues.
 
+**Addendum (2026-09-26).** `activity` was not part of the knot after all: it was in
+the cycle only because `communities` and `contributions` called `ActivityService`
+directly. Those nine calls now emit outbox facts (`community.created`,
+`contribution.paid`, …) through `emit_event`, and `apps/activity/consumers.py` turns
+them into feed rows on the inline lane, idempotent on the event id. Nothing imports
+`apps.activity`, so the baseline is three apps.
+
 ## Alternatives considered
 
 **`import-linter` with a full layer contract.** The obvious tool, and the first

@@ -36,8 +36,6 @@ from ..models import (
     ContributionAmendment, ContributionAmendmentVote,
     ContributionJoinRequest,
 )
-from apps.activity.models import Activity
-from apps.activity.services import ActivityService
 from apps.users.tiers import AccessPolicy
 from apps.contributions.permissions import FinancialPermissions
 from apps.ledger.writer import create_fin_transaction
@@ -80,6 +78,7 @@ def _dn(user) -> str:
 # ---------------------------------------------------------------------------
 
 from apps.core.events import emit as _emit_event
+from apps.core.events import emit_event
 
 
 def _notify(user, notification_type, title, message, **kwargs):
@@ -117,7 +116,7 @@ __all__ = [
     "logging", "math", "random", "timedelta", "Decimal",
     "transaction", "F", "ValidationError", "PermissionDenied", "timezone",
     # cross-cutting services / helpers
-    "AuditService", "require", "ActivityService", "Activity", "AccessPolicy", "FinancialPermissions",
+    "AuditService", "require", "emit_event", "AccessPolicy", "FinancialPermissions",
     "logger", "_dn", "_notify", "_emit_event", "_compute_next_run",
     # models
     "Contribution", "ContributionParticipant",

@@ -97,6 +97,12 @@ class Activity(models.Model):
         related_name='+',
     )
 
+    # The outbox fact this row was written from (ADR-0006/ADR-0029). Delivery is
+    # at-least-once, so the consumer skips an event it has already recorded; the
+    # unique constraint makes a second row impossible rather than unlikely. Null
+    # for rows written directly and for rows older than the event feed.
+    source_event_id = models.BigIntegerField(null=True, blank=True, unique=True)
+
     created_at = models.DateTimeField(auto_now_add=True)
 
     objects = ActivityQuerySet.as_manager()

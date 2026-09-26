@@ -97,12 +97,11 @@ class ContributionService:
                 except User.DoesNotExist:
                     pass
 
-        ActivityService.record(
-            actor=user,
-            verb='contribution_created',
-            params={"contribution_title": contribution.title},
-            visibility=Activity.Visibility.COMMUNITY,
-            community=contribution.community,
+        emit_event(
+            'contribution.created', aggregate_key=f'contribution:{contribution.id}',
+            body={"actor_id": user.pk, "contribution_id": contribution.id,
+                  "community_id": contribution.community_id,
+                  "contribution_title": contribution.title},
         )
         return contribution
 
@@ -308,12 +307,11 @@ class ContributionService:
         )
 
         # ── Side effects ──────────────────────────────────────────────────────
-        # Amount is sensitive — keep the payer's own contribution private.
-        ActivityService.record(
-            actor=user,
-            verb='contribution_payment',
-            params={"amount": str(amount), "contribution_title": contribution.title},
-            visibility=Activity.Visibility.PRIVATE,
+        emit_event(
+            'contribution.paid', aggregate_key=f'contribution:{contribution.id}',
+            dedup_key=f'contribution.paid:ft={ft.id}',
+            body={"actor_id": user.pk, "contribution_id": contribution.id,
+                  "contribution_title": contribution.title, "amount": str(amount)},
         )
 
         pool_total = fund_balance('contribution', contribution.id)
