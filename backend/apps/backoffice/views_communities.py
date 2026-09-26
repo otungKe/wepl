@@ -168,6 +168,9 @@ class OpsCommunityRecoverOwnershipView(OpsAPIView):
 
         c = get_object_or_404(Community, id=community_id)
         reason = (request.data.get("reason") or "").strip()
+        if not reason:
+            return Response({"detail": "A reason is required to recover ownership."},
+                            status=http.HTTP_400_BAD_REQUEST)
         try:
             membership_id = int(request.data.get("membership_id"))
         except (TypeError, ValueError):
@@ -184,9 +187,11 @@ class OpsCommunityRecoverOwnershipView(OpsAPIView):
                 params={"community_id": c.id, "membership_id": membership_id,
                         "old_owner_id": c.created_by_id, "reason": reason},
                 actor=request.user, reason=reason, target_id=str(c.id))
-        except ValidationError as exc:
-            detail = "; ".join(exc.messages) if hasattr(exc, "messages") else str(exc)
-            return Response({"detail": detail}, status=http.HTTP_409_CONFLICT)
+        except ValidationError:
+            # The reason and capability are checked above; anything else is not
+            # echoed to the client (exception text can carry internals).
+            return Response({"detail": "This request could not be raised."},
+                            status=http.HTTP_409_CONFLICT)
 
         record_action(action="ops.community.ownership_recovery_requested", actor=request.user,
                       request=request, target_type="community", target_id=c.id,

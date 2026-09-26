@@ -1789,3 +1789,7 @@ class CommunityOwnershipRecoveryTests(TestCase):
             self.url, {"membership_id": 999999, "reason": "x"},
             format="json", **stepped_up(self.ops))
         self.assertEqual(bad.status_code, 400)
+        no_reason = op_client(self.ops).post(
+            self.url, {"membership_id": self.heir_membership.id, "reason": " "},
+            format="json", **stepped_up(self.ops))
+        self.assertEqual(no_reason.status_code, 400)
