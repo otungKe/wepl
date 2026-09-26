@@ -254,7 +254,10 @@ class VerificationApiTests(TestCase):
         self.assertEqual(r.status_code, 200, r.content)
         self.kyc.refresh_from_db()
         self.assertEqual(self.kyc.status, "approved")
-        self.assertTrue(self.kyc.verification_provider.startswith("ops:"))
+        from apps.verification.models import CaseEvent
+        self.assertTrue(CaseEvent.objects.filter(
+            case__kyc=self.kyc, event_type="review.approved",
+            actor_label__startswith="ops:").exists())
         self.assertTrue(AuditEvent.objects.filter(action="ops.verification.approve").exists())
 
     def test_reject_requires_reason(self):

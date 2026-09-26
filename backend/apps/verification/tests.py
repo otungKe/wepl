@@ -138,8 +138,21 @@ class CaseLedgerTests(TestCase):
         self.assertIsNotNone(case.closed_at)
         kyc.refresh_from_db()
         self.assertEqual(kyc.status, 'approved')
-        self.assertEqual(kyc.verification_state, 'verified')
-        self.assertEqual(case.events.order_by('-seq').first().event_type, 'review.approved')
+        self.assertIsNotNone(kyc.reviewed_at)
+        last = case.events.order_by('-seq').first()
+        self.assertEqual(last.event_type, 'review.approved')
+        self.assertEqual(last.actor_label, 'manual (admin)')
+
+    def test_decision_does_not_overwrite_the_provider_result(self):
+        # The provider sent it to a human; a human approved it. Both stay true.
+        kyc = _kyc()
+        kyc.verification_provider, kyc.verification_state = 'manual', 'manual_review'
+        kyc.save(update_fields=['verification_provider', 'verification_state'])
+        service.decide(kyc, 'approve', actor_label='ops:reviewer@example.com')
+        kyc.refresh_from_db()
+        self.assertEqual(kyc.status, 'approved')
+        self.assertEqual(kyc.verification_provider, 'manual')
+        self.assertEqual(kyc.verification_state, 'manual_review')
 
     def test_decide_reject_requires_info_and_illegal_transitions(self):
         kyc = _kyc()

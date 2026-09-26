@@ -231,10 +231,11 @@ class KYCProfile(models.Model):
         related_name='kyc_reviews',
     )
 
-    # Identity-verification provider outcome (apps.users.identity port).
-    # Records which checker ran and what it returned — audit trail for both
-    # manual review and any future automated vendor. `verification_state` holds
-    # the normalised IdentityCheckResult.state; the KYC `status` is derived from it.
+    # Identity-verification provider outcome (apps.verification.identity port).
+    # Records which checker ran and what it returned, written only by
+    # apps.verification.checks. `verification_state` holds the normalised
+    # IdentityCheckResult.state. A reviewer's decision does not overwrite it:
+    # the decision is `status`/`reviewed_at` and the case timeline.
     verification_provider   = models.CharField(max_length=40, blank=True, default='')
     verification_ref        = models.CharField(max_length=128, blank=True, default='')
     verification_state      = models.CharField(max_length=20, blank=True, default='')

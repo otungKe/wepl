@@ -7,7 +7,7 @@ updated as a projection of the case — never the other way round.
 
 Callers:
   - customer submit / targeted re-submit (``apps.users.views.kyc``)
-  - the identity-check pipeline (``_run_identity_check``)
+  - the identity-check pipeline (``apps.verification.checks``)
   - ops console decisions (``apps.backoffice.views_verification``)
   - Django-admin KYC actions (``apps.users.admin``)
 """
@@ -458,12 +458,12 @@ def _project(kyc, case, action, *, actor_label, reviewer_user, reason, items):
         fields += ['resubmission_requested']
 
     if action in ('approve', 'reject'):
+        # The decision, not the provider's result: ``verification_*`` keep
+        # what the identity check said, so a reviewer overruling it (or deciding
+        # with no check at all) stays visible as such. Who decided is on the
+        # case timeline.
         kyc.reviewed_at = now
-        kyc.verification_provider = actor_label
-        kyc.verification_state = 'verified' if action == 'approve' else 'rejected'
-        kyc.verification_checked_at = now
-        fields += ['reviewed_at', 'verification_provider',
-                   'verification_state', 'verification_checked_at']
+        fields += ['reviewed_at']
         if reviewer_user is not None:
             kyc.reviewed_by = reviewer_user
             fields.append('reviewed_by')

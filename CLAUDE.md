@@ -108,9 +108,9 @@ if `STAGING_OTP_BYPASS` is set while `DEBUG=False`** — this guard is intention
 weakened. In production, `SMS_BACKEND=console` routes real OTP codes to the logs.
 
 KYC identity checks (the Tier-0 → Tier-1 gate, ADR-0022) run through the
-`IdentityVerificationProvider` port in `apps/users/identity/` (`ManualProvider` = human
+`IdentityVerificationProvider` port in `apps/verification/identity/` (`ManualProvider` = human
 review, `FakeProvider` = tests, resolved via `registry.get_provider()`, mirrors the payments
-port). `KYCEmailVerifyView` calls it via `_run_identity_check()`; a real vendor / IPRS lookup
+port). The check itself is `apps/verification/checks.py`, which the KYC submit endpoints call; a real vendor / IPRS lookup
 drops in as another adapter without touching the view (ADR-0023).
 
 **Identity is a ledger too (`apps/verification/`).** Every KYC journey has a `VerificationCase`
