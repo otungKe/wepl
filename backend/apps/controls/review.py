@@ -43,7 +43,7 @@ def _open_edd_case(held: HeldMovement) -> None:
     Center's "Requests & documents" section). Best-effort — a failure here
     must never break the error response the customer is already receiving."""
     try:
-        from apps.users.models import VerificationRequest
+        from apps.verification.models import VerificationRequest
         from apps.verification import service as case_service
         from apps.verification.models import VerificationCase
 
@@ -67,7 +67,7 @@ def _open_edd_case(held: HeldMovement) -> None:
                     'bank or mobile-money statement, an invoice, or a receipt — '
                     'and add a short note if helpful.'),
         )
-        from apps.users.notifications import notify_verification_request
+        from apps.verification.notifications import notify_verification_request
         notify_verification_request(vreq)
     except Exception:
         logger.exception("Failed to open EDD case for held movement %s", held.pk)

@@ -14,3 +14,10 @@ class UsersConfig(AppConfig):
         # message is registered rather than imported (ADR-0033).
         from . import notifications
         notifications.register()
+
+        # A login-suspending or freezing restriction signs the customer out
+        # everywhere. controls owns restrictions, users owns sessions, so the
+        # revoker is handed over rather than imported (ADR-0033).
+        from apps.controls.restrictions import register_session_revoker
+        from .sessions import revoke_all_for_user
+        register_session_revoker(revoke_all_for_user)

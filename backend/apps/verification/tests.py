@@ -256,7 +256,7 @@ class EddPipelineTests(TestCase):
                                             subject_id=str(self.held.pk))
 
     def test_hold_opens_case_and_customer_request_once(self):
-        from apps.users.models import VerificationRequest
+        from apps.verification.models import VerificationRequest
         case = self._open()
         self.assertEqual(case.state, VerificationCase.State.REQUIRES_INFO)
         vreq = VerificationRequest.objects.get(case=case)
@@ -285,7 +285,7 @@ class EddPipelineTests(TestCase):
 
     def test_approve_issues_single_use_override_and_releases_hold(self):
         from apps.controls.models import ControlOverride
-        from apps.users.models import VerificationRequest
+        from apps.verification.models import VerificationRequest
         case = self._open()
         service.record_customer_evidence(case, user=self.user, note='see note')
         service.decide_subject_case(case, 'approve',
@@ -303,7 +303,7 @@ class EddPipelineTests(TestCase):
 
     def test_reject_refuses_hold_and_needs_no_override(self):
         from apps.controls.models import ControlOverride
-        from apps.users.models import VerificationRequest
+        from apps.verification.models import VerificationRequest
         case = self._open()
         service.record_customer_evidence(case, user=self.user, note='x')
         service.decide_subject_case(case, 'reject', actor_label='ops:edd@wepl.app',
