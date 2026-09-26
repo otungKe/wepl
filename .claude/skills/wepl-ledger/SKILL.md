@@ -217,7 +217,7 @@ short-circuit that.
 `enforce_controls` runs inside `post_journal` for member-facing movements, via
 `ledger/chokepoint.py` — `ControlsConfig.ready()` registers it, so there is still
 exactly one enforcement point but the ledger does not import controls (ADR-0033).
-Account restrictions first (`users/services.py::RestrictionService.blocks_money`),
+Account restrictions first (`controls/restrictions.py::RestrictionService.blocks_money`),
 then `LimitRule` evaluation. DENY short-circuits; otherwise the strictest outcome
 wins. DENY → `LimitExceeded`, HOLD → `ControlHeld`, both raised **before any
 journal is written**.

@@ -20,6 +20,9 @@ counts exactly like a top-level one) and assert five things:
   ``apps.verification.hooks``.
 * the remaining cycle does not grow.
 
+A last group checks the three leaf apps again through the model registry, since a
+foreign key written as a string never shows up as an import (``FK_BASELINE``).
+
 The last is a ratchet, not an endorsement: :data:`CYCLE_BASELINE` is the set of
 apps that are still mutually entangled. Shrinking it is the work; adding to it is
 a regression, and this test is what makes the difference visible in review
@@ -344,4 +347,96 @@ class ImportCycleRatchetTests(SimpleTestCase):
             freed, set(),
             f"{sorted(freed)} no longer sit in an import cycle — good. Remove them "
             "from CYCLE_BASELINE so the ratchet holds at the new, better position.",
+        )
+
+
+# ── Foreign keys ──────────────────────────────────────────────────────────────
+#
+# The import scan above cannot see a foreign key written as a string
+# (``models.ForeignKey('contributions.Contribution', ...)``): the app imports
+# nothing, yet its table still depends on the other app's table, its migrations
+# depend on the other app's migrations, and its rows cannot exist without the
+# other app's rows. So the three leaf apps are checked again at the level of the
+# model registry.
+#
+# Every leaf may point at the user model (who acted / whose money) and at
+# ``tenants.Tenant`` (the isolation boundary). Anything else is listed in
+# ``FK_BASELINE`` with the reason it is still there, and that list may only
+# shrink: a new edge fails the build, and so does an entry left behind after
+# its field is gone.
+
+#: Apps whose models are held to the leaf rule.
+FK_LEAF_APPS = ("ledger", "mpesa", "verification")
+
+#: Targets any leaf model may reference.
+FK_ALWAYS_ALLOWED = {"tenants.Tenant"}  # plus settings.AUTH_USER_MODEL, added below
+
+#: ``"<app>.<Model>.<field>": "<target app>.<Model>"`` edges that exist today.
+FK_BASELINE = {
+    # ADR-0030 is dissolving FinancialTransaction; these go with it.
+    "ledger.FinancialTransaction.contribution": "contributions.Contribution",
+    "ledger.FinancialTransaction.welfare_fund": "contributions.WelfareFund",
+    "ledger.FinancialTransaction.shares_fund": "contributions.SharesFund",
+    # A sub-ledger's owning party. A party reference, not a domain dependency,
+    # but still an edge into the group context.
+    "ledger.Account.owner_org": "organizations.Organization",
+    # The rail record remembers what a pay-in is for. That belongs on the
+    # PaymentIntent as an opaque purpose/subject (boundary audit, finding 8).
+    "mpesa.MpesaSTKRequest.contribution": "contributions.Contribution",
+    "mpesa.MpesaSTKRequest.welfare_fund": "contributions.WelfareFund",
+    "mpesa.MpesaSTKRequest.shares_fund": "contributions.SharesFund",
+    "mpesa.MpesaSTKRequest.advance": "contributions.EmergencyAdvance",
+    "mpesa.MpesaC2BTransaction.contribution": "contributions.Contribution",
+    # Which operator acted. An actor reference into the back office.
+    "verification.VerificationCase.assigned_to": "backoffice.StaffAccount",
+    "verification.CaseEvent.actor_staff": "backoffice.StaffAccount",
+    "verification.CaseNote.author_staff": "backoffice.StaffAccount",
+}
+
+
+def _leaf_foreign_keys() -> dict[str, str]:
+    """Every concrete relation from a leaf app's model to another app's model."""
+    from django.apps import apps as registry
+
+    edges: dict[str, str] = {}
+    for label in FK_LEAF_APPS:
+        for model in registry.get_app_config(label).get_models():
+            for field in model._meta.get_fields():
+                if not (field.is_relation and field.concrete and field.related_model):
+                    continue
+                target = field.related_model._meta
+                if target.app_label == label:
+                    continue
+                edges[f"{label}.{model.__name__}.{field.name}"] = f"{target.app_label}.{target.object_name}"
+    return edges
+
+
+class LeafForeignKeyRatchetTests(SimpleTestCase):
+
+    def _allowed(self) -> set[str]:
+        return FK_ALWAYS_ALLOWED | {settings.AUTH_USER_MODEL}
+
+    def test_no_new_foreign_key_leaves_a_leaf_app(self):
+        allowed = self._allowed()
+        new = {
+            edge: target for edge, target in _leaf_foreign_keys().items()
+            if target not in allowed and FK_BASELINE.get(edge) != target
+        }
+        self.assertEqual(
+            new, {},
+            "A leaf app (ledger, mpesa, verification) gained a foreign key into "
+            "another context. A string reference hides it from the import test, but "
+            "the tables and migrations still depend on each other. Carry an opaque "
+            "id or a (purpose, subject_ref) pair instead, or have the other app hold "
+            f"the relation.\nFound: {new}",
+        )
+
+    def test_the_foreign_key_baseline_is_not_stale(self):
+        present = _leaf_foreign_keys()
+        gone = {edge: target for edge, target in FK_BASELINE.items()
+                if present.get(edge) != target}
+        self.assertEqual(
+            gone, {},
+            f"{sorted(gone)} no longer exist — good. Remove them from FK_BASELINE "
+            "so the ratchet holds at the new position.",
         )

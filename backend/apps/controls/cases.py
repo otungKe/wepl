@@ -40,7 +40,7 @@ def _resolve_customer_request(case, action: str, reason: str) -> None:
     case over something other than a HeldMovement simply has no request row, so
     the update matches nothing.
     """
-    from apps.users.models import VerificationRequest
+    from apps.verification.models import VerificationRequest
 
     VerificationRequest.objects.filter(case=case).exclude(
         status=VerificationRequest.Status.RESOLVED,

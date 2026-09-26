@@ -13,6 +13,166 @@ from django.conf import settings
 from django.db import models
 
 
+class KYCProfile(models.Model):
+    """The applicant's KYC submission and its customer-facing review state.
+
+    Owned by verification since the boundary audit (step 6): the case ledger
+    decides, and ``status``/``rejection_reason``/``resubmission_requested`` are
+    its projection. The class lived in ``apps.users`` and the table keeps its
+    name (``users_kycprofile``), so the move changed no data. Other apps read it
+    through ``user.kyc``.
+    """
+
+    KENYA_COUNTIES = [
+        ('Baringo', 'Baringo'), ('Bomet', 'Bomet'), ('Bungoma', 'Bungoma'),
+        ('Busia', 'Busia'), ('Elgeyo-Marakwet', 'Elgeyo-Marakwet'), ('Embu', 'Embu'),
+        ('Garissa', 'Garissa'), ('Homa Bay', 'Homa Bay'), ('Isiolo', 'Isiolo'),
+        ('Kajiado', 'Kajiado'), ('Kakamega', 'Kakamega'), ('Kericho', 'Kericho'),
+        ('Kiambu', 'Kiambu'), ('Kilifi', 'Kilifi'), ('Kirinyaga', 'Kirinyaga'),
+        ('Kisii', 'Kisii'), ('Kisumu', 'Kisumu'), ('Kitui', 'Kitui'),
+        ('Kwale', 'Kwale'), ('Laikipia', 'Laikipia'), ('Lamu', 'Lamu'),
+        ('Machakos', 'Machakos'), ('Makueni', 'Makueni'), ('Mandera', 'Mandera'),
+        ('Marsabit', 'Marsabit'), ('Meru', 'Meru'), ('Migori', 'Migori'),
+        ('Mombasa', 'Mombasa'), ("Murang'a", "Murang'a"), ('Nairobi', 'Nairobi'),
+        ('Nakuru', 'Nakuru'), ('Nandi', 'Nandi'), ('Narok', 'Narok'),
+        ('Nyamira', 'Nyamira'), ('Nyandarua', 'Nyandarua'), ('Nyeri', 'Nyeri'),
+        ('Samburu', 'Samburu'), ('Siaya', 'Siaya'), ('Taita-Taveta', 'Taita-Taveta'),
+        ('Tana River', 'Tana River'), ('Tharaka-Nithi', 'Tharaka-Nithi'),
+        ('Trans Nzoia', 'Trans Nzoia'), ('Turkana', 'Turkana'),
+        ('Uasin Gishu', 'Uasin Gishu'), ('Vihiga', 'Vihiga'),
+        ('Wajir', 'Wajir'), ('West Pokot', 'West Pokot'),
+    ]
+
+    SOURCE_CHOICES = [
+        ('employment',  'Employment / Salary'),
+        ('business',    'Business / Self-employment'),
+        ('investment',  'Investment Returns'),
+        ('pension',     'Pension / Retirement'),
+        ('rental',      'Rental Income'),
+        ('remittance',  'Remittance from Abroad'),
+        ('farming',     'Farming / Agriculture'),
+        ('other',       'Other'),
+    ]
+
+    INCOME_BAND_CHOICES = [
+        ('under_250k', 'Up to KES 250,000 / month'),
+        ('250k_to_1m', 'KES 250,001 – 1,000,000 / month'),
+        ('above_1m',   'Above KES 1,000,000 / month'),
+    ]
+
+    STATUS_CHOICES = [
+        ('pending',  'Pending Review'),
+        ('approved', 'Approved'),
+        ('rejected', 'Rejected'),
+    ]
+
+    # Items a reviewer can ask the user to re-provide on a targeted re-submission.
+    # Each key is a KYCProfile field the user tops up via /kyc/resubmit/ without
+    # re-entering the rest of the form.
+    RESUBMITTABLE_ITEMS = [
+        ('id_front',                'Front of ID'),
+        ('id_back',                 'Back of ID'),
+        ('selfie',                  'Selfie'),
+        ('id_number',               'ID number'),
+        ('kra_pin',                 'KRA PIN'),
+        ('date_of_birth',           'Date of birth'),
+        ('physical_address',        'Physical address'),
+        ('county',                  'County'),
+        ('occupation',              'Occupation'),
+        ('source_of_income',        'Source of income'),
+        ('expected_monthly_income', 'Income band'),
+        ('email',                   'Email address'),
+    ]
+    RESUBMITTABLE_KEYS = [k for k, _ in RESUBMITTABLE_ITEMS]
+
+    user = models.OneToOneField(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.PROTECT,
+        related_name='kyc',
+    )
+
+    # Identity
+    given_names = models.CharField(max_length=150)
+    surname     = models.CharField(max_length=100, default='')
+    id_number   = models.CharField(max_length=20, unique=True)
+    date_of_birth = models.DateField()
+    email       = models.EmailField(blank=True, default='')
+    # KRA (Kenya Revenue Authority) tax PIN. Entered manually today; a future
+    # identity-verification vendor may auto-populate it after ID verification
+    # (ADR-0023). Kept blank-able at the model level; required at submit.
+    kra_pin     = models.CharField(max_length=11, blank=True, default='')
+
+    # ID documents + selfie
+    id_front = models.ImageField(upload_to='kyc/ids/')
+    id_back  = models.ImageField(upload_to='kyc/ids/', blank=True, null=True)
+    selfie   = models.ImageField(upload_to='kyc/selfies/', blank=True, null=True)
+
+    # Location & financials
+    county                  = models.CharField(max_length=50, choices=KENYA_COUNTIES)
+    physical_address        = models.CharField(max_length=255, blank=False, default='')
+    occupation              = models.CharField(max_length=255)
+    source_of_income        = models.CharField(max_length=20, choices=SOURCE_CHOICES)
+    expected_monthly_income = models.CharField(max_length=20, choices=INCOME_BAND_CHOICES)
+
+    # Optional
+    referral_code = models.CharField(max_length=50, blank=True, default='')
+
+    # Review state
+    status           = models.CharField(max_length=20, choices=STATUS_CHOICES, default='pending')
+    rejection_reason = models.TextField(blank=True, default='')
+    reviewed_at      = models.DateTimeField(null=True, blank=True)
+    reviewed_by      = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True, blank=True,
+        on_delete=models.SET_NULL,
+        related_name='kyc_reviews',
+    )
+
+    # Identity-verification provider outcome (apps.verification.identity port).
+    # Records which checker ran and what it returned, written only by
+    # apps.verification.checks. `verification_state` holds the normalised
+    # IdentityCheckResult.state. A reviewer's decision does not overwrite it:
+    # the decision is `status`/`reviewed_at` and the case timeline.
+    verification_provider   = models.CharField(max_length=40, blank=True, default='')
+    verification_ref        = models.CharField(max_length=128, blank=True, default='')
+    verification_state      = models.CharField(max_length=20, blank=True, default='')
+    verification_detail     = models.JSONField(default=dict, blank=True)
+    verification_checked_at = models.DateTimeField(null=True, blank=True)
+
+    # Email verification
+    email_verified              = models.BooleanField(default=False)
+    email_verification_token    = models.CharField(max_length=64, blank=True, default='')
+    email_verification_sent_at  = models.DateTimeField(null=True, blank=True)
+
+    # Targeted re-submission: the specific items a reviewer has asked the user to
+    # re-provide (subset of RESUBMITTABLE_ITEM keys, e.g. ['id_front','selfie']).
+    # Empty = nothing outstanding. The user tops up ONLY these via /kyc/resubmit/
+    # — they do not re-enter the whole KYC form.
+    resubmission_requested = models.JSONField(default=list, blank=True)
+
+    # Set when the customer closes their account: identity evidence is kept
+    # until this date for anti-money-laundering record keeping, then erased by
+    # ``tasks.erase_expired_identity_evidence``. Null = account open, or
+    # already erased.
+    evidence_retain_until = models.DateField(null=True, blank=True)
+
+    submitted_at = models.DateTimeField(auto_now_add=True)
+    updated_at   = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = 'users_kycprofile'
+        indexes = [
+            models.Index(fields=['status'], name='kyc_status_idx'),
+        ]
+
+    def __str__(self):
+        return f"KYC({self.user.phone_number}) — {self.status}"
+
+    @property
+    def full_name(self):
+        return f"{self.given_names} {self.surname}".strip()
+
+
 class VerificationCase(models.Model):
     """Aggregate root for one verification journey of one user.
 
@@ -43,7 +203,7 @@ class VerificationCase(models.Model):
     )
     # Set for kyc_individual cases only; EDD cases reference their subject below.
     kyc = models.ForeignKey(
-        'users.KYCProfile', null=True, blank=True, on_delete=models.PROTECT,
+        KYCProfile, null=True, blank=True, on_delete=models.PROTECT,
         related_name='cases',
     )
 
@@ -92,6 +252,73 @@ class VerificationCase(models.Model):
     @property
     def is_terminal(self) -> bool:
         return self.state in (self.State.APPROVED, self.State.REJECTED)
+
+
+class VerificationRequest(models.Model):
+    """A follow-up item the compliance team raises against a user — before OR
+    after KYC approval. Backs the mobile Verification Center's ongoing
+    "Requests & documents" section: supporting documents for a transaction,
+    proof of address, a KYC clarification, or feedback on a submitted item.
+
+    Raised by staff (admin), answered by the user (a note and/or a document),
+    then resolved by staff. The user is notified on both transitions via the
+    durable event bus.
+    """
+
+    class Kind(models.TextChoices):
+        TRANSACTION_DOCS = 'transaction_docs', 'Transaction supporting documents'
+        ADDRESS_PROOF    = 'address_proof',    'Proof of address'
+        KYC_SUPPLEMENT   = 'kyc_supplement',   'Additional KYC information'
+        CLARIFICATION    = 'clarification',    'Clarification'
+        OTHER            = 'other',            'Other'
+
+    class Status(models.TextChoices):
+        OPEN      = 'open',      'Awaiting your response'
+        SUBMITTED = 'submitted', 'Submitted — under review'
+        RESOLVED  = 'resolved',  'Resolved'
+
+    user   = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.CASCADE,
+        related_name='verification_requests',
+    )
+    # When set, this request is the customer-facing projection of a
+    # verification case (EDD): the response is pinned onto the case as a
+    # versioned CaseDocument and the case decides the outcome.
+    case = models.ForeignKey(
+        VerificationCase, null=True, blank=True,
+        on_delete=models.SET_NULL, related_name='customer_requests',
+    )
+    kind   = models.CharField(max_length=24, choices=Kind.choices, default=Kind.OTHER)
+    title  = models.CharField(max_length=140)
+    detail = models.TextField(help_text='What the user is being asked to provide.')
+    status = models.CharField(max_length=12, choices=Status.choices, default=Status.OPEN)
+
+    # The user's answer.
+    response_note = models.TextField(blank=True, default='')
+    document      = models.FileField(upload_to='verification/requests/', blank=True, null=True)
+
+    # Staff feedback shown to the user (e.g. why it was resolved, or what's still needed).
+    review_note   = models.TextField(blank=True, default='')
+
+    created_by   = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='verification_requests_created',
+    )
+    created_at   = models.DateTimeField(auto_now_add=True)
+    responded_at = models.DateTimeField(null=True, blank=True)
+    resolved_at  = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        # Owned by verification since the boundary audit (step 7); the table
+        # kept its original name, so the move changed no data.
+        db_table = 'users_verificationrequest'
+        ordering = ['-created_at']
+        indexes = [
+            models.Index(fields=['user', 'status'], name='verifreq_user_status_idx'),
+        ]
+
+    def __str__(self):
+        return f"VerificationRequest({self.user_id}, {self.kind}, {self.status})"
 
 
 class CaseEvent(models.Model):

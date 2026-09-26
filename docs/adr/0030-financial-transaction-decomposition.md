@@ -158,6 +158,21 @@ still be rail-backed with no intent linked. `manage.py intent_coverage`
 measures exactly that and has never been run against real data. FT keeps its
 `reference` handle and the model is still there; B–D have not started.
 
+**STK pay-ins settle from the intent (2026-09-26, boundary audit step 5).** A
+collection's `PaymentIntent` now records what it is for — `purpose` and
+`subject_ref`, two plain strings, no foreign key — and is written in the same
+transaction as the STK request instead of best-effort afterwards. The STK
+callback emits the durable `payment.settled` event keyed by the intent
+(`{intent_id, receipt}`), the same event and inline consumer payouts use, in
+place of an `on_commit` call with three Celery retries off the rail record.
+The event is delivered straight after commit so the app sees the credit on its
+first poll; the inline relay is the guarantee. `payments.0010` backfills the
+two fields from existing STK requests; a callback whose intent is still blank
+falls back to the rail record. **Next deploy:** once no pending STK request
+predates this change, drop that fallback and `MpesaSTKRequest`'s four foreign
+keys into contributions (shrinking the leaf FK baseline). Paybill (C2B)
+deposits still resolve through `apps/mpesa/settlement.py` and have no intent.
+
 ## Consequences
 
 - **+** The financial core (`apps/ledger`) stops holding payments/orchestration

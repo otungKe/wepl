@@ -398,9 +398,10 @@ class DisbursementRequestSerializer(serializers.ModelSerializer):
         fields = [
             'id', 'contribution', 'requested_by_phone', 'amount', 'reason',
             'recipient_phone', 'status', 'approve_count', 'reject_count',
-            'required_approvals', 'votes', 'created_at', 'executed_at',
+            'required_approvals', 'votes', 'kind', 'decide_by', 'created_at', 'executed_at',
         ]
-        read_only_fields = ['status', 'approve_count', 'reject_count', 'required_approvals', 'votes', 'executed_at']
+        read_only_fields = ['status', 'approve_count', 'reject_count', 'required_approvals', 'votes',
+                            'kind', 'decide_by', 'executed_at']
 
     def get_recipient_phone(self, obj):
         from apps.users.phone import mask_phone

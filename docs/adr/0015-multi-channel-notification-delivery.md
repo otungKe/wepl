@@ -47,7 +47,7 @@ lost** (no dead-letter).
   in-app inbox from the push master switch — needs a prefs migration + product
   sign-off, so routing keeps today's master-switch semantics for now.
 - **Concrete email/SMS/WhatsApp channels** (the seam is ready; an SMS gateway already
-  exists in `users.sms`).
+  exists in `apps.core.messaging`).
 - **Templates + i18n** (messages are still string-built at the call site).
 - **Digests / quiet-hours / aggregation**, and a **dead-letter replay** task.
 

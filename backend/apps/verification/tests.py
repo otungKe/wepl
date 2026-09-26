@@ -14,7 +14,7 @@ from rest_framework.test import APIClient
 
 from apps.backoffice.auth import issue_staff_token
 from apps.backoffice.models import StaffAccount
-from apps.users.models import KYCProfile
+from apps.verification.models import KYCProfile
 
 from . import service
 from .models import (
@@ -138,8 +138,21 @@ class CaseLedgerTests(TestCase):
         self.assertIsNotNone(case.closed_at)
         kyc.refresh_from_db()
         self.assertEqual(kyc.status, 'approved')
-        self.assertEqual(kyc.verification_state, 'verified')
-        self.assertEqual(case.events.order_by('-seq').first().event_type, 'review.approved')
+        self.assertIsNotNone(kyc.reviewed_at)
+        last = case.events.order_by('-seq').first()
+        self.assertEqual(last.event_type, 'review.approved')
+        self.assertEqual(last.actor_label, 'manual (admin)')
+
+    def test_decision_does_not_overwrite_the_provider_result(self):
+        # The provider sent it to a human; a human approved it. Both stay true.
+        kyc = _kyc()
+        kyc.verification_provider, kyc.verification_state = 'manual', 'manual_review'
+        kyc.save(update_fields=['verification_provider', 'verification_state'])
+        service.decide(kyc, 'approve', actor_label='ops:reviewer@example.com')
+        kyc.refresh_from_db()
+        self.assertEqual(kyc.status, 'approved')
+        self.assertEqual(kyc.verification_provider, 'manual')
+        self.assertEqual(kyc.verification_state, 'manual_review')
 
     def test_decide_reject_requires_info_and_illegal_transitions(self):
         kyc = _kyc()
@@ -243,7 +256,7 @@ class EddPipelineTests(TestCase):
                                             subject_id=str(self.held.pk))
 
     def test_hold_opens_case_and_customer_request_once(self):
-        from apps.users.models import VerificationRequest
+        from apps.verification.models import VerificationRequest
         case = self._open()
         self.assertEqual(case.state, VerificationCase.State.REQUIRES_INFO)
         vreq = VerificationRequest.objects.get(case=case)
@@ -272,7 +285,7 @@ class EddPipelineTests(TestCase):
 
     def test_approve_issues_single_use_override_and_releases_hold(self):
         from apps.controls.models import ControlOverride
-        from apps.users.models import VerificationRequest
+        from apps.verification.models import VerificationRequest
         case = self._open()
         service.record_customer_evidence(case, user=self.user, note='see note')
         service.decide_subject_case(case, 'approve',
@@ -290,7 +303,7 @@ class EddPipelineTests(TestCase):
 
     def test_reject_refuses_hold_and_needs_no_override(self):
         from apps.controls.models import ControlOverride
-        from apps.users.models import VerificationRequest
+        from apps.verification.models import VerificationRequest
         case = self._open()
         service.record_customer_evidence(case, user=self.user, note='x')
         service.decide_subject_case(case, 'reject', actor_label='ops:edd@wepl.app',

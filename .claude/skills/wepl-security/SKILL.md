@@ -57,8 +57,8 @@ settings-module guard; copy it rather than importing the module.
 
 `apps/users/tiers.py::AccessPolicy`:
 - **`require_tier1(user, msg)`** — unconditional. Used by the pre-existing money
-  paths (`ContributionService.contribute`, `request_advance`). **Staff and
-  superusers bypass it.**
+  paths (`ContributionService.contribute`, `request_advance`). **Nobody
+  bypasses it** — `is_staff`/`is_superuser` stopped bypassing on 2026-09-26.
 - **`gate(user, msg)`** — flag-aware, for the newer Phase-B surfaces (community
   create/join, contribution create, chat). **It is a no-op while
   `ACCESS_TIER_ENFORCEMENT` is `False`, which is the default.** Do not read a
@@ -71,7 +71,9 @@ is stored.
 ## Identity is a ledger too (`apps/verification/`)
 
 Every KYC journey is a `VerificationCase` whose immutable `CaseEvent` timeline is
-the source of truth; `KYCProfile.status` is a **projection**. All decisions — ops
+the source of truth; `KYCProfile` (`apps/verification/models.py`, table
+`users_kycprofile`) is the applicant's submission and its `status` is a
+**projection**. All decisions — ops
 console, Django admin, automated provider outcomes — go through
 `verification/service.py::decide`, the identity analogue of `post_journal()`: a
 declared `_TRANSITIONS` table, a row lock, an appended event. `CaseDocument` rows
@@ -91,7 +93,7 @@ thing to check — losing it is silent, and
 `verification/tests.py::DecisionNotifiesApplicantTests` is what stands there.
 
 Identity checks go through the `IdentityVerificationProvider` port
-(`apps/users/identity/`, ADR-0023): `ManualProvider` (human review),
+(`apps/verification/identity/`, ADR-0023): `ManualProvider` (human review),
 `FakeProvider` (tests), resolved via `registry.get_provider()` — the same shape
 as the payments port. A real vendor or IPRS lookup drops in as another adapter
 without touching the view.
@@ -111,7 +113,7 @@ not exempt superusers**. Every ops action writes an `AuditEvent`.
 
 `controls/engine.py::enforce_controls` runs **inside `post_journal`**, so no money
 path can bypass it. It checks account restrictions first
-(`users/services.py::RestrictionService.blocks_money` — an ops freeze/payout
+(`controls/restrictions.py::RestrictionService.blocks_money` — an ops freeze/payout
 block/payin block is a hard DENY), then `LimitRule` velocity/amount rules.
 Reversals and journals with no FT skip member-facing controls, by design.
 
@@ -130,8 +132,9 @@ Reversals and journals with no FT skip member-facing controls, by design.
 ## Do not assume
 
 - Do not assume `is_staff` means "an operator". It is a flag on a **customer**
-  model that grants a KYC-gate bypass, a tenant-pinning bypass, and
-  `IsAdminUser` access to the ledger reporting endpoints.
+  model that grants Django admin (read-only for money records since 2026-09-26)
+  and `IsAdminUser` access to the ledger reporting endpoints. It no longer
+  bypasses the KYC gate, the tenant pin or community policy.
 - Do not assume a `gate()` call enforces anything today.
 - Do not assume revoking a `UserSession` affects an ops token — the ops token has
   no revocation list, only a 12 h expiry plus the `StaffAccount.is_active` check.
@@ -164,3 +167,14 @@ intermediate-stage (`otp_verified` / `otp_recovery`) token is refused by a money
 endpoint — the ladder's whole point — and nothing tests that a customer JWT is
 rejected by `/api/ops/*` or an ops token by a customer endpoint, which matters
 precisely because both families are signed with the same `SECRET_KEY`.
+
+## Closing an account
+
+`DELETE /api/users/account/` runs `apps/users/lifecycle.close_account`. Each
+context registers `blockers` / `erase` / `export` into `apps/core/lifecycle.py`
+from its `AppConfig.ready()` (verification, payments, communities,
+contributions); a lost registration fails `LifecycleRegistrationTests`. Closure
+is one transaction with an `account.closed` audit event. Identity evidence is
+kept for 7 years (`KYCProfile.evidence_retain_until`, decided 2026-09-26 for
+AML record keeping) and then erased by `verification.tasks.erase_expired_identity_evidence`.
+

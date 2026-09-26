@@ -28,7 +28,8 @@ class PaymentService:
     @staticmethod
     def record_initiation(*, provider, direction, amount, idempotency_key,
                           provider_ref='', currency='KES', financial_transaction=None,
-                          op_type='', initiated_by=None, tenant_id=None, metadata=None):
+                          op_type='', initiated_by=None, tenant_id=None, metadata=None,
+                          purpose='', subject_ref=''):
         """Record (idempotently) that a payment was initiated and accepted by the
         provider. Returns the PaymentIntent (PENDING)."""
         intent, _ = PaymentIntent.objects.get_or_create(
@@ -44,6 +45,8 @@ class PaymentService:
                 'initiated_by': initiated_by if getattr(initiated_by, 'pk', None) else None,
                 'tenant_id': tenant_id,
                 'metadata': metadata or {},
+                'purpose': purpose or '',
+                'subject_ref': subject_ref or '',
                 'status': PaymentIntent.Status.PENDING,
                 'initiated_at': timezone.now(),
             },

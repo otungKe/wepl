@@ -290,6 +290,11 @@ from celery.schedules import crontab
 CELERY_BEAT_SCHEDULE = {
     # Transactional outbox relay — deliver durably-stored domain events (Phase 2).
     # Seconds-interval (crontab is minute-granularity) for timely notifications.
+    # Erase identity evidence of closed accounts once its AML retention ends.
+    'erase-expired-identity-evidence': {
+        'task': 'apps.verification.tasks.erase_expired_identity_evidence',
+        'schedule': crontab(minute=30, hour=3),  # 03:30 EAT daily
+    },
     'process-outbox': {
         'task': 'apps.core.tasks.process_outbox',
         'schedule': 10.0,  # every 10 seconds
@@ -354,7 +359,7 @@ CELERY_BEAT_SCHEDULE = {
 PAYMENT_PROVIDER = config('PAYMENT_PROVIDER', default='')
 
 # ─── SMS / OTP delivery ───────────────────────────────────────────────────────
-# Gateway selection consumed by apps.users.sms.get_sms_gateway():
+# Gateway selection consumed by apps.core.messaging.get_sms_gateway():
 #   'at'      → Africa's Talking (real SMS)
 #   'console' → log the message only (dev / staging / CI)
 #   ''        → auto: 'console' under DEBUG, 'at' otherwise
@@ -430,7 +435,7 @@ UNFOLD = {
             {
                 "title": _("Identity & KYC"),
                 "items": [
-                    {"title": _("KYC profiles"), "icon": "badge", "link": reverse_lazy("admin:users_kycprofile_changelist"), "badge": "config.admin_site.kyc_pending_badge"},
+                    {"title": _("KYC profiles"), "icon": "badge", "link": reverse_lazy("admin:verification_kycprofile_changelist"), "badge": "config.admin_site.kyc_pending_badge"},
                     {"title": _("Users"), "icon": "person", "link": reverse_lazy("admin:users_user_changelist")},
                     {"title": _("Role groups"), "icon": "groups", "link": reverse_lazy("admin:auth_group_changelist")},
                 ],

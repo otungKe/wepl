@@ -78,3 +78,49 @@ class PoolExpenseTests(TestCase):
     def test_only_admin_can_spend_pool(self):
         with self.assertRaises(PermissionDenied):
             ContributionService.record_pool_expense(self.alice, self.cid, Decimal("100"))
+
+
+class GovernedSpendFollowsVotingThresholdTests(TestCase):
+    """ADR-0027 §0.1: spending group money follows the group's voting threshold,
+    as a voted payout does — not a fixed single second admin."""
+
+    def setUp(self):
+        from apps.contributions.models import ContributionParticipant
+        coa.seed_chart_of_accounts()
+        self.admin = User.objects.create(phone_number="+254700000965")
+        CommunityService.create_community(self.admin, {"name": "Vote Chama"})
+        self.c = ContributionService.create_contribution(
+            self.admin, {"title": "Hall", "voting_threshold": "50"})
+        self.members = [User.objects.create(phone_number=f"+25470000097{i}") for i in range(3)]
+        for m in self.members:
+            ContributionParticipant.objects.create(contribution=self.c, user=m, is_active=True)
+        for i, m in enumerate(self.members):
+            post_journal(idempotency_key=f"gv-{i}", op_type=pm.Op.CONTRIBUTION,
+                         lines=pm.contribution_lines(member=m, fund_type="contribution",
+                                                     fund_id=self.c.id, gross=Money("1000")))
+
+    def test_fifty_percent_needs_two_member_approvals(self):
+        from apps.contributions.models import PoolActionRequest
+        from apps.contributions.services import PoolGovernanceService
+        # 4 active participants at 50% → 2 approvals; ordinary members may vote.
+        self.assertEqual(self.c.required_approvals(), 2)
+        req = PoolGovernanceService.request(
+            self.admin, self.c.id, action=PoolActionRequest.Action.EXPENSE, amount=Decimal("300"))
+        PoolGovernanceService.approve(self.members[0], req.id)
+        req.refresh_from_db()
+        self.assertEqual(req.status, PoolActionRequest.Status.PENDING)
+        self.assertEqual(fund_balance("contribution", self.c.id), Decimal("3000"))
+        PoolGovernanceService.approve(self.members[1], req.id)
+        req.refresh_from_db()
+        self.assertEqual(req.status, PoolActionRequest.Status.EXECUTED)
+        self.assertEqual(fund_balance("contribution", self.c.id), Decimal("2700"))
+        self.assertTrue(trial_balance()["balanced"])
+
+    def test_non_participant_cannot_approve(self):
+        from apps.contributions.models import PoolActionRequest
+        from apps.contributions.services import PoolGovernanceService
+        stranger = User.objects.create(phone_number="+254700000979")
+        req = PoolGovernanceService.request(
+            self.admin, self.c.id, action=PoolActionRequest.Action.EXPENSE, amount=Decimal("300"))
+        with self.assertRaises(PermissionDenied):
+            PoolGovernanceService.approve(stranger, req.id)

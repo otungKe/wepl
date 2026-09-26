@@ -128,7 +128,7 @@ put a development convenience where production could inherit it.
   along a sub-domain seam; it *calls* the ledger, never edits it.
 - **A new payment rail** → a new adapter behind the `payments` port; its guts in
   their own module like `mpesa/` (**P-17/P-18**).
-- **A new identity check** → a new adapter behind the `users/identity` port
+- **A new identity check** → a new adapter behind the `verification/identity` port
   (**P-17**).
 - **A new cross-module reaction** → a consumer registered in an app's
   `AppConfig.ready()`, driven by an `emit()`-ted event (E-14).

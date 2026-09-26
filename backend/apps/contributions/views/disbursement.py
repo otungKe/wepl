@@ -59,6 +59,32 @@ class DisbursementCancelView(APIView):
         return Response(DisbursementRequestSerializer(req).data)
 
 
+class ExitRequestView(APIView):
+    """A member's share on leaving (ADR-0027 §0.4). GET quotes it; POST asks the
+    group to pay it out, which goes to a vote like any other payout."""
+    permission_classes = [IsActiveSession]
+
+    def get(self, request, contribution_id):
+        contribution = get_object_or_404(Contribution, id=contribution_id)
+        if not ContributionParticipant.objects.filter(
+                contribution=contribution, user=request.user).exists():
+            return Response({"error": "You are not a member of this contribution."},
+                            status=status.HTTP_403_FORBIDDEN)
+        quote = DisbursementService.exit_quote(contribution, request.user)
+        return Response({k: str(v) for k, v in quote.items()})
+
+    def post(self, request, contribution_id):
+        req = DisbursementService.request_exit(
+            contribution_id, request.user,
+            request.data.get('recipient_phone') or request.user.phone_number,
+        )
+        logger.info(
+            "ExitRequestView: user %s asked for their share (KES %s) of contribution %s",
+            request.user.id, req.amount, contribution_id,
+        )
+        return Response(DisbursementRequestSerializer(req).data, status=status.HTTP_201_CREATED)
+
+
 # ---------------------------------------------------------------------------
 # Shares Fund (community-scoped)
 # ---------------------------------------------------------------------------

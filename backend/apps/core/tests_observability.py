@@ -85,13 +85,15 @@ class AuthContextBindingTests(TestCase):
         self.assertEqual(obs.get("actor_id"), user.id)
         self.assertIsNotNone(obs.get("tenant_id"))
 
-    def test_staff_auth_binds_actor_but_not_tenant(self):
+    def test_staff_user_auth_binds_actor_and_tenant(self):
+        # is_staff is Django-admin access, not a cross-tenant operator: a staff
+        # customer User is pinned like any member (ops staff are StaffAccounts).
         from apps.users.auth import SessionJWTAuthentication
         obs.clear()
         staff = User.objects.create(phone_number="254700000002", is_staff=True)
         SessionJWTAuthentication().authenticate(self._request_with_token(staff))
         self.assertEqual(obs.get("actor_id"), staff.id)
-        self.assertIsNone(obs.get("tenant_id"))  # operators aren't tenant-pinned
+        self.assertIsNotNone(obs.get("tenant_id"))
 
 
 class HealthProbeTests(TestCase):

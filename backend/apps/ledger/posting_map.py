@@ -10,10 +10,10 @@ recipes are proven balanced by tests_posting_map.py).
 Recipe summary (DR / CR):
     contribution            DR 1000 Float          / CR member SL (+ CR 4000 Fee)
     disbursement            DR member SL            / CR 1000 Float
-    welfare contribution    DR 1000 Float          / CR member welfare SL
-    welfare claim           DR member welfare SL    / CR 1000 Float
+    welfare premium         DR 1000 Float          / CR welfare pool
+    welfare claim           DR welfare pool         / CR 1000 Float
     advance disbursement    DR member AR (1200)     / CR 1000 Float
-    advance repayment       DR 1000 Float           / CR member AR (+ CR 4100 Interest)
+    advance repayment       DR 1000 Float           / CR member AR (+ CR pool retained surplus)
     standing order          (uses the contribution recipe, op_type=STANDING_ORDER)
 """
 from __future__ import annotations
@@ -201,12 +201,28 @@ def distribute_surplus_lines(*, fund_id, allocations: list[Allocation]) -> list[
                  note="distribute surplus")] + credits
 
 
-def welfare_contribution_lines(*, member, fund_id, amount: Money) -> list[Line]:
-    return contribution_lines(member=member, fund_type='welfare', fund_id=fund_id, gross=amount)
+def welfare_contribution_lines(*, fund_id, amount: Money) -> list[Line]:
+    """A welfare premium (ADR-0027 §0.2): a transfer into the fund itself. It
+    credits the welfare pool control account, not the payer — a premium buys
+    cover, not a share, so nobody holds a refundable welfare balance. Who paid
+    is recorded on the journal and its transaction, not in an account."""
+    _require_positive(amount, "welfare premium")
+    return [
+        Line(coa.mpesa_float_account(), DEBIT, amount.amount, note="welfare premium in"),
+        Line(coa.pool_account(fund_type='welfare', fund_id=fund_id), CREDIT, amount.amount,
+             note="welfare pool"),
+    ]
 
 
-def welfare_claim_lines(*, member, fund_id, amount: Money) -> list[Line]:
-    return disbursement_lines(member=member, fund_type='welfare', fund_id=fund_id, amount=amount)
+def welfare_claim_lines(*, fund_id, amount: Money) -> list[Line]:
+    """A welfare claim is paid from the fund (ADR-0027 §0.2): it draws down the
+    welfare pool, never the claimant, who owes the fund nothing for it."""
+    _require_positive(amount, "welfare claim")
+    return [
+        Line(coa.pool_account(fund_type='welfare', fund_id=fund_id), DEBIT, amount.amount,
+             note="welfare claim"),
+        Line(coa.mpesa_float_account(), CREDIT, amount.amount, note="cash out"),
+    ]
 
 
 def advance_disbursement_lines(*, member, advance_id, principal: Money) -> list[Line]:
@@ -220,11 +236,13 @@ def advance_disbursement_lines(*, member, advance_id, principal: Money) -> list[
     ]
 
 
-def advance_repayment_lines(*, member, advance_id, principal: Money,
+def advance_repayment_lines(*, member, advance_id, pool_id, principal: Money,
                             interest: Money | None = None) -> list[Line]:
-    """Member repays an advance: cash in, clear the receivable, recognise any
-    interest as income. Either portion may be zero (e.g. a pure-interest or
-    pure-principal payment), but the total must be positive."""
+    """Member repays an advance: cash in, clear the receivable, and credit any
+    interest to the lending pool's retained surplus. The group lent its own
+    money, so the return is the group's (ADR-0027 §0.3) — Wepl books none of
+    it. Either portion may be zero (e.g. a pure-interest or pure-principal
+    payment), but the total must be positive."""
     interest = interest or Money.zero(principal.currency)
     if principal.is_negative or interest.is_negative:
         raise ValueError("repayment principal/interest must be non-negative")
@@ -235,5 +253,29 @@ def advance_repayment_lines(*, member, advance_id, principal: Money,
     if principal.is_positive:
         lines.append(Line(ar, CREDIT, principal.amount, note="clear receivable"))
     if interest.is_positive:
-        lines.append(Line(coa.interest_income_account(), CREDIT, interest.amount, note="interest"))
+        lines.append(Line(coa.retained_surplus_account(fund_id=pool_id), CREDIT,
+                          interest.amount, note="interest to pool surplus"))
+    return lines
+
+
+def advance_setoff_lines(*, member, advance_id, pool_id, principal: Money,
+                         interest: Money | None = None) -> list[Line]:
+    """A leaving member's unpaid advance is set off against their share
+    (ADR-0027 §0.3–0.4): their share in the lending pool is debited with what
+    they owe, clearing the receivable and crediting any interest to the pool's
+    retained surplus, exactly as a cash repayment would. No cash moves — the
+    member is paid out the rest of their share separately."""
+    interest = interest or Money.zero(principal.currency)
+    if principal.is_negative or interest.is_negative:
+        raise ValueError("set-off principal/interest must be non-negative")
+    total = principal + interest
+    _require_positive(total, "set-off total")
+    share = coa.member_fund_account(user=member, fund_type='contribution', fund_id=pool_id)
+    ar = coa.member_receivable_account(user=member, fund_id=advance_id)
+    lines = [Line(share, DEBIT, total.amount, note="set off against share")]
+    if principal.is_positive:
+        lines.append(Line(ar, CREDIT, principal.amount, note="clear receivable"))
+    if interest.is_positive:
+        lines.append(Line(coa.retained_surplus_account(fund_id=pool_id), CREDIT,
+                          interest.amount, note="interest to pool surplus"))
     return lines

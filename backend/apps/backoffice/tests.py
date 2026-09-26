@@ -154,7 +154,8 @@ class OpsSearchTests(TestCase):
     def setUp(self):
         from datetime import date
         from apps.communities.services import CommunityService
-        from apps.users.models import KYCProfile, User
+        from apps.users.models import User
+        from apps.verification.models import KYCProfile
         self.target = User.objects.create(phone_number="254712345678", name="Ada Lovelace")
         KYCProfile.objects.create(user=self.target, given_names="Ada", surname="Lovelace",
             id_number="87654321", date_of_birth=date(1990, 1, 1), status="pending")
@@ -209,7 +210,8 @@ class BootstrapTests(TestCase):
 class VerificationApiTests(TestCase):
     def setUp(self):
         from datetime import date
-        from apps.users.models import KYCProfile, User
+        from apps.users.models import User
+        from apps.verification.models import KYCProfile
         self.applicant = User.objects.create(phone_number="254733000001", name="Ada L")
         self.kyc = KYCProfile.objects.create(
             user=self.applicant, given_names="Ada", surname="Lovelace", id_number="11223344",
@@ -247,14 +249,17 @@ class VerificationApiTests(TestCase):
 
     def test_approve_updates_status_and_audits(self):
         from apps.audit.models import AuditEvent
-        from apps.users.models import KYCProfile
+        from apps.verification.models import KYCProfile
         c = op_client(make_staff("v3@imbank.co.ke", "verification"))
         r = c.post(f"/api/ops/verification/{self.applicant.id}/decision/",
                    {"action": "approve"}, format="json")
         self.assertEqual(r.status_code, 200, r.content)
         self.kyc.refresh_from_db()
         self.assertEqual(self.kyc.status, "approved")
-        self.assertTrue(self.kyc.verification_provider.startswith("ops:"))
+        from apps.verification.models import CaseEvent
+        self.assertTrue(CaseEvent.objects.filter(
+            case__kyc=self.kyc, event_type="review.approved",
+            actor_label__startswith="ops:").exists())
         self.assertTrue(AuditEvent.objects.filter(action="ops.verification.approve").exists())
 
     def test_reject_requires_reason(self):
@@ -1590,7 +1595,7 @@ class AccountRestrictionTests(TestCase):
         r = op_client(self.ops).post(url, {"kind": "payout", "reason": "fraud review"},
                                      format="json", **stepped_up(self.ops))
         self.assertEqual(r.status_code, 201)
-        from apps.users.models import UserRestriction
+        from apps.controls.models import UserRestriction
         self.assertTrue(UserRestriction.objects.filter(
             user=self.member, kind="payout", status="active").exists())
         from apps.audit.models import AuditEvent
@@ -1604,7 +1609,7 @@ class AccountRestrictionTests(TestCase):
         self.assertEqual(r.status_code, 403)
 
     def test_duplicate_active_kind_rejected(self):
-        from apps.users.services import RestrictionService
+        from apps.controls.restrictions import RestrictionService
         RestrictionService.apply(self.member, "freeze", reason="one")
         r = op_client(self.ops).post(
             f"/api/ops/users/{self.member.id}/restrictions/",
@@ -1612,8 +1617,8 @@ class AccountRestrictionTests(TestCase):
         self.assertEqual(r.status_code, 400)
 
     def test_lift_restores_and_audits(self):
-        from apps.users.services import RestrictionService
-        from apps.users.models import UserRestriction
+        from apps.controls.restrictions import RestrictionService
+        from apps.controls.models import UserRestriction
         r = RestrictionService.apply(self.member, "payout", reason="review")
         resp = op_client(self.ops).post(
             f"/api/ops/users/{self.member.id}/restrictions/{r.id}/lift/",
@@ -1625,7 +1630,7 @@ class AccountRestrictionTests(TestCase):
 
     # ── Enforcement: login ───────────────────────────────────────────────────
     def test_login_restriction_blocks_pin_login(self):
-        from apps.users.services import RestrictionService
+        from apps.controls.restrictions import RestrictionService
         login = "/api/users/pin/login/"
         ok = self.client.post(login, {"phone_number": "254700000801", "pin": "123456"}, format="json")
         self.assertEqual(ok.status_code, 200)
@@ -1635,7 +1640,7 @@ class AccountRestrictionTests(TestCase):
 
     def test_login_restriction_revokes_sessions(self):
         from apps.users.models import UserSession
-        from apps.users.services import RestrictionService
+        from apps.controls.restrictions import RestrictionService
         UserSession.objects.create(user=self.member, device_label="phone")
         RestrictionService.apply(self.member, "login", reason="suspended")
         self.assertEqual(UserSession.objects.filter(
@@ -1647,7 +1652,7 @@ class AccountRestrictionTests(TestCase):
         from apps.controls.exceptions import LimitExceeded
         from apps.controls.engine import enforce_controls
         from apps.ledger.models import FinancialTransaction as FT
-        from apps.users.services import RestrictionService
+        from apps.controls.restrictions import RestrictionService
         from decimal import Decimal
 
         ft = FT.objects.create(
@@ -1662,7 +1667,7 @@ class AccountRestrictionTests(TestCase):
 
     # ── Derived status + expiry ──────────────────────────────────────────────
     def test_account_status_precedence(self):
-        from apps.users.services import RestrictionService
+        from apps.controls.restrictions import RestrictionService
         self.assertEqual(RestrictionService.account_status(self.member), "active")
         p = RestrictionService.apply(self.member, "payout", reason="r")
         self.assertEqual(RestrictionService.account_status(self.member), "restricted")
@@ -1672,8 +1677,8 @@ class AccountRestrictionTests(TestCase):
     def test_expired_restriction_is_inactive_and_swept(self):
         from django.utils import timezone
         from datetime import timedelta
-        from apps.users.models import UserRestriction
-        from apps.users.services import RestrictionService
+        from apps.controls.models import UserRestriction
+        from apps.controls.restrictions import RestrictionService
         r = UserRestriction.objects.create(
             user=self.member, kind="payout", reason="temp",
             expires_at=timezone.now() - timedelta(hours=1))
@@ -1685,7 +1690,7 @@ class AccountRestrictionTests(TestCase):
         self.assertEqual(r.status, UserRestriction.Status.EXPIRED)
 
     def test_360_surfaces_status_and_restrictions(self):
-        from apps.users.services import RestrictionService
+        from apps.controls.restrictions import RestrictionService
         RestrictionService.apply(self.member, "payout", reason="review")
         r = op_client(self.sup).get(f"/api/ops/users/{self.member.id}/")
         self.assertEqual(r.status_code, 200)
@@ -1709,7 +1714,7 @@ class CustomerInfoAndActivityTests(TestCase):
         self.sup = make_staff("sup-c@imbank.co.ke", "support")      # users.view
 
     def _kyc(self, u):
-        from apps.users.models import KYCProfile
+        from apps.verification.models import KYCProfile
         from datetime import date
         return KYCProfile.objects.create(
             user=u, given_names="Amina", surname="Yusuf", id_number="12345678",
@@ -1790,3 +1795,54 @@ class CustomerInfoAndActivityTests(TestCase):
         self.assertEqual(acts[0]["op_type"], "DISBURSEMENT")   # newest first
         self.assertEqual(acts[0]["direction"], "PAYOUT")
         self.assertEqual(acts[1]["direction"], "PAYIN")
+
+
+class CommunityOwnershipRecoveryTests(TestCase):
+    """Orphan-community recovery is a maker-checked ops action. It replaced the
+    Django-superuser bypass of the community policy (boundary audit, step 2)."""
+
+    def setUp(self):
+        from apps.communities.models import CommunityMembership
+        from apps.communities.services import CommunityService
+        User = get_user_model()
+        self.owner = User.objects.create_user(phone_number="254700000951")
+        self.heir = User.objects.create_user(phone_number="254700000952")
+        self.community = CommunityService.create_community(self.owner, {"name": "Orphaned Chama"})
+        self.heir_membership = CommunityMembership.objects.create(
+            user=self.heir, community=self.community)
+        self.ops = make_staff("ops-own@imbank.co.ke", "operations")          # communities.manage
+        self.checker = make_staff("fin-own@imbank.co.ke", "finance")         # approvals.decide
+        self.url = f"/api/ops/communities/{self.community.id}/recover-ownership/"
+
+    def test_recovery_end_to_end(self):
+        r = op_client(self.ops).post(
+            self.url, {"membership_id": self.heir_membership.id, "reason": "owner closed account"},
+            format="json", **stepped_up(self.ops))
+        self.assertEqual(r.status_code, 202, r.data)
+        self.community.refresh_from_db()
+        self.assertEqual(self.community.created_by_id, self.owner.id)  # pending, unchanged
+
+        ok = op_client(self.checker).post(
+            f"/api/ops/approvals/{r.data['approval_id']}/decide/", {"decision": "approve"},
+            format="json", **stepped_up(self.checker))
+        self.assertEqual(ok.status_code, 200, ok.data)
+        self.community.refresh_from_db()
+        self.assertEqual(self.community.created_by_id, self.heir.id)
+        from apps.audit.models import AuditEvent
+        self.assertTrue(AuditEvent.objects.filter(
+            action="community.ownership_recovered", target_id=str(self.community.id)).exists())
+
+    def test_request_needs_capability_stepup_and_an_active_member(self):
+        sup = make_staff("sup-own@imbank.co.ke", "support")  # no communities.manage
+        body = {"membership_id": self.heir_membership.id, "reason": "x"}
+        self.assertEqual(op_client(sup).post(
+            self.url, body, format="json", **stepped_up(sup)).status_code, 403)
+        self.assertEqual(op_client(self.ops).post(self.url, body, format="json").status_code, 403)
+        bad = op_client(self.ops).post(
+            self.url, {"membership_id": 999999, "reason": "x"},
+            format="json", **stepped_up(self.ops))
+        self.assertEqual(bad.status_code, 400)
+        no_reason = op_client(self.ops).post(
+            self.url, {"membership_id": self.heir_membership.id, "reason": " "},
+            format="json", **stepped_up(self.ops))
+        self.assertEqual(no_reason.status_code, 400)

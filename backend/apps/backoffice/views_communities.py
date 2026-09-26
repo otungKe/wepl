@@ -150,3 +150,52 @@ class OpsCommunityLifecycleView(OpsAPIView):
         )
         c.refresh_from_db()
         return Response({"id": c.id, "status": c.status})
+
+
+class OpsCommunityRecoverOwnershipView(OpsAPIView):
+    """POST /api/ops/communities/<id>/recover-ownership/ {membership_id, reason}
+    — raise a maker-checker request to hand an orphaned community (its owner is
+    gone) to one of its active members. A second operator approves it from the
+    Approvals inbox. This replaced the Django-superuser bypass of the community
+    policy. communities.manage + step-up to request."""
+    permission_classes = [RequireCapability("communities.manage"), RequireStepUp]
+
+    def post(self, request, community_id):
+        from apps.communities.models import CommunityMembership
+
+        from . import approvals
+        from .flagged_actions import ACTION_RECOVER_OWNERSHIP
+
+        c = get_object_or_404(Community, id=community_id)
+        reason = (request.data.get("reason") or "").strip()
+        if not reason:
+            return Response({"detail": "A reason is required to recover ownership."},
+                            status=http.HTTP_400_BAD_REQUEST)
+        try:
+            membership_id = int(request.data.get("membership_id"))
+        except (TypeError, ValueError):
+            return Response({"detail": "Provide the membership_id of the new owner."},
+                            status=http.HTTP_400_BAD_REQUEST)
+        if not CommunityMembership.objects.filter(
+                id=membership_id, community=c, is_active=True).exists():
+            return Response({"detail": "The new owner must be an active member of this community."},
+                            status=http.HTTP_400_BAD_REQUEST)
+
+        try:
+            appr = approvals.require_approval(
+                ACTION_RECOVER_OWNERSHIP,
+                params={"community_id": c.id, "membership_id": membership_id,
+                        "old_owner_id": c.created_by_id, "reason": reason},
+                actor=request.user, reason=reason, target_id=str(c.id))
+        except ValidationError:
+            # The reason and capability are checked above; anything else is not
+            # echoed to the client (exception text can carry internals).
+            return Response({"detail": "This request could not be raised."},
+                            status=http.HTTP_409_CONFLICT)
+
+        record_action(action="ops.community.ownership_recovery_requested", actor=request.user,
+                      request=request, target_type="community", target_id=c.id,
+                      metadata={"membership_id": membership_id, "approval_id": appr.pk,
+                                "reason": reason})
+        return Response({"approval_id": appr.pk, "status": "pending_approval"},
+                        status=http.HTTP_202_ACCEPTED)

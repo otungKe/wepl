@@ -7,6 +7,7 @@ from .views import (
 from .views_accounts import Account360View, AccountsSearchView
 from .views_communities import (
     OpsCommunitiesListView, OpsCommunityDetailView, OpsCommunityLifecycleView,
+    OpsCommunityRecoverOwnershipView,
 )
 from .views_approvals import ApprovalDecideView, ApprovalDetailView, ApprovalsListView
 from .views_exports import (
@@ -48,6 +49,7 @@ urlpatterns = [
     path("communities/", OpsCommunitiesListView.as_view()),
     path("communities/<int:community_id>/", OpsCommunityDetailView.as_view()),
     path("communities/<int:community_id>/lifecycle/", OpsCommunityLifecycleView.as_view()),
+    path("communities/<int:community_id>/recover-ownership/", OpsCommunityRecoverOwnershipView.as_view()),
     path("users/", OpsUsersListView.as_view()),
     path("users/<int:user_id>/", OpsUser360View.as_view()),
     path("users/<int:user_id>/status/", OpsUserStatusView.as_view()),

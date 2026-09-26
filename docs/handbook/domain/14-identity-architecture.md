@@ -75,7 +75,7 @@ transact.
 
 ### Identity verification is a port (ADR-0023)
 The Tier gate runs through the `IdentityVerificationProvider` port
-(`apps/users/identity/`), exactly mirroring the payments port:
+(`apps/verification/identity/`), exactly mirroring the payments port:
 
 - `ManualProvider` — human review today.
 - `FakeProvider` — deterministic, for tests.

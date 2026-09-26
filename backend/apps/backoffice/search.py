@@ -81,7 +81,7 @@ def _communities(q: str, limit: int) -> list[dict]:
 
 def _verification(q: str, limit: int) -> list[dict]:
     from django.db.models import Q
-    from apps.users.models import KYCProfile
+    from apps.verification.models import KYCProfile
     qs = (KYCProfile.objects
           .filter(Q(id_number__icontains=q) | Q(user__phone_number__icontains=q)
                   | Q(given_names__icontains=q) | Q(surname__icontains=q))

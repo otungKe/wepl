@@ -12,11 +12,19 @@ class WelfareService:
     @transaction.atomic
     def contribute_to_welfare(fund_id, user, amount, mpesa_receipt=None):
         fund = WelfareFund.objects.select_for_update().get(id=fund_id)
-        WelfareContribution.objects.create(fund=fund, user=user, amount=amount)
 
         # Key anchored to the M-Pesa receipt (externally-assigned, immutable);
         # retries with the same receipt are no-ops via post_journal idempotency.
         idem_key = f"welfare-contrib-{fund_id}-{user.id}-{mpesa_receipt}"
+
+        # Replay guard: settlement delivers at-least-once, and post_journal
+        # refusing a second posting does not stop the contribution row below
+        # being written twice. Same early-out as the shares, advance and
+        # contribution paths.
+        if JournalEntry.objects.filter(idempotency_key=f"je-{idem_key}").exists():
+            return fund
+
+        WelfareContribution.objects.create(fund=fund, user=user, amount=amount)
         ft, _ = create_fin_transaction(
             idempotency_key=idem_key,
             op_type=FinancialTransaction.OpType.WELFARE_CONTRIBUTION,
@@ -30,7 +38,7 @@ class WelfareService:
             idempotency_key=f"je-{idem_key}",
             op_type=_pm.Op.WELFARE_CONTRIBUTION,
             lines=_pm.welfare_contribution_lines(
-                member=user, fund_id=fund.id, amount=Money(str(amount)),
+                fund_id=fund.id, amount=Money(str(amount)),
             ),
             narration=f"Welfare contribution by {user.phone_number}",
             financial_transaction=ft,
@@ -177,13 +185,13 @@ class WelfareService:
         ):
             return  # already in progress
 
-        # Double-entry posting (P0-05): reserve welfare funds for the claimant.
+        # Double-entry posting (P0-05): reserve the claim out of the welfare
+        # pool. The fund pays it; the claimant owes nothing (ADR-0027 §0.2).
         post_journal(
             idempotency_key=f"je-{idem_key}",
             op_type=_pm.Op.WELFARE_CLAIM,
             lines=_pm.welfare_claim_lines(
-                member=claim.claimant, fund_id=fund.id,
-                amount=Money(str(claim.amount_requested)),
+                fund_id=fund.id, amount=Money(str(claim.amount_requested)),
             ),
             narration=f"Welfare claim #{claim.id}",
             financial_transaction=ft,

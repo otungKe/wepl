@@ -41,7 +41,7 @@ def approve_kyc(user):
     """Give a user an approved KYC profile → Tier 1 (contribute() requires it).
     A real approved-KYC user has also verified their phone (OTP flow), so set that
     too — otherwise the tier gate (phone_verified AND kyc approved) would fail."""
-    from apps.users.models import KYCProfile
+    from apps.verification.models import KYCProfile
     if not user.is_phone_verified:
         user.is_phone_verified = True
         user.save(update_fields=["is_phone_verified"])
@@ -170,8 +170,9 @@ class WelfareLedgerPostingTests(TestCase):
         fund = WelfareService.get_or_create_community_fund(self.community)
         WelfareService.contribute_to_welfare(
             fund.id, self.alice, Decimal("500"), mpesa_receipt="WR1")
-        member = coa.member_fund_account(user=self.alice, fund_type="welfare", fund_id=fund.id)
-        self.assertEqual(account_balance(member), Decimal("500.0000"))
+        # ADR-0027 §0.2: a premium funds the welfare pool, not the payer.
+        pool = coa.pool_account(fund_type="welfare", fund_id=fund.id)
+        self.assertEqual(account_balance(pool), Decimal("500.0000"))
         self.assertEqual(account_balance(coa.mpesa_float_account()), Decimal("500.0000"))
         self.assertTrue(trial_balance()["balanced"])
 
