@@ -150,6 +150,12 @@ class KYCProfile(models.Model):
     # — they do not re-enter the whole KYC form.
     resubmission_requested = models.JSONField(default=list, blank=True)
 
+    # Set when the customer closes their account: identity evidence is kept
+    # until this date for anti-money-laundering record keeping, then erased by
+    # ``tasks.erase_expired_identity_evidence``. Null = account open, or
+    # already erased.
+    evidence_retain_until = models.DateField(null=True, blank=True)
+
     submitted_at = models.DateTimeField(auto_now_add=True)
     updated_at   = models.DateTimeField(auto_now=True)
 

@@ -290,6 +290,11 @@ from celery.schedules import crontab
 CELERY_BEAT_SCHEDULE = {
     # Transactional outbox relay — deliver durably-stored domain events (Phase 2).
     # Seconds-interval (crontab is minute-granularity) for timely notifications.
+    # Erase identity evidence of closed accounts once its AML retention ends.
+    'erase-expired-identity-evidence': {
+        'task': 'apps.verification.tasks.erase_expired_identity_evidence',
+        'schedule': crontab(minute=30, hour=3),  # 03:30 EAT daily
+    },
     'process-outbox': {
         'task': 'apps.core.tasks.process_outbox',
         'schedule': 10.0,  # every 10 seconds
