@@ -1,6 +1,5 @@
 """Savings pools and who is in them — the root of the whole domain."""
 
-import math
 import secrets
 
 from django.conf import settings
@@ -166,27 +165,10 @@ class Contribution(models.Model):
     created_at  = models.DateTimeField(auto_now_add=True)
 
     def required_approvals(self):
-        """Compute required approvals from voting_threshold + live member count.
-
-        Handles the named thresholds (admins, 50, 100) plus any custom integer
-        percentage string (e.g. '60', '75'). Unknown values fall back to 1.
-        """
-        total = self.participants.filter(is_active=True).count()
-        t = self.voting_threshold
-
-        if t == 'admins':
-            return 1
-        if t == '100':
-            return max(1, total)
-
-        # Handle any numeric percentage: '50', '25', '75', etc.
-        try:
-            pct = int(t)
-            if pct <= 0:   return 1
-            if pct >= 100: return max(1, total)
-            return max(1, math.ceil(total * pct / 100))
-        except (ValueError, TypeError):
-            return 1
+        """Approvals a payout or pool spend needs under ``voting_threshold``
+        (``governance.required_approvals``)."""
+        from ..governance import required_approvals
+        return required_approvals(self, self.voting_threshold)
 
     class Meta:
         indexes = [

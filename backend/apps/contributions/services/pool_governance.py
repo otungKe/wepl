@@ -8,8 +8,9 @@ is checked up front to surface deadlock, and the maker never approves. External 
 and bypasses this — it stays a direct admin action.
 """
 from ._common import *  # shared imports + helpers (ADR-0013 view split)
+from .. import governance
 
-from ..models import PoolActionRequest, PoolActionApproval
+from ..models import PoolActionRequest
 from .contribution import ContributionService
 from .wind_up import WindUpService
 
@@ -90,11 +91,11 @@ class PoolGovernanceService:
         if req.requested_by_id == admin_user.id:
             raise PermissionDenied("You cannot approve your own request.")
 
-        _, created = PoolActionApproval.objects.get_or_create(request=req, approver=admin_user)
-        if not created:
-            raise ValidationError("You have already approved this request.")
+        governance.record_vote(req.approvals, admin_user,
+                               already="You have already approved this request.")
 
-        if req.approvals.count() >= contribution.required_approvals():
+        if governance.tally(req.approvals, contribution.required_approvals()).outcome \
+                == governance.PASSED:
             # Same 24 h cooldown as a payout after the threshold was changed.
             if (contribution.governance_locked_until
                     and contribution.governance_locked_until > timezone.now()):
