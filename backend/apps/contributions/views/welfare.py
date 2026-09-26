@@ -103,6 +103,56 @@ class WelfareClaimListCreateView(APIView):
         return Response(WelfareClaimSerializer(claim).data, status=status.HTTP_201_CREATED)
 
 
+class WelfareWindUpView(APIView):
+    """GET /welfare/<community_id>/wind-up/ previews winding up the fund (what
+    is left, how many members are paid up, the per-head share) and lists
+    proposals; POST proposes it. ADR-0027 §0.2."""
+    permission_classes = [IsActiveSession]
+
+    def get(self, request, community_id):
+        from apps.communities.models import Community
+        from ..models import WelfareWindUp
+        from ..serializers import WelfareWindUpSerializer
+        community = get_object_or_404(Community, id=community_id)
+        if not can(request.user, "community.view", community):
+            return Response({"error": "You must be a community member."},
+                            status=status.HTTP_403_FORBIDDEN)
+        fund = get_object_or_404(WelfareFund, community=community)
+        preview = WelfareWindUpService.preview(fund)
+        return Response({
+            **{k: str(v) for k, v in preview.items()},
+            'closed_at': fund.closed_at,
+            'proposals': WelfareWindUpSerializer(
+                WelfareWindUp.objects.filter(fund=fund), many=True).data,
+        })
+
+    def post(self, request, community_id):
+        from ..serializers import WelfareWindUpSerializer
+        fund = get_object_or_404(WelfareFund, community_id=community_id)
+        wind_up = WelfareWindUpService.request(
+            request.user, fund.id, str(request.data.get('reason', '')))
+        return Response(WelfareWindUpSerializer(wind_up).data, status=status.HTTP_201_CREATED)
+
+
+class WelfareWindUpDecisionView(APIView):
+    """POST /welfare/wind-ups/<id>/decide/ with action approve | reject | cancel."""
+    permission_classes = [IsActiveSession]
+
+    def post(self, request, wind_up_id):
+        from ..serializers import WelfareWindUpSerializer
+        action = str(request.data.get('action', '')).lower()
+        handlers = {
+            'approve': WelfareWindUpService.approve,
+            'reject': WelfareWindUpService.reject,
+            'cancel': WelfareWindUpService.cancel,
+        }
+        if action not in handlers:
+            return Response({"error": "action must be approve, reject or cancel"},
+                            status=status.HTTP_400_BAD_REQUEST)
+        wind_up = handlers[action](request.user, wind_up_id)
+        return Response(WelfareWindUpSerializer(wind_up).data)
+
+
 class WelfareActivityView(APIView):
     """
     Returns a unified activity log for the welfare fund:

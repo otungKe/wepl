@@ -17,11 +17,12 @@ from .join_requests import ContributionJoinRequestService
 from .shares import SharesService
 from .pool_governance import PoolGovernanceService
 from .wind_up import WindUpService
+from .welfare_wind_up import WelfareWindUpService
 
 __all__ = [
     "ContributionService", "ROSCAService", "DisbursementService",
     "WelfareService", "EmergencyAdvanceService", "StandingOrderService",
     "AmendmentService", "ContributionJoinRequestService", "SharesService",
-    "PoolGovernanceService", "WindUpService",
+    "PoolGovernanceService", "WindUpService", "WelfareWindUpService",
     "_notify", "_dn", "_compute_next_run",
 ]

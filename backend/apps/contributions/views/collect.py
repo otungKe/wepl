@@ -89,6 +89,10 @@ class STKPushView(APIView):
                     {"error": "community_id required for welfare payment"}, status=400
                 )
             welfare_fund = get_object_or_404(WelfareFund, community_id=community_id)
+            if welfare_fund.closed_at:
+                return Response(
+                    {"error": "This welfare fund has been wound up."}, status=400
+                )
             account_ref  = f"WPLWLF{community_id}"
             description  = welfare_fund.name or "Welfare"
 

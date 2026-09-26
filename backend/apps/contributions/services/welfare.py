@@ -67,6 +67,9 @@ class WelfareService:
             require_active_community(fund.community, 'submit a welfare claim')
             check_cooling_off(user, fund.community, 'welfare_claim')
 
+        if fund.closed_at:
+            raise ValidationError("This welfare fund has been wound up.")
+
         if WelfareClaim.objects.filter(fund=fund, claimant=user, status='PENDING').exists():
             raise ValidationError(
                 "You already have a pending claim. "

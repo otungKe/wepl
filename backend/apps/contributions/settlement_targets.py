@@ -144,6 +144,27 @@ def _standing_order_settled(context_id: int, receipt: str = "") -> None:
     )
 
 
+# ── welfare wind-up share ────────────────────────────────────────────────────
+
+def _welfare_wind_up_settled(context_id: int, receipt: str = "") -> None:
+    from .models import WelfareWindUpPayout
+    WelfareWindUpPayout.objects.filter(id=context_id).update(
+        status=WelfareWindUpPayout.Status.SENT)
+
+
+def _welfare_wind_up_failed(context_id: int) -> None:
+    # The failed payout's journal is reversed, so the share is back in the
+    # (closed) fund; an operator resends it from the payouts desk.
+    from .models import WelfareWindUpPayout
+    WelfareWindUpPayout.objects.filter(id=context_id).update(
+        status=WelfareWindUpPayout.Status.FAILED)
+    logger.error(
+        "Welfare wind-up payout FAILED for payout %s — the share is back in the fund. "
+        "An operator must resend it.",
+        context_id,
+    )
+
+
 def register() -> None:
     """Register every contributions settlement target (called from AppConfig.ready)."""
     register_settlement_target(
@@ -155,6 +176,9 @@ def register() -> None:
     register_settlement_target(
         'emergency_advance',
         on_settled=_advance_settled, on_failed=_advance_failed)
+    register_settlement_target(
+        'welfare_wind_up',
+        on_settled=_welfare_wind_up_settled, on_failed=_welfare_wind_up_failed)
     # Standing orders log on success and have no failure reset today.
     register_settlement_target(
         'standing_order', on_settled=_standing_order_settled)
