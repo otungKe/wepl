@@ -1,8 +1,9 @@
 from django.contrib import admin
+from unfold.admin import ModelAdmin as UnfoldModelAdmin
 
 from apps.core.admin_readonly import ReadOnlyAdminMixin
 
-from .models import PaymentIntent, ProviderEvent, ReconciliationDrift
+from .models import PaymentIntent, PaymentMethod, ProviderEvent, ReconciliationDrift
 
 
 @admin.register(PaymentIntent)
@@ -49,3 +50,11 @@ class ReconciliationDriftAdmin(admin.ModelAdmin):
         # than a bulk update, so resolution stays idempotent and single-door.
         for drift in queryset.filter(resolved_at__isnull=True):
             drift.resolve()
+
+
+@admin.register(PaymentMethod)
+class PaymentMethodAdmin(UnfoldModelAdmin):
+    list_display  = ('id', 'user', 'kind', 'display', 'is_default', 'created_at')
+    list_filter   = ('kind', 'is_default', 'created_at')
+    search_fields = ('user__phone_number', 'mpesa_phone', 'label')
+    readonly_fields = ('created_at',)

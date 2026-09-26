@@ -3,9 +3,10 @@ from datetime import date
 
 from rest_framework import serializers
 
+from apps.payments.models import PaymentMethod
 from apps.verification.models import KYCProfile, VerificationRequest
 
-from .models import User, UserSession, PaymentMethod
+from .models import User, UserSession
 
 
 # ─────────────────────────────────────────────────────────────
