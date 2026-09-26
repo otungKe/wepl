@@ -20,7 +20,7 @@ logger = logging.getLogger(__name__)
 # Conditions this task owns — so it can resolve a notice when the breach clears.
 MANAGED_KEYS = {
     "ledger_unbalanced", "outbox_dead", "outbox_backlog",
-    "stuck_payouts", "worker_stale",
+    "stuck_payouts", "payouts_awaiting_decision", "worker_stale",
 }
 
 OUTBOX_BACKLOG_SECONDS = 600     # oldest pending outbox event
@@ -47,6 +47,9 @@ def _evaluate() -> dict[str, tuple[str, str, str]]:
     from apps.ledger.balances import trial_balance
     from apps.ledger.models import FinancialTransaction as FT
     from apps.payments.ops import PAYOUT_OP_TYPES
+    from apps.payments.payouts import (
+        STALE_RECOVERY_MINUTES, STALE_SWEEP_INTERVAL_MINUTES,
+    )
 
     breaches: dict[str, tuple[str, str, str]] = {}
 
@@ -86,6 +89,28 @@ def _evaluate() -> dict[str, tuple[str, str, str]]:
         breaches["stuck_payouts"] = (
             "WARNING", f"{stuck} stuck payout(s)",
             f"Payouts open > {STUCK_PAYOUT_MINUTES} min. Recover them on the FinOps desk.")
+
+    # Payouts the automatic sweep has given up on (ADR-0034). Past its recovery
+    # horizon the sweep asks the rail, and on an inconclusive answer it
+    # deliberately leaves the movement in PROCESSING rather than reversing money
+    # that may have left the float. Nobody else will close those, so they
+    # escalate above the generic stuck-payout warning: funds stay reserved until
+    # an operator decides.
+    #
+    # One sweep interval of grace, so this reports payouts the sweep has actually
+    # had a turn at rather than ones that merely crossed the horizon a minute ago
+    # and are about to be resolved as settled or failed.
+    undecided_after = STALE_RECOVERY_MINUTES + STALE_SWEEP_INTERVAL_MINUTES
+    undecided = FT.objects.filter(
+        op_type__in=PAYOUT_OP_TYPES,
+        state=FT.State.PROCESSING,
+        updated_at__lte=timezone.now() - timedelta(minutes=undecided_after)).count()
+    if undecided:
+        breaches["payouts_awaiting_decision"] = (
+            "CRITICAL", f"{undecided} payout(s) awaiting an operator decision",
+            f"Open > {undecided_after} min and the rail cannot confirm whether "
+            f"they settled, so they were left untouched rather than reversed. "
+            f"Requery or resolve each one on the FinOps desk.")
 
     # A watched worker went quiet.
     stale = stale_tasks()

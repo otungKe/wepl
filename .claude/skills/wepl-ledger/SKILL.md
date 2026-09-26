@@ -286,14 +286,21 @@ Current as of master `68e8cf6`, 2026-09-21. Re-check before relying on any of
 it; the three items the first draft of this skill listed have since been fixed
 and are described above as history, not as live bugs.
 
-- **`ledger/tasks.py::_query_safaricom_status` can only ever return
-  `"UNKNOWN"`.** It fires a Daraja `TransactionStatusQuery`, whose real answer
-  arrives asynchronously on the `ResultURL`, and then returns `"UNKNOWN"` on
-  every path including success. So the `== "SUCCESS"` branch in
-  `recover_stale_processing_transactions` is **unreachable**: every payout still
-  `PROCESSING` after 60 minutes is force-failed and reversed, including one
-  Safaricom actually settled. Do not read the two-tier recovery docstring as a
-  description of behaviour.
+- **The payout rail cannot confirm a stale payout, and the sweep no longer
+  guesses.** `payments/providers/mpesa.py::request_payout_result` fires a Daraja
+  `TransactionStatusQuery`, whose real answer arrives asynchronously on the
+  `ResultURL`, so `_query_payout_status` reports `"UNKNOWN"` on every path
+  including success. That used to be treated as failure: every payout still
+  `PROCESSING` after 60 minutes was force-failed and reversed, including ones
+  Safaricom had settled — and `FAILED` is terminal, so the late success callback
+  could not put it right. **Fixed:** tier-2 recovery now acts only on a rail
+  answer. `SUCCESS` settles, a confirmed `FAILED` reverses, and `UNKNOWN` leaves
+  the movement in `PROCESSING` and escalates —
+  `backoffice/tasks.py::ops_alerts` raises `payouts_awaiting_decision`
+  (CRITICAL) and an operator resolves it through `payments/ops.py`. So on the
+  M-Pesa rail **no stale payout is ever auto-reversed**; funds stay reserved
+  until a human decides, which is the intended trade. Do not "restore" the
+  auto-reversal to clear the alert queue.
 - **`apps/ledger` is now a leaf and must stay one (ADR-0033).** It imports
   `apps/core` and nothing else; `ledger/tasks.py` holds only `reconcile_ledger`.
   Anything the ledger needs from above is *handed* to it — `chokepoint.py` for

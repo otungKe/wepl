@@ -294,3 +294,95 @@ class PayoutTaskRegistrationTests(SimpleTestCase):
     def test_the_stk_poller_stays_on_the_payments_queue(self):
         route = self.app.amqp.router.route({}, "apps.payments.tasks.poll_mpesa_stk_status")
         self.assertEqual(route["queue"].name, "payments")
+
+
+class StaleRecoveryActsOnRailEvidenceTests(_ProviderMixin, TestCase):
+    """Tier-2 recovery reverses only what the rail *confirms* failed.
+
+    Reversing an inconclusive payout credits the pool back for money that may
+    already have left the float, and FAILED is terminal so a late success
+    callback cannot undo it. Since Daraja's TransactionStatusQuery is
+    asynchronous, "inconclusive" is the only answer the M-Pesa payout rail can
+    give — which made reversal the default for every stale payout.
+    """
+
+    def setUp(self):
+        self.user = User.objects.create(phone_number="+254700000804")
+        self.ft, _ = create_fin_transaction(
+            idempotency_key="stale-evidence-1",
+            op_type=FinancialTransaction.OpType.DISBURSEMENT,
+            amount=Decimal("500"), initiated_by=self.user,
+            recipient_phone="254700000804",
+            initial_state=FinancialTransaction.State.PROCESSING,
+        )
+        mark_dispatched(self.ft, "AG_EVIDENCE")
+        self._age_past_recovery_horizon()
+
+    def _age_past_recovery_horizon(self):
+        from datetime import timedelta
+
+        from django.utils import timezone
+        from apps.payments.payouts import STALE_RECOVERY_MINUTES
+
+        FinancialTransaction.objects.filter(pk=self.ft.pk).update(
+            updated_at=timezone.now() - timedelta(minutes=STALE_RECOVERY_MINUTES + 1))
+
+    def test_an_inconclusive_rail_leaves_the_payout_alone(self):
+        self.use_fake()
+        with patch("apps.payments.payouts._query_payout_status", return_value="UNKNOWN"):
+            result = recover_stale_processing_transactions()
+
+        self.ft.refresh_from_db()
+        self.assertEqual(self.ft.state, FinancialTransaction.State.PROCESSING)
+        self.assertEqual(result["awaiting_decision"], 1)
+        self.assertEqual(result["recovered"], 0)
+        self.assertFalse(
+            OutboxEvent.objects.filter(event_type="payment.failed").exists(),
+            "an undecidable payout must not emit payment.failed — the consumer "
+            "would reverse the journal")
+
+    def test_the_mpesa_default_never_reverses(self):
+        """The regression itself, with no status patched at all.
+
+        FakeProvider inherits the port's default ``request_payout_result``,
+        which reports 'unknown' exactly as the M-Pesa adapter does. Before the
+        fix this reached the reversal path on every run.
+        """
+        self.use_fake()
+        result = recover_stale_processing_transactions()
+
+        self.ft.refresh_from_db()
+        self.assertEqual(self.ft.state, FinancialTransaction.State.PROCESSING)
+        self.assertEqual(result["awaiting_decision"], 1)
+        self.assertFalse(OutboxEvent.objects.filter(event_type="payment.failed").exists())
+
+    def test_a_rail_confirmed_failure_is_still_auto_recovered(self):
+        self.use_fake()
+        with patch("apps.payments.payouts._query_payout_status", return_value="FAILED"):
+            result = recover_stale_processing_transactions()
+
+        self.ft.refresh_from_db()
+        self.assertEqual(self.ft.state, FinancialTransaction.State.FAILED)
+        self.assertEqual(result["recovered"], 1)
+        self.assertEqual(result["awaiting_decision"], 0)
+        ev = OutboxEvent.objects.get(event_type="payment.failed")
+        self.assertEqual(ev.payload["ft_id"], self.ft.id)
+        self.assertIn("rail confirmed FAILED", ev.payload["reason"])
+
+    def test_a_payout_inside_the_horizon_is_only_warned_about(self):
+        from datetime import timedelta
+
+        from django.utils import timezone
+        from apps.payments.payouts import STALE_RECOVERY_MINUTES, STALE_WARN_MINUTES
+
+        FinancialTransaction.objects.filter(pk=self.ft.pk).update(
+            updated_at=timezone.now() - timedelta(
+                minutes=(STALE_WARN_MINUTES + STALE_RECOVERY_MINUTES) // 2))
+        self.use_fake()
+        with patch("apps.payments.payouts._query_payout_status") as q:
+            result = recover_stale_processing_transactions()
+
+        q.assert_not_called()
+        self.assertEqual(result, {"warned": 1, "recovered": 0, "awaiting_decision": 0})
+        self.ft.refresh_from_db()
+        self.assertEqual(self.ft.state, FinancialTransaction.State.PROCESSING)

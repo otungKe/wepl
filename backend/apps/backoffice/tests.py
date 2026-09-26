@@ -1366,6 +1366,60 @@ class HealthAndAlertingTests(TestCase):
         self.assertEqual(StaffNotice.objects.filter(
             key="outbox_dead", resolved_at__isnull=True).count(), 0)
 
+    def test_undecidable_payout_escalates_above_the_stuck_warning(self):
+        """A payout the sweep deliberately left in PROCESSING must not go quiet.
+
+        `recover_stale_processing_transactions` stops reversing when the rail
+        cannot confirm a payout settled, so the only thing that closes those is
+        an operator. They therefore raise a CRITICAL of their own rather than
+        being folded into the WARNING for anything open over 30 minutes.
+        """
+        from datetime import timedelta
+        from decimal import Decimal
+
+        from django.contrib.auth import get_user_model
+        from django.utils import timezone
+
+        from apps.backoffice.models import StaffNotice
+        from apps.backoffice.tasks import ops_alerts
+        from apps.ledger.models import FinancialTransaction
+        from apps.ledger.writer import create_fin_transaction
+        from apps.payments.payouts import (
+            STALE_RECOVERY_MINUTES, STALE_SWEEP_INTERVAL_MINUTES,
+        )
+
+        user = get_user_model().objects.create(phone_number="+254700000901")
+        ft, _ = create_fin_transaction(
+            idempotency_key="alert-undecided-1",
+            op_type=FinancialTransaction.OpType.DISBURSEMENT,
+            amount=Decimal("500"), initiated_by=user,
+            recipient_phone="254700000901",
+            initial_state=FinancialTransaction.State.PROCESSING,
+        )
+        # Just over the horizon is not yet escalated — the sweep has not had a
+        # turn at it, so it may still resolve cleanly.
+        FinancialTransaction.objects.filter(pk=ft.pk).update(
+            updated_at=timezone.now() - timedelta(minutes=STALE_RECOVERY_MINUTES + 1))
+        self.assertNotIn("payouts_awaiting_decision", ops_alerts()["breaches"])
+
+        # A full sweep interval later, it is the operator's to close.
+        FinancialTransaction.objects.filter(pk=ft.pk).update(
+            updated_at=timezone.now() - timedelta(
+                minutes=STALE_RECOVERY_MINUTES + STALE_SWEEP_INTERVAL_MINUTES + 1))
+
+        result = ops_alerts()
+        self.assertIn("payouts_awaiting_decision", result["breaches"])
+        notice = StaffNotice.objects.get(
+            key="payouts_awaiting_decision", resolved_at__isnull=True)
+        self.assertEqual(notice.level, "CRITICAL")
+
+        # Resolving the payout clears the notice.
+        ft.refresh_from_db()
+        ft.transition_to(FinancialTransaction.State.SUCCESS)
+        self.assertNotIn("payouts_awaiting_decision", ops_alerts()["breaches"])
+        self.assertEqual(StaffNotice.objects.filter(
+            key="payouts_awaiting_decision", resolved_at__isnull=True).count(), 0)
+
     def test_notice_bell_and_dismiss(self):
         from apps.backoffice.models import StaffNotice
         n = StaffNotice.objects.create(key="outbox_dead", level="CRITICAL",

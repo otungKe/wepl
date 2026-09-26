@@ -35,6 +35,16 @@ from apps.payments.money_activity import rail_for
 
 logger = logging.getLogger(__name__)
 
+# Stale-payout thresholds for `recover_stale_processing_transactions`. Shared so
+# the ops alert that escalates an undecidable payout cannot drift from the sweep
+# that parks it (`backoffice/tasks.py::_evaluate`).
+STALE_WARN_MINUTES     = 15
+STALE_RECOVERY_MINUTES = 60
+# How often the sweep itself runs (settings.CELERY_BEAT_SCHEDULE). The alert adds
+# this to the recovery horizon so it only escalates payouts the sweep has
+# actually had a turn at, rather than ones merely old enough to qualify.
+STALE_SWEEP_INTERVAL_MINUTES = 30
+
 
 @shared_task(
     bind=True,
@@ -170,12 +180,26 @@ def recover_stale_processing_transactions() -> dict:
     """
     Two-tier recovery for FinancialTransactions stuck in PROCESSING.
 
-    Tier 1 — warn (> 15 min):  CRITICAL log so ops can investigate immediately
-              while the rail's callback might still arrive.
+    Tier 1 — warn (> ``STALE_WARN_MINUTES``):  CRITICAL log so ops can
+              investigate while the rail's callback might still arrive.
 
-    Tier 2 — auto-recover (> 60 min):  The callback window is long past.
-              Mark FAILED, write reversal ledger entry to restore pool funds,
-              and reset the linked domain object so admins can re-trigger.
+    Tier 2 — resolve (> ``STALE_RECOVERY_MINUTES``):  ask the rail, then act on
+              *what it answered*:
+              SUCCESS  → transition to SUCCESS and emit ``payment.settled``.
+              FAILED   → force FAILED; the settlement consumer reverses.
+              UNKNOWN  → **leave the movement alone** and escalate.
+
+    That last branch is the point of this design. Reversing on ``UNKNOWN`` means
+    reversing on no evidence, and for the M-Pesa payout rail ``UNKNOWN`` is the
+    *only* answer available: Daraja's TransactionStatusQuery is asynchronous, so
+    ``request_payout_result()`` reports ``unknown`` even when the payout settled
+    and re-fires the result callback instead. A sweep that treated that as
+    failure would credit the pool back for money that had already left the float
+    — and because ``FAILED`` is terminal, the late success callback could never
+    put it right (``B2CResultView`` catches the ``TransitionError`` and returns
+    200). So an inconclusive rail leaves the FT in PROCESSING for a human:
+    ``backoffice.tasks.ops_alerts`` raises ``payouts_awaiting_decision`` and the
+    operator resolves it from the FinOps desk (``payments/ops.py``).
 
     Runs every 30 minutes via Celery Beat (settings.CELERY_BEAT_SCHEDULE).
     """
@@ -184,8 +208,8 @@ def recover_stale_processing_transactions() -> dict:
     from apps.ledger.models import FinancialTransaction
 
     now        = timezone.now()
-    warn_at    = now - timedelta(minutes=15)
-    recover_at = now - timedelta(minutes=60)
+    warn_at    = now - timedelta(minutes=STALE_WARN_MINUTES)
+    recover_at = now - timedelta(minutes=STALE_RECOVERY_MINUTES)
 
     all_stale = (FinancialTransaction.objects
                  .filter(state=FinancialTransaction.State.PROCESSING,
@@ -195,16 +219,16 @@ def recover_stale_processing_transactions() -> dict:
 
     warned    = 0
     recovered = 0
+    awaiting  = 0
 
     for ft in all_stale:
         # One read of the rail dimension per movement; the prefetch above keeps
         # that off the per-row query budget.
         rail = rail_for(ft)
         if ft.updated_at < recover_at:
-            # ── Tier 2: query the rail, then auto-recover ─────────────────────
-            # Try the rail's status facility first so we know the real outcome.
-            # If the query confirms SUCCESS we record it correctly rather than
-            # writing a false reversal.
+            # ── Tier 2: query the rail, then act on its answer ────────────────
+            # Only the rail knows whether the money left. We act on SUCCESS and
+            # on FAILED; an inconclusive answer is escalated, never guessed.
             rail_state = _query_payout_status(ft, provider_ref=rail.conversation_id)
 
             if rail_state == "SUCCESS":
@@ -234,26 +258,46 @@ def recover_stale_processing_transactions() -> dict:
                 except Exception:
                     logger.exception("STALE-RECOVER: success-transition failed for FT-%s", ft.id)
 
-            else:
-                # FAILED, UNKNOWN, or query itself failed — treat as failed.
+            elif rail_state == "FAILED":
+                # The rail told us it did not pay. Reversing is correct here.
                 logger.error(
                     "STALE-RECOVER: FT-%s op=%s amount=%s context=%s/%s "
-                    "provider_ref=%s stuck > 60 min (rail_state=%s) — "
+                    "provider_ref=%s stuck > 60 min, rail confirms FAILED — "
                     "forcing FAILED and writing reversal.",
                     ft.id, ft.op_type, ft.amount,
                     ft.context_type, ft.context_id,
-                    rail.conversation_id, rail_state,
+                    rail.conversation_id,
                 )
                 try:
                     _handle_payout_failure(
                         ft,
                         f"Auto-recovered after 60 min in PROCESSING "
-                        f"(rail_state={rail_state}, "
+                        f"(rail confirmed FAILED, "
                         f"provider_ref={rail.conversation_id}).",
                     )
                     recovered += 1
                 except Exception:
                     logger.exception("STALE-RECOVER: failed to auto-recover FT-%s", ft.id)
+
+            else:
+                # UNKNOWN — the rail could not tell us, or the query itself
+                # failed. We do NOT reverse: the money may well have left the
+                # float, and a reversal here would credit the pool back for it
+                # irrecoverably (FAILED is terminal, so a late success callback
+                # cannot undo it). Leave the FT in PROCESSING and escalate;
+                # ops_alerts raises `payouts_awaiting_decision` and an operator
+                # resolves it from the FinOps desk.
+                logger.critical(
+                    "STALE-AWAIT: FT-%s op=%s amount=%s context=%s/%s "
+                    "provider_ref=%s stuck > 60 min and the rail cannot say "
+                    "whether it settled — leaving in PROCESSING for an "
+                    "operator. NOT reversed: reversing on an inconclusive rail "
+                    "would credit the pool back for money that may have left.",
+                    ft.id, ft.op_type, ft.amount,
+                    ft.context_type, ft.context_id,
+                    rail.conversation_id,
+                )
+                awaiting += 1
         else:
             # ── Tier 1: warn only (callback might still arrive) ───────────────
             logger.critical(
@@ -265,11 +309,13 @@ def recover_stale_processing_transactions() -> dict:
             )
             warned += 1
 
-    summary = {"warned": warned, "recovered": recovered}
-    if warned or recovered:
+    summary = {"warned": warned, "recovered": recovered,
+               "awaiting_decision": awaiting}
+    if warned or recovered or awaiting:
         logger.critical(
-            "recover_stale_processing_transactions: %d warned, %d auto-recovered.",
-            warned, recovered,
+            "recover_stale_processing_transactions: %d warned, %d auto-recovered, "
+            "%d awaiting an operator decision.",
+            warned, recovered, awaiting,
         )
     else:
         logger.info("recover_stale_processing_transactions: no stale transactions.")
