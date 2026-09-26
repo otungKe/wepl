@@ -6,10 +6,8 @@ of one: under ADR-0027 a share is paid out only by a group decision (an exit
 request), so closing first would leave it stranded. Contribution and ledger
 records are financial records and are kept.
 """
-from django.db.models import F
-
 from apps.core import lifecycle
-from apps.ledger.models import AccountBalance
+from apps.ledger.balances import holds_any_balance
 
 from .history import member_history_qs, transaction_type_for
 from .models import ContributionParticipant, EmergencyAdvance
@@ -22,9 +20,7 @@ def blockers(user) -> list[str]:
     if EmergencyAdvance.objects.filter(borrower=user, status__in=OPEN_ADVANCE_STATUSES).exists():
         reasons.append("You have outstanding advance(s) that must be repaid before "
                        "your account can be deleted.")
-    holds_money = AccountBalance.objects.filter(account__owner=user) \
-        .exclude(debit_total=F('credit_total')).exists()
-    if holds_money:
+    if holds_any_balance(user):
         reasons.append("You still hold money in a group. Ask to leave the group and "
                        "be paid your share before deleting your account.")
     return reasons
