@@ -77,7 +77,7 @@ class OtpStageTokenTests(TestCase):
         self.assertTrue(self.user.is_active)
 
     def test_suspended_member_cannot_reset_pin_into_a_session(self):
-        from apps.users.services import RestrictionService
+        from apps.controls.restrictions import RestrictionService
         RestrictionService.apply(self.user, "login", reason="fraud review")
         r = _client(self.user, STAGE_OTP_RECOVERY).post("/api/users/pin/reset/", {"pin": "654321"}, format="json")
         self.assertEqual(r.status_code, 403)

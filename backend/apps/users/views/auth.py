@@ -167,7 +167,7 @@ class ResetPINView(APIView):
 
         # The SMS code proves the phone, not that the account may be used: an
         # ops-applied login restriction holds here exactly as at PIN login.
-        from ..services import RestrictionService
+        from apps.controls.restrictions import RestrictionService
         if RestrictionService.blocks_login(request.user):
             logger.warning("PIN reset blocked by account restriction for %s", request.user.phone_number)
             return Response(
