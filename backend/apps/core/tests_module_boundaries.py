@@ -60,7 +60,7 @@ APPS_DIR = Path(settings.BASE_DIR) / "apps"
 #: places — and no single edge removal frees any of them. Shrinking further is a
 #: question about who owns a group and its money, not a registry away.
 CYCLE_BASELINE = {
-    "activity", "communities", "contributions", "users",
+    "communities", "contributions", "users",
 }
 
 #: ``apps.ledger`` may import these and nothing else. Controls reach the ledger by

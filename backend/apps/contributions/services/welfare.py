@@ -45,12 +45,11 @@ class WelfareService:
             created_by=user,
         )
 
-        # Amount is sensitive — keep the contributor's welfare payment private.
-        ActivityService.record(
-            actor=user,
-            verb='welfare_contribution',
-            params={"amount": str(amount)},
-            visibility=Activity.Visibility.PRIVATE,
+        emit_event(
+            'welfare.contributed', aggregate_key=f'welfare_fund:{fund.id}',
+            dedup_key=f'welfare.contributed:ft={ft.id}',
+            body={"actor_id": user.pk, "welfare_fund_id": fund.id,
+                  "amount": str(amount)},
         )
         fund.refresh_from_db()
         return fund

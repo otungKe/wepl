@@ -144,11 +144,11 @@ class StandingOrderService:
             next_run_at=_compute_next_run(order.frequency, now),
         )
 
-        ActivityService.record(
-            actor=user,
-            verb='standing_order_executed',
-            params={"amount": str(order.amount), "recipient": recipient_phone},
-            visibility=Activity.Visibility.PRIVATE,
+        emit_event(
+            'standing_order.executed', aggregate_key=f'standing_order:{order.id}',
+            dedup_key=f'standing_order.executed:ft={ft.id}',
+            body={"actor_id": user.pk, "standing_order_id": order.id,
+                  "amount": str(order.amount), "recipient": recipient_phone},
         )
 
         # ── Dispatch B2C via Celery AFTER commit ──────────────────────────────

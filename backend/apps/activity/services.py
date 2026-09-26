@@ -5,7 +5,8 @@ from .render import render_activity
 class ActivityService:
     @staticmethod
     def record(actor, verb, *, params=None, message=None,
-               visibility=Activity.Visibility.PRIVATE, community=None):
+               visibility=Activity.Visibility.PRIVATE, community=None,
+               source_event_id=None):
         """
         Record a typed activity event (ADR-0016).
 
@@ -17,6 +18,9 @@ class ActivityService:
                      verb + params and stored as the render cache.
         visibility — 'private' (actor only), 'community', or 'public'.
         community  — scope for community-visible rows (required for 'community').
+        source_event_id — the outbox fact this row came from, when it came
+                     from one (see ``consumers``); unique, so a redelivered
+                     fact cannot write a second row.
         """
         from apps.tenants.resolve import tenant_for_user
 
@@ -31,6 +35,7 @@ class ActivityService:
             visibility=visibility,
             community=community,
             tenant=tenant,
+            source_event_id=source_event_id,
         )
         # Store a rendered fallback (search target + back-compat for old clients).
         activity.message = message if message is not None else render_activity(activity)

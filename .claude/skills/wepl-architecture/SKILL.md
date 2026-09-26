@@ -33,9 +33,11 @@ gate is registered into `ledger/chokepoint.py` rather than imported by it;
 `apps/mpesa` — the Daraja wire client plus its two rail records; and
 `apps/verification` — the case ledger, which records what was decided and never
 what a decision does elsewhere. All three are tested in
-`apps/core/tests_module_boundaries.py`, which also holds a ratchet on the **four**
-apps still in one import cycle (`activity`, `communities`, `contributions`,
-`users`): that set may only shrink. "Imports only core" is not "depends only on
+`apps/core/tests_module_boundaries.py`, which also holds a ratchet on the **three**
+apps still in one import cycle (`communities`, `contributions`, `users`): that set
+may only shrink. The activity feed left it by consuming outbox facts
+(`apps/activity/consumers.py`) instead of being called — the pattern for any
+side effect that only needs to hear that something happened. "Imports only core" is not "depends only on
 core": the same file checks the three leaves' **foreign keys** through the model
 registry, because a string FK (`'contributions.Contribution'`) never shows up as an
 import. `FK_BASELINE` names the twelve edges that still exist (FinancialTransaction
