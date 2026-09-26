@@ -1,4 +1,6 @@
 from django.contrib import admin
+
+from apps.core.admin_readonly import ReadOnlyAdminMixin
 from .models import (
     Contribution,
     ContributionParticipant,
@@ -10,9 +12,12 @@ from .models import (
     EmergencyAdvance,
 )
 
+# Group money records are read-only here: every change is a governed act (votes,
+# approvals, post_journal) that runs through apps.contributions.services.
+
 
 @admin.register(Contribution)
-class ContributionAdmin(admin.ModelAdmin):
+class ContributionAdmin(ReadOnlyAdminMixin, admin.ModelAdmin):
     list_display = ('title', 'contribution_type', 'visibility', 'pool_balance', 'target_amount', 'is_active', 'created_at')
     list_filter = ('contribution_type', 'visibility', 'is_active')
     search_fields = ('title',)
@@ -24,30 +29,30 @@ class ContributionAdmin(admin.ModelAdmin):
 
 
 @admin.register(ContributionParticipant)
-class ContributionParticipantAdmin(admin.ModelAdmin):
+class ContributionParticipantAdmin(ReadOnlyAdminMixin, admin.ModelAdmin):
     list_display = ('user', 'contribution', 'is_active', 'joined_at')
     list_filter = ('is_active',)
 
 
 @admin.register(ROSCASlot)
-class ROSCASlotAdmin(admin.ModelAdmin):
+class ROSCASlotAdmin(ReadOnlyAdminMixin, admin.ModelAdmin):
     list_display = ('contribution', 'cycle_number', 'slot_order', 'participant', 'has_received', 'payout_amount')
     list_filter = ('has_received',)
 
 
 @admin.register(DisbursementRequest)
-class DisbursementRequestAdmin(admin.ModelAdmin):
+class DisbursementRequestAdmin(ReadOnlyAdminMixin, admin.ModelAdmin):
     list_display = ('contribution', 'requested_by', 'amount', 'status', 'created_at')
     list_filter = ('status',)
 
 
 @admin.register(DisbursementVote)
-class DisbursementVoteAdmin(admin.ModelAdmin):
+class DisbursementVoteAdmin(ReadOnlyAdminMixin, admin.ModelAdmin):
     list_display = ('request', 'voter', 'vote', 'voted_at')
 
 
 @admin.register(WelfareFund)
-class WelfareFundAdmin(admin.ModelAdmin):
+class WelfareFundAdmin(ReadOnlyAdminMixin, admin.ModelAdmin):
     list_display = ('community', 'name', 'fund_balance', 'monthly_contribution')
 
     @admin.display(description='Balance')
@@ -57,20 +62,12 @@ class WelfareFundAdmin(admin.ModelAdmin):
 
 
 @admin.register(WelfareClaim)
-class WelfareClaimAdmin(admin.ModelAdmin):
+class WelfareClaimAdmin(ReadOnlyAdminMixin, admin.ModelAdmin):
     list_display = ('claimant', 'fund', 'amount_requested', 'status', 'created_at')
     list_filter = ('status',)
-    actions = ['force_disburse']
-
-    def force_disburse(self, request, queryset):
-        from .services import WelfareService
-        for claim in queryset.filter(status='APPROVED'):
-            WelfareService._disburse(claim)
-        self.message_user(request, "Selected claims disbursed.")
-    force_disburse.short_description = "Force disburse approved claims"
 
 
 @admin.register(EmergencyAdvance)
-class EmergencyAdvanceAdmin(admin.ModelAdmin):
+class EmergencyAdvanceAdmin(ReadOnlyAdminMixin, admin.ModelAdmin):
     list_display = ('borrower', 'contribution', 'amount', 'interest_rate', 'status', 'repayment_due')
     list_filter = ('status',)
