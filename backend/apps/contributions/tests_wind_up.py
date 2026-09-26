@@ -32,7 +32,7 @@ User = get_user_model()
 
 
 def _verified(phone):
-    from apps.users.models import KYCProfile
+    from apps.verification.models import KYCProfile
     user = User.objects.create(phone_number=phone, is_phone_verified=True)
     KYCProfile.objects.create(
         user=user, status="approved", given_names="Test", surname="User",

@@ -13,7 +13,7 @@ from rest_framework.test import APIRequestFactory
 
 from apps.core.exceptions import custom_exception_handler
 from apps.users.exceptions import KYCRequired
-from apps.users.models import KYCProfile
+from apps.verification.models import KYCProfile
 from apps.users.permissions import RequiresTier1
 from apps.users.tiers import AccessPolicy
 

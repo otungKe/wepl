@@ -21,12 +21,12 @@ from django.core.management.base import BaseCommand
 # group name → list of (app_label, model_name, [actions])
 ROLES: dict[str, list[tuple[str, str, list[str]]]] = {
     'KYC Reviewers': [
-        ('users', 'kycprofile', ['view', 'change']),
+        ('verification', 'kycprofile', ['view', 'change']),
         ('users', 'user',       ['view']),
     ],
     'Support': [
         ('users',       'user',                 ['view']),
-        ('users',       'kycprofile',           ['view']),
+        ('verification', 'kycprofile',          ['view']),
         ('communities', 'community',            ['view']),
         ('communities', 'communitymembership',  ['view']),
         ('communities', 'communityjoinrequest', ['view']),

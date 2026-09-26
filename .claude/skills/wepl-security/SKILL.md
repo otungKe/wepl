@@ -71,7 +71,9 @@ is stored.
 ## Identity is a ledger too (`apps/verification/`)
 
 Every KYC journey is a `VerificationCase` whose immutable `CaseEvent` timeline is
-the source of truth; `KYCProfile.status` is a **projection**. All decisions — ops
+the source of truth; `KYCProfile` (`apps/verification/models.py`, table
+`users_kycprofile`) is the applicant's submission and its `status` is a
+**projection**. All decisions — ops
 console, Django admin, automated provider outcomes — go through
 `verification/service.py::decide`, the identity analogue of `post_journal()`: a
 declared `_TRANSITIONS` table, a row lock, an appended event. `CaseDocument` rows

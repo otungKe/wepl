@@ -14,7 +14,7 @@ from apps.contributions.services import ContributionService
 from apps.mpesa.models import MpesaSTKRequest
 from apps.payments.providers import registry
 from apps.payments.providers.fake import FakeProvider
-from apps.users.models import KYCProfile
+from apps.verification.models import KYCProfile
 
 User = get_user_model()
 URL = "/api/mpesa/stk/push/"
