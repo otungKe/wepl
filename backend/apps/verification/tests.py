@@ -14,7 +14,7 @@ from rest_framework.test import APIClient
 
 from apps.backoffice.auth import issue_staff_token
 from apps.backoffice.models import StaffAccount
-from apps.users.models import KYCProfile
+from apps.verification.models import KYCProfile
 
 from . import service
 from .models import (

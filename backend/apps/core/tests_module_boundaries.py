@@ -387,8 +387,6 @@ FK_BASELINE = {
     "mpesa.MpesaSTKRequest.shares_fund": "contributions.SharesFund",
     "mpesa.MpesaSTKRequest.advance": "contributions.EmergencyAdvance",
     "mpesa.MpesaC2BTransaction.contribution": "contributions.Contribution",
-    # The case ledger's applicant record still lives in users (finding 6).
-    "verification.VerificationCase.kyc": "users.KYCProfile",
     # Which operator acted. An actor reference into the back office.
     "verification.VerificationCase.assigned_to": "backoffice.StaffAccount",
     "verification.CaseEvent.actor_staff": "backoffice.StaffAccount",

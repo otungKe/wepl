@@ -154,7 +154,8 @@ class OpsSearchTests(TestCase):
     def setUp(self):
         from datetime import date
         from apps.communities.services import CommunityService
-        from apps.users.models import KYCProfile, User
+        from apps.users.models import User
+        from apps.verification.models import KYCProfile
         self.target = User.objects.create(phone_number="254712345678", name="Ada Lovelace")
         KYCProfile.objects.create(user=self.target, given_names="Ada", surname="Lovelace",
             id_number="87654321", date_of_birth=date(1990, 1, 1), status="pending")
@@ -209,7 +210,8 @@ class BootstrapTests(TestCase):
 class VerificationApiTests(TestCase):
     def setUp(self):
         from datetime import date
-        from apps.users.models import KYCProfile, User
+        from apps.users.models import User
+        from apps.verification.models import KYCProfile
         self.applicant = User.objects.create(phone_number="254733000001", name="Ada L")
         self.kyc = KYCProfile.objects.create(
             user=self.applicant, given_names="Ada", surname="Lovelace", id_number="11223344",
@@ -247,7 +249,7 @@ class VerificationApiTests(TestCase):
 
     def test_approve_updates_status_and_audits(self):
         from apps.audit.models import AuditEvent
-        from apps.users.models import KYCProfile
+        from apps.verification.models import KYCProfile
         c = op_client(make_staff("v3@imbank.co.ke", "verification"))
         r = c.post(f"/api/ops/verification/{self.applicant.id}/decision/",
                    {"action": "approve"}, format="json")
@@ -1664,7 +1666,7 @@ class CustomerInfoAndActivityTests(TestCase):
         self.sup = make_staff("sup-c@imbank.co.ke", "support")      # users.view
 
     def _kyc(self, u):
-        from apps.users.models import KYCProfile
+        from apps.verification.models import KYCProfile
         from datetime import date
         return KYCProfile.objects.create(
             user=u, given_names="Amina", surname="Yusuf", id_number="12345678",

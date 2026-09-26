@@ -235,7 +235,7 @@ class AdminDashboardTests(TestCase):
     def test_key_changelists_and_forms_render(self):
         for url in [
             "/admin/users/user/",
-            "/admin/users/kycprofile/",
+            "/admin/verification/kycprofile/",
             "/admin/users/user/add/",
         ]:
             self.assertEqual(self.client.get(url).status_code, 200, url)
@@ -615,7 +615,7 @@ class IdentityCheckApplyTests(TestCase):
 
     def _make_kyc(self, phone):
         from datetime import date
-        from apps.users.models import KYCProfile
+        from apps.verification.models import KYCProfile
         user = get_user_model().objects.create_user(phone_number=phone)
         kyc = KYCProfile.objects.create(
             user=user, given_names="Jane", surname="Doe", id_number=f"ID{user.pk}",
@@ -753,7 +753,7 @@ class IdentityCheckOcrIntegrationTests(TestCase):
     def test_ocr_detail_recorded(self):
         from datetime import date
         from django.core.files.uploadedfile import SimpleUploadedFile
-        from apps.users.models import KYCProfile
+        from apps.verification.models import KYCProfile
         from apps.verification.identity.manual import ManualProvider
         from apps.verification.identity.registry import use_provider
         from apps.verification.ocr.engine import FakeOcrEngine, use_engine
@@ -838,12 +838,12 @@ class KYCAdminRenderTests(TestCase):
     def _summary(self, obj):
         from django.contrib.admin.sites import site
         from apps.users.admin import KYCProfileAdmin
-        from apps.users.models import KYCProfile
+        from apps.verification.models import KYCProfile
         return KYCProfileAdmin(KYCProfile, site).verification_summary(obj)
 
     def test_renders_for_all_detail_shapes(self):
         from django.utils import timezone
-        from apps.users.models import KYCProfile
+        from apps.verification.models import KYCProfile
         # OCR present with a mismatch
         self.assertIn("MISMATCH", self._summary(KYCProfile(
             verification_provider="manual", verification_state="manual_review",
@@ -863,7 +863,7 @@ class KYCAdminRenderTests(TestCase):
     def test_change_page_renders_end_to_end(self):
         from datetime import date
         from django.utils import timezone
-        from apps.users.models import KYCProfile
+        from apps.verification.models import KYCProfile
         staff = get_user_model().objects.create_user(phone_number="254700000909")
         staff.is_staff = staff.is_superuser = True
         staff.save()
@@ -878,7 +878,7 @@ class KYCAdminRenderTests(TestCase):
                                          "dob_match": None, "engine": "tesseract"}},
         )
         self.client.force_login(staff)
-        resp = self.client.get(f"/admin/users/kycprofile/{kyc.id}/change/")
+        resp = self.client.get(f"/admin/verification/kycprofile/{kyc.id}/change/")
         self.assertEqual(resp.status_code, 200, msg=resp.content[:300])
 
 
@@ -921,7 +921,7 @@ class KYCResubmissionActionTests(TestCase):
 
     def _make_kyc(self, phone, status):
         from datetime import date
-        from apps.users.models import KYCProfile
+        from apps.verification.models import KYCProfile
         u = get_user_model().objects.create_user(phone_number=phone)
         return KYCProfile.objects.create(
             user=u, given_names="Jane", surname="Doe", id_number=f"ID{u.pk}",
@@ -931,7 +931,7 @@ class KYCResubmissionActionTests(TestCase):
     def test_action_requests_documents_from_pending_user(self):
         from apps.core.models import OutboxEvent
         kyc = self._make_kyc("254700000921", "pending")
-        resp = self.client.post("/admin/users/kycprofile/", {
+        resp = self.client.post("/admin/verification/kycprofile/", {
             "action": "request_kyc_resubmission",
             "_selected_action": [str(kyc.pk)],
         }, follow=True)
@@ -948,7 +948,7 @@ class KYCResubmissionActionTests(TestCase):
         the applicant is never notified."""
         from apps.core.models import OutboxEvent
         kyc = self._make_kyc("254700000922", "approved")
-        resp = self.client.post("/admin/users/kycprofile/", {
+        resp = self.client.post("/admin/verification/kycprofile/", {
             "action": "request_kyc_resubmission",
             "_selected_action": [str(kyc.pk)],
         }, follow=True)
@@ -972,7 +972,7 @@ class KYCManualDecisionStampTests(TestCase):
 
     def _pending_kyc(self, phone):
         from datetime import date
-        from apps.users.models import KYCProfile
+        from apps.verification.models import KYCProfile
         u = get_user_model().objects.create_user(phone_number=phone)
         return KYCProfile.objects.create(
             user=u, given_names="Jane", surname="Doe", id_number=f"ID{u.pk}",
@@ -983,7 +983,7 @@ class KYCManualDecisionStampTests(TestCase):
     def test_approve_action_decides_and_keeps_the_provider_result(self):
         from apps.verification.models import CaseEvent
         kyc = self._pending_kyc("254700000931")
-        self.client.post("/admin/users/kycprofile/", {
+        self.client.post("/admin/verification/kycprofile/", {
             "action": "approve_kyc", "_selected_action": [str(kyc.pk)]})
         kyc.refresh_from_db()
         self.assertEqual(kyc.status, "approved")
@@ -996,7 +996,7 @@ class KYCManualDecisionStampTests(TestCase):
 
     def test_reject_action_decides_and_keeps_the_provider_result(self):
         kyc = self._pending_kyc("254700000932")
-        self.client.post("/admin/users/kycprofile/", {
+        self.client.post("/admin/verification/kycprofile/", {
             "action": "reject_kyc", "_selected_action": [str(kyc.pk)]})
         kyc.refresh_from_db()
         self.assertEqual(kyc.status, "rejected")
@@ -1014,7 +1014,7 @@ class KYCResubmitTests(TestCase):
 
     def _kyc(self, phone, **kw):
         from datetime import date
-        from apps.users.models import KYCProfile
+        from apps.verification.models import KYCProfile
         u = get_user_model().objects.create_user(phone_number=phone)
         kyc = KYCProfile.objects.create(
             user=u, given_names="Jane", surname="Doe", id_number=f"ID{u.pk}",
@@ -1072,7 +1072,7 @@ class KYCResubmitAdminTests(TestCase):
 
     def _pending_kyc(self, phone):
         from datetime import date
-        from apps.users.models import KYCProfile
+        from apps.verification.models import KYCProfile
         u = get_user_model().objects.create_user(phone_number=phone)
         return KYCProfile.objects.create(
             user=u, given_names="Jane", surname="Doe", id_number=f"ID{u.pk}",
@@ -1081,7 +1081,7 @@ class KYCResubmitAdminTests(TestCase):
     def test_documents_action_sets_items_and_keeps_status(self):
         from apps.core.models import OutboxEvent
         kyc = self._pending_kyc("254700000951")
-        self.client.post("/admin/users/kycprofile/", {
+        self.client.post("/admin/verification/kycprofile/", {
             "action": "request_kyc_resubmission", "_selected_action": [str(kyc.pk)]})
         kyc.refresh_from_db()
         self.assertEqual(kyc.resubmission_requested, ["id_front", "id_back", "selfie"])

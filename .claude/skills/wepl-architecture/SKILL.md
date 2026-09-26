@@ -38,9 +38,11 @@ apps still in one import cycle (`activity`, `communities`, `contributions`,
 `users`): that set may only shrink. "Imports only core" is not "depends only on
 core": the same file checks the three leaves' **foreign keys** through the model
 registry, because a string FK (`'contributions.Contribution'`) never shows up as an
-import. `FK_BASELINE` names the thirteen edges that still exist (FinancialTransaction
-→ funds, M-Pesa rail records → funds, VerificationCase → KYCProfile and
-StaffAccount); a new one fails the build, and so does a stale entry. Do not add a
+import. `FK_BASELINE` names the twelve edges that still exist (FinancialTransaction
+→ funds, M-Pesa rail records → funds, verification → StaffAccount); a new one
+fails the build, and so does a stale entry. `KYCProfile` itself belongs to
+verification (its table is still `users_kycprofile`); other apps read it
+through `user.kyc`. Do not add a
 string FK to dodge the import test. `apps/controls` and `apps/users` reach
 verification, never the reverse: a decided EDD case releases its held movement and
 closes the customer's request row, and a decided KYC case reaches its applicant,

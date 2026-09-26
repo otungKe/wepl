@@ -6,7 +6,9 @@ from django.utils.html import format_html
 from django.utils.safestring import mark_safe
 from unfold.admin import ModelAdmin as UnfoldModelAdmin
 
-from .models import User, KYCProfile, VerificationRequest, PaymentMethod
+from apps.verification.models import KYCProfile
+
+from .models import User, VerificationRequest, PaymentMethod
 from .notifications import notify_verification_request
 
 

@@ -104,3 +104,10 @@ rejection is `status`/`reviewed_at` plus the case timeline, which names who
 decided. Before this change, a human decision replaced the provider fields with
 the reviewer's label and `verified`/`rejected`, so the ops console's "checks"
 panel could not show that a reviewer had overruled or bypassed the check.
+
+`KYCProfile` followed in the next change: the model class now lives in
+`apps/verification/models.py` with `db_table = 'users_kycprofile'`, moved by a
+state-only migration pair (`verification.0006`, `users.0022`) that also
+relabels its content type, so admin permissions and the groups holding them
+carry over. No rows move. `VerificationCase.kyc` is now an in-app relation, so
+verification's leaf foreign-key baseline loses that entry.

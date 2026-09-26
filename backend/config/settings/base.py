@@ -430,7 +430,7 @@ UNFOLD = {
             {
                 "title": _("Identity & KYC"),
                 "items": [
-                    {"title": _("KYC profiles"), "icon": "badge", "link": reverse_lazy("admin:users_kycprofile_changelist"), "badge": "config.admin_site.kyc_pending_badge"},
+                    {"title": _("KYC profiles"), "icon": "badge", "link": reverse_lazy("admin:verification_kycprofile_changelist"), "badge": "config.admin_site.kyc_pending_badge"},
                     {"title": _("Users"), "icon": "person", "link": reverse_lazy("admin:users_user_changelist")},
                     {"title": _("Role groups"), "icon": "groups", "link": reverse_lazy("admin:auth_group_changelist")},
                 ],

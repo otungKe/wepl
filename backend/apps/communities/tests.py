@@ -321,7 +321,7 @@ class CommunityEnrichmentTests(TestCase):
 
     def setUp(self):
         from datetime import date
-        from apps.users.models import KYCProfile
+        from apps.verification.models import KYCProfile
         self.creator = make_user("254700020001", is_phone_verified=True)
         KYCProfile.objects.create(  # → Tier 1 so contribute() (money path) is allowed
             user=self.creator, status="approved", given_names="T", surname="U",

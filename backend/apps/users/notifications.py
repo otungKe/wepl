@@ -13,7 +13,7 @@ between the decision and the notification does not lose it.
 """
 from apps.core.events import emit
 
-from .models import KYCProfile
+from apps.verification.models import KYCProfile
 
 
 def notify_kyc_decision(kyc):

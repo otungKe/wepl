@@ -27,7 +27,7 @@ class OpsMetricsView(OpsAPIView):
         out = {}
 
         if has_capability(u, "verification.view"):
-            from apps.users.models import KYCProfile
+            from apps.verification.models import KYCProfile
             from apps.verification.models import VerificationCase
             S = VerificationCase.State
             oldest = (KYCProfile.objects.filter(status="pending")
