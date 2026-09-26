@@ -9,7 +9,7 @@ from unfold.admin import ModelAdmin as UnfoldModelAdmin
 from apps.verification.models import KYCProfile, VerificationRequest
 from apps.verification.notifications import notify_verification_request
 
-from .models import User, PaymentMethod
+from .models import User
 
 
 # ─────────────────────────────────────────────────────────────
@@ -320,11 +320,3 @@ class VerificationRequestAdmin(UnfoldModelAdmin):
         # Notify the user when a new request is raised against them.
         if creating and obj.status == VerificationRequest.Status.OPEN:
             notify_verification_request(obj)
-
-
-@admin.register(PaymentMethod)
-class PaymentMethodAdmin(UnfoldModelAdmin):
-    list_display  = ('id', 'user', 'kind', 'display', 'is_default', 'created_at')
-    list_filter   = ('kind', 'is_default', 'created_at')
-    search_fields = ('user__phone_number', 'mpesa_phone', 'label')
-    readonly_fields = ('created_at',)
