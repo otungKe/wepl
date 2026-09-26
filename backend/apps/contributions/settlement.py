@@ -52,6 +52,44 @@ def on_collection_settled(*, payment_type, user, amount, receipt=None,
             mpesa_receipt=receipt, idempotency_key=idem)
 
 
+# What a collection intent's ``purpose`` names → the keyword that carries its id.
+_COLLECTION_SUBJECT = {
+    "contribution": "contribution_id",
+    "welfare": "welfare_fund_id",
+    "shares": "shares_fund_id",
+    "advance_repayment": "advance_id",
+}
+
+
+def on_collection_intent_settled(intent_id: int, receipt: str = "") -> None:
+    """Credit a settled pay-in from its ``PaymentIntent``.
+
+    The intent says what the money is for (``purpose``/``subject_ref``), who paid
+    (``initiated_by``) and how much, so nothing here reads the rail record. The
+    idempotency seed is the intent's provider ref — the same checkout id the
+    rail-record path used — so a pay-in credited before this path existed is
+    not credited again. *receipt* comes from the callback rather than the intent,
+    which blanks a receipt it has seen before; keys built from it stay the same.
+    """
+    from apps.payments.models import PaymentIntent
+
+    intent = PaymentIntent.objects.select_related("initiated_by").get(pk=intent_id)
+    field = _COLLECTION_SUBJECT.get(intent.purpose)
+    if field is None or not intent.subject_ref:
+        raise ValueError(
+            f"PaymentIntent {intent_id} does not say what it is for "
+            f"(purpose={intent.purpose!r}, subject_ref={intent.subject_ref!r})")
+    if intent.initiated_by is None:
+        raise ValueError(f"PaymentIntent {intent_id} has no payer to credit")
+
+    on_collection_settled(
+        payment_type=intent.purpose, user=intent.initiated_by,
+        amount=intent.amount, receipt=receipt or None,
+        idempotency_seed=intent.provider_ref,
+        **{field: int(intent.subject_ref)},
+    )
+
+
 # ── Settlement-target registry (ADR-0030 Slice B) ─────────────────────────────
 # A settled payout has to reach *its* domain object. That routing used to be a
 # hardcoded if/elif over ``ft.context_type`` living here, which meant the

@@ -8,6 +8,11 @@ that decide it (ADR-0033).
 
 ``process_stk_sync`` is the synchronous path the callback endpoint takes;
 ``process_stk_payment`` is the retryable Celery fallback behind it.
+
+Both are now the *legacy* path: a pay-in whose PaymentIntent records what it is
+for settles through the ``payment.settled`` event instead (ADR-0030). These
+stay only for STK requests whose intent is blank, and go in the deploy that
+drops ``MpesaSTKRequest``'s foreign keys into contributions.
 """
 import logging
 

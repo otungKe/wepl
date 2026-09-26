@@ -15,6 +15,8 @@ import re
 from dataclasses import dataclass
 from decimal import Decimal
 
+from django.db import transaction
+
 logger = logging.getLogger(__name__)
 
 # Canonical Kenyan MSISDN after normalisation: 2547XXXXXXXX / 2541XXXXXXXX.
@@ -63,12 +65,8 @@ def start_collection(
     Raises ``CollectionUnavailable`` when the provider call itself fails; returns
     an unaccepted ``CollectionStart`` when the provider answers and refuses.
     """
-    from apps.mpesa.models import MpesaSTKRequest
-    from apps.mpesa.services import normalize_msisdn
     from apps.ledger.money import Money
-    from .models import PaymentIntent
     from .providers.registry import get_provider
-    from .services import PaymentService
 
     try:
         result = get_provider().initiate_collection(
@@ -87,6 +85,36 @@ def start_collection(
             error=result.raw.get("errorMessage", "STK push failed"),
         )
 
+    # The intent is what settles the pay-in now (``purpose``/``subject_ref`` are
+    # read back when the callback lands), so it is written with the rail record
+    # in one transaction rather than best-effort afterwards: a pay-in with a
+    # rail record and no intent would have nowhere to route its money.
+    subject_id = {
+        "welfare": welfare_fund_id,
+        "shares": shares_fund_id,
+        "advance_repayment": advance_id,
+    }.get(payment_type, contribution_id)
+
+    with transaction.atomic():
+        _record_collection(
+            user=user, phone=phone, amount=amount, payment_type=payment_type,
+            contribution_id=contribution_id, welfare_fund_id=welfare_fund_id,
+            shares_fund_id=shares_fund_id, advance_id=advance_id,
+            subject_id=subject_id, result=result,
+        )
+
+    return CollectionStart(accepted=True, provider_ref=result.provider_ref)
+
+
+def _record_collection(*, user, phone, amount, payment_type, contribution_id,
+                       welfare_fund_id, shares_fund_id, advance_id, subject_id,
+                       result) -> None:
+    from apps.mpesa.models import MpesaSTKRequest
+    from apps.mpesa.services import normalize_msisdn
+    from .models import PaymentIntent
+    from .providers.registry import get_provider
+    from .services import PaymentService
+
     MpesaSTKRequest.objects.create(
         user=user,
         payment_type=payment_type,
@@ -100,20 +128,15 @@ def start_collection(
         merchant_request_id=result.raw.get("MerchantRequestID", ""),
     )
 
-    # Provider-agnostic payment aggregate (ADR-0014) — best-effort; never
-    # block the money path on payment bookkeeping.
-    try:
-        PaymentService.record_initiation(
-            provider=get_provider().name,
-            direction=PaymentIntent.Direction.COLLECTION,
-            amount=amount,
-            idempotency_key=f"pi-collect-{result.provider_ref}",
-            provider_ref=result.provider_ref,
-            op_type=payment_type,
-            initiated_by=user,
-            metadata={"payment_type": payment_type},
-        )
-    except Exception:
-        logger.exception("record_initiation (collection) failed for %s", result.provider_ref)
-
-    return CollectionStart(accepted=True, provider_ref=result.provider_ref)
+    PaymentService.record_initiation(
+        provider=get_provider().name,
+        direction=PaymentIntent.Direction.COLLECTION,
+        amount=amount,
+        idempotency_key=f"pi-collect-{result.provider_ref}",
+        provider_ref=result.provider_ref,
+        op_type=payment_type,
+        initiated_by=user,
+        metadata={"payment_type": payment_type},
+        purpose=payment_type,
+        subject_ref=str(subject_id) if subject_id is not None else "",
+    )

@@ -13,9 +13,11 @@ URLs they answer are registered with Safaricom and did not change; see
 
 Behaviour notes carried over from that file:
   - STKCallbackView: idempotent via atomic UPDATE WHERE status='PENDING' — a
-    duplicate callback from Safaricom is a no-op (rows=0 → early return).
-    All domain processing is deferred via on_commit — no silent exception
-    swallowing in the HTTP handler.
+    duplicate callback from Safaricom is a no-op (rows=0 → early return). The
+    claim emits one durable ``payment.settled`` event keyed by the collection's
+    PaymentIntent, delivered straight after commit and by the inline relay
+    otherwise; pay-ins whose intent does not say what it is for fall back to
+    the rail record.
   - B2CResultView: resolves FinancialTransaction by conversation_id, claims the
     transition and emits one durable settlement event (ADR-0028).
   - Callback views: SafaricomIPPermission applied (no-op when
@@ -31,6 +33,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from apps.core.events import emit_event
 from apps.core.exceptions import TransitionError
 from apps.mpesa import tasks as rail_tasks
 from apps.mpesa.models import MpesaSTKRequest, MpesaC2BTransaction
@@ -47,8 +50,10 @@ class STKCallbackView(APIView):
     Idempotency: uses UPDATE WHERE status='PENDING' to atomically claim the callback.
     If rows=0 the callback was already processed — return 200 immediately.
 
-    Processing is deferred to on_commit so that transient failures (DB, downstream
-    service) are retried rather than swallowed in the HTTP handler.
+    A successful claim emits a durable ``payment.settled`` event for the
+    collection's intent in the same transaction; the inline consumer credits the
+    domain, so a transient failure is retried by the relay rather than swallowed
+    in the HTTP handler.
     """
     permission_classes = [SafaricomIPPermission]
 
@@ -104,10 +109,28 @@ class STKCallbackView(APIView):
                     )
                     return Response({"ResultCode": 0, "ResultDesc": "Accepted"})
 
-                stk_id = stk.id
-                transaction.on_commit(
-                    lambda: rail_tasks.process_stk_sync(stk_id)
-                )
+                # What the pay-in is for lives on its PaymentIntent now, and the
+                # credit travels as the same durable ``payment.settled`` event a
+                # payout uses: written in this transaction, so a crash after
+                # the claim can no longer lose the money (ADR-0028/0030).
+                intent = _collection_intent(checkout_id)
+                if intent is not None:
+                    settled = emit_event(
+                        'payment.settled',
+                        aggregate_key=f'intent:{intent.id}',
+                        dedup_key=f'payment.settled:intent={intent.id}',
+                        body={'intent_id': intent.id, 'receipt': receipt or ''},
+                    )
+                    event_id = settled.id
+                    transaction.on_commit(lambda: _deliver_now(event_id))
+                else:
+                    # An STK request from before intents carried a purpose, and
+                    # none the backfill could fill: settle off the rail record,
+                    # as every pay-in did until now.
+                    stk_id = stk.id
+                    transaction.on_commit(
+                        lambda: rail_tasks.process_stk_sync(stk_id)
+                    )
 
         else:
             # ── Failure path ───────────────────────────────────────────────────
@@ -125,6 +148,30 @@ class STKCallbackView(APIView):
                 )
 
         return Response({"ResultCode": 0, "ResultDesc": "Accepted"})
+
+
+def _collection_intent(checkout_id):
+    """The collection intent for *checkout_id*, if it knows what it is for."""
+    from .models import PaymentIntent
+    from .providers.registry import get_provider
+    return (PaymentIntent.objects
+            .filter(provider=get_provider().name, provider_ref=checkout_id,
+                    direction=PaymentIntent.Direction.COLLECTION)
+            .exclude(purpose='')
+            .first())
+
+
+def _deliver_now(event_id):
+    """Run the settled pay-in's consumers straight after commit, so the credit
+    is on the books before Safaricom gets its 200 and the app polls. Best-effort:
+    the event is already durable, and the inline relay delivers it if this
+    fails."""
+    from apps.core.tasks import process_inline_deliveries
+    try:
+        process_inline_deliveries(outbox_event_id=event_id)
+    except Exception:
+        logger.exception("STKCallbackView: immediate delivery of event %s failed; "
+                         "the inline relay will retry it", event_id)
 
 
 class C2BValidationView(APIView):
@@ -236,7 +283,6 @@ class B2CResultView(APIView):
             )
             return Response({"ResultCode": 0, "ResultDesc": "Accepted"})
 
-        from apps.core.events import emit_event
 
         if event.success:
             receipt = event.receipt or ""
