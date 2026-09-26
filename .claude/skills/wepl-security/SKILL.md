@@ -113,7 +113,7 @@ not exempt superusers**. Every ops action writes an `AuditEvent`.
 
 `controls/engine.py::enforce_controls` runs **inside `post_journal`**, so no money
 path can bypass it. It checks account restrictions first
-(`users/services.py::RestrictionService.blocks_money` — an ops freeze/payout
+(`controls/restrictions.py::RestrictionService.blocks_money` — an ops freeze/payout
 block/payin block is a hard DENY), then `LimitRule` velocity/amount rules.
 Reversals and journals with no FT skip member-facing controls, by design.
 

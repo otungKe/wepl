@@ -50,25 +50,6 @@ def notify_resubmission_request(kyc):
     )
 
 
-def notify_verification_request(vreq, *, resolved=False):
-    """Notify the user that a verification request was raised or resolved."""
-    if resolved:
-        emit(
-            'verification_request_resolved',
-            user_id=vreq.user_id,
-            title='Verification updated',
-            message=f'"{vreq.title}" has been resolved.'
-                    + (f' {vreq.review_note}' if vreq.review_note else ''),
-        )
-    else:
-        emit(
-            'verification_request',
-            user_id=vreq.user_id,
-            title='Action needed: verification',
-            message=f'{vreq.title} — open your Verification Center to respond.',
-        )
-
-
 def on_kyc_decided(*, kyc, action: str) -> None:
     """Announce a decided KYC case to its applicant.
 

@@ -189,7 +189,7 @@ def enforce_controls(*, financial_transaction, amount) -> ControlDecision | None
     # Application User Management). A hard DENY at the same chokepoint as limit
     # rules, so no money path can bypass it. Precedes rule evaluation — a frozen
     # account is stopped regardless of limits.
-    from apps.users.services import RestrictionService
+    from .restrictions import RestrictionService
     restriction = RestrictionService.blocks_money(
         financial_transaction.initiated_by_id, direction)
     if restriction is not None:

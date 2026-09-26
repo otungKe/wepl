@@ -1547,7 +1547,7 @@ class AccountRestrictionTests(TestCase):
         r = op_client(self.ops).post(url, {"kind": "payout", "reason": "fraud review"},
                                      format="json", **stepped_up(self.ops))
         self.assertEqual(r.status_code, 201)
-        from apps.users.models import UserRestriction
+        from apps.controls.models import UserRestriction
         self.assertTrue(UserRestriction.objects.filter(
             user=self.member, kind="payout", status="active").exists())
         from apps.audit.models import AuditEvent
@@ -1561,7 +1561,7 @@ class AccountRestrictionTests(TestCase):
         self.assertEqual(r.status_code, 403)
 
     def test_duplicate_active_kind_rejected(self):
-        from apps.users.services import RestrictionService
+        from apps.controls.restrictions import RestrictionService
         RestrictionService.apply(self.member, "freeze", reason="one")
         r = op_client(self.ops).post(
             f"/api/ops/users/{self.member.id}/restrictions/",
@@ -1569,8 +1569,8 @@ class AccountRestrictionTests(TestCase):
         self.assertEqual(r.status_code, 400)
 
     def test_lift_restores_and_audits(self):
-        from apps.users.services import RestrictionService
-        from apps.users.models import UserRestriction
+        from apps.controls.restrictions import RestrictionService
+        from apps.controls.models import UserRestriction
         r = RestrictionService.apply(self.member, "payout", reason="review")
         resp = op_client(self.ops).post(
             f"/api/ops/users/{self.member.id}/restrictions/{r.id}/lift/",
@@ -1582,7 +1582,7 @@ class AccountRestrictionTests(TestCase):
 
     # ── Enforcement: login ───────────────────────────────────────────────────
     def test_login_restriction_blocks_pin_login(self):
-        from apps.users.services import RestrictionService
+        from apps.controls.restrictions import RestrictionService
         login = "/api/users/pin/login/"
         ok = self.client.post(login, {"phone_number": "254700000801", "pin": "123456"}, format="json")
         self.assertEqual(ok.status_code, 200)
@@ -1592,7 +1592,7 @@ class AccountRestrictionTests(TestCase):
 
     def test_login_restriction_revokes_sessions(self):
         from apps.users.models import UserSession
-        from apps.users.services import RestrictionService
+        from apps.controls.restrictions import RestrictionService
         UserSession.objects.create(user=self.member, device_label="phone")
         RestrictionService.apply(self.member, "login", reason="suspended")
         self.assertEqual(UserSession.objects.filter(
@@ -1604,7 +1604,7 @@ class AccountRestrictionTests(TestCase):
         from apps.controls.exceptions import LimitExceeded
         from apps.controls.engine import enforce_controls
         from apps.ledger.models import FinancialTransaction as FT
-        from apps.users.services import RestrictionService
+        from apps.controls.restrictions import RestrictionService
         from decimal import Decimal
 
         ft = FT.objects.create(
@@ -1619,7 +1619,7 @@ class AccountRestrictionTests(TestCase):
 
     # ── Derived status + expiry ──────────────────────────────────────────────
     def test_account_status_precedence(self):
-        from apps.users.services import RestrictionService
+        from apps.controls.restrictions import RestrictionService
         self.assertEqual(RestrictionService.account_status(self.member), "active")
         p = RestrictionService.apply(self.member, "payout", reason="r")
         self.assertEqual(RestrictionService.account_status(self.member), "restricted")
@@ -1629,8 +1629,8 @@ class AccountRestrictionTests(TestCase):
     def test_expired_restriction_is_inactive_and_swept(self):
         from django.utils import timezone
         from datetime import timedelta
-        from apps.users.models import UserRestriction
-        from apps.users.services import RestrictionService
+        from apps.controls.models import UserRestriction
+        from apps.controls.restrictions import RestrictionService
         r = UserRestriction.objects.create(
             user=self.member, kind="payout", reason="temp",
             expires_at=timezone.now() - timedelta(hours=1))
@@ -1642,7 +1642,7 @@ class AccountRestrictionTests(TestCase):
         self.assertEqual(r.status, UserRestriction.Status.EXPIRED)
 
     def test_360_surfaces_status_and_restrictions(self):
-        from apps.users.services import RestrictionService
+        from apps.controls.restrictions import RestrictionService
         RestrictionService.apply(self.member, "payout", reason="review")
         r = op_client(self.sup).get(f"/api/ops/users/{self.member.id}/")
         self.assertEqual(r.status_code, 200)

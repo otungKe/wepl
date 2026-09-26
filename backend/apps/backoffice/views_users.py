@@ -69,7 +69,7 @@ class OpsUser360View(OpsAPIView):
 
     def get(self, request, user_id):
         u = get_object_or_404(User, pk=user_id, is_staff=False)
-        from apps.users.services import RestrictionService
+        from apps.controls.restrictions import RestrictionService
         return Response({
             "identity": self._identity(u),
             "account_status": RestrictionService.account_status(u),
@@ -86,7 +86,7 @@ class OpsUser360View(OpsAPIView):
     @staticmethod
     def _restrictions(u):
         """Active restrictions first, then recent lifted/expired history."""
-        from apps.users.models import UserRestriction
+        from apps.controls.models import UserRestriction
         rows = (UserRestriction.objects.filter(user=u)
                 .order_by("-created_at")[:30])
         return [{
@@ -154,7 +154,7 @@ class OpsUser360View(OpsAPIView):
 
     @staticmethod
     def _verification(u):
-        from apps.users.models import VerificationRequest
+        from apps.verification.models import VerificationRequest
         out = {"kyc_status": u.kyc_status, "case": None, "open_requests": 0}
         kyc = getattr(u, "kyc", None) if u.kyc_status != "not_submitted" else None
         if kyc:
@@ -436,7 +436,7 @@ class OpsUserRestrictionApplyView(OpsAPIView):
     def post(self, request, user_id):
         from django.core.exceptions import ValidationError
         from django.utils.dateparse import parse_datetime
-        from apps.users.services import RestrictionService
+        from apps.controls.restrictions import RestrictionService
 
         u = get_object_or_404(User, pk=user_id, is_staff=False)
         kind = (request.data.get("kind") or "").strip()
@@ -474,8 +474,8 @@ class OpsUserRestrictionLiftView(OpsAPIView):
 
     def post(self, request, user_id, restriction_id):
         from django.core.exceptions import ValidationError
-        from apps.users.models import UserRestriction
-        from apps.users.services import RestrictionService
+        from apps.controls.models import UserRestriction
+        from apps.controls.restrictions import RestrictionService
 
         r = get_object_or_404(UserRestriction, pk=restriction_id, user_id=user_id)
         try:

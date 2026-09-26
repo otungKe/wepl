@@ -248,6 +248,73 @@ class VerificationCase(models.Model):
         return self.state in (self.State.APPROVED, self.State.REJECTED)
 
 
+class VerificationRequest(models.Model):
+    """A follow-up item the compliance team raises against a user — before OR
+    after KYC approval. Backs the mobile Verification Center's ongoing
+    "Requests & documents" section: supporting documents for a transaction,
+    proof of address, a KYC clarification, or feedback on a submitted item.
+
+    Raised by staff (admin), answered by the user (a note and/or a document),
+    then resolved by staff. The user is notified on both transitions via the
+    durable event bus.
+    """
+
+    class Kind(models.TextChoices):
+        TRANSACTION_DOCS = 'transaction_docs', 'Transaction supporting documents'
+        ADDRESS_PROOF    = 'address_proof',    'Proof of address'
+        KYC_SUPPLEMENT   = 'kyc_supplement',   'Additional KYC information'
+        CLARIFICATION    = 'clarification',    'Clarification'
+        OTHER            = 'other',            'Other'
+
+    class Status(models.TextChoices):
+        OPEN      = 'open',      'Awaiting your response'
+        SUBMITTED = 'submitted', 'Submitted — under review'
+        RESOLVED  = 'resolved',  'Resolved'
+
+    user   = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.CASCADE,
+        related_name='verification_requests',
+    )
+    # When set, this request is the customer-facing projection of a
+    # verification case (EDD): the response is pinned onto the case as a
+    # versioned CaseDocument and the case decides the outcome.
+    case = models.ForeignKey(
+        VerificationCase, null=True, blank=True,
+        on_delete=models.SET_NULL, related_name='customer_requests',
+    )
+    kind   = models.CharField(max_length=24, choices=Kind.choices, default=Kind.OTHER)
+    title  = models.CharField(max_length=140)
+    detail = models.TextField(help_text='What the user is being asked to provide.')
+    status = models.CharField(max_length=12, choices=Status.choices, default=Status.OPEN)
+
+    # The user's answer.
+    response_note = models.TextField(blank=True, default='')
+    document      = models.FileField(upload_to='verification/requests/', blank=True, null=True)
+
+    # Staff feedback shown to the user (e.g. why it was resolved, or what's still needed).
+    review_note   = models.TextField(blank=True, default='')
+
+    created_by   = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='verification_requests_created',
+    )
+    created_at   = models.DateTimeField(auto_now_add=True)
+    responded_at = models.DateTimeField(null=True, blank=True)
+    resolved_at  = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        # Owned by verification since the boundary audit (step 7); the table
+        # kept its original name, so the move changed no data.
+        db_table = 'users_verificationrequest'
+        ordering = ['-created_at']
+        indexes = [
+            models.Index(fields=['user', 'status'], name='verifreq_user_status_idx'),
+        ]
+
+    def __str__(self):
+        return f"VerificationRequest({self.user_id}, {self.kind}, {self.status})"
+
+
 class CaseEvent(models.Model):
     """One immutable entry in a case's timeline — the source of truth.
 

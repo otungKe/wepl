@@ -80,7 +80,7 @@ def expire_restrictions():
     Reads already treat a past-expiry restriction as inactive, so enforcement is
     correct without this; the sweep keeps the stored state honest (and fires the
     lifecycle transition) for the ops directory. Runs hourly via Celery Beat."""
-    from apps.users.services import RestrictionService
+    from apps.controls.restrictions import RestrictionService
     n = RestrictionService.expire_due()
     if n:
         logger.info("expire_restrictions: %d restriction(s) expired.", n)

@@ -413,7 +413,7 @@ class VerificationRequestTests(TestCase):
         self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {tokens['access']}")
 
     def _make(self, user, **kw):
-        from apps.users.models import VerificationRequest
+        from apps.verification.models import VerificationRequest
         return VerificationRequest.objects.create(
             user=user, title=kw.pop("title", "Proof of address"),
             detail=kw.pop("detail", "Please upload a utility bill."), **kw)
