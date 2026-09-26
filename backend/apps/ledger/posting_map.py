@@ -256,3 +256,26 @@ def advance_repayment_lines(*, member, advance_id, pool_id, principal: Money,
         lines.append(Line(coa.retained_surplus_account(fund_id=pool_id), CREDIT,
                           interest.amount, note="interest to pool surplus"))
     return lines
+
+
+def advance_setoff_lines(*, member, advance_id, pool_id, principal: Money,
+                         interest: Money | None = None) -> list[Line]:
+    """A leaving member's unpaid advance is set off against their share
+    (ADR-0027 §0.3–0.4): their share in the lending pool is debited with what
+    they owe, clearing the receivable and crediting any interest to the pool's
+    retained surplus, exactly as a cash repayment would. No cash moves — the
+    member is paid out the rest of their share separately."""
+    interest = interest or Money.zero(principal.currency)
+    if principal.is_negative or interest.is_negative:
+        raise ValueError("set-off principal/interest must be non-negative")
+    total = principal + interest
+    _require_positive(total, "set-off total")
+    share = coa.member_fund_account(user=member, fund_type='contribution', fund_id=pool_id)
+    ar = coa.member_receivable_account(user=member, fund_id=advance_id)
+    lines = [Line(share, DEBIT, total.amount, note="set off against share")]
+    if principal.is_positive:
+        lines.append(Line(ar, CREDIT, principal.amount, note="clear receivable"))
+    if interest.is_positive:
+        lines.append(Line(coa.retained_surplus_account(fund_id=pool_id), CREDIT,
+                          interest.amount, note="interest to pool surplus"))
+    return lines

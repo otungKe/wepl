@@ -13,7 +13,7 @@ from rest_framework.test import APIRequestFactory
 
 from apps.core.exceptions import custom_exception_handler
 from apps.users.exceptions import KYCRequired
-from apps.users.models import KYCProfile
+from apps.verification.models import KYCProfile
 from apps.users.permissions import RequiresTier1
 from apps.users.tiers import AccessPolicy
 
@@ -65,13 +65,16 @@ class AccessPolicyGateTests(TestCase):
         u = make_user("254700000021", kyc="approved")
         AccessPolicy.require_tier1(u)  # must not raise
 
-    def test_staff_and_superuser_bypass(self):
+    def test_staff_and_superuser_do_not_bypass(self):
+        # Django flags grant admin access, not money access without verified KYC.
         staff = make_user("254700000022")
         staff.is_staff = True
-        AccessPolicy.require_tier1(staff)  # must not raise
+        with self.assertRaises(KYCRequired):
+            AccessPolicy.require_tier1(staff)
         su = make_user("254700000023")
         su.is_superuser = True
-        AccessPolicy.require_tier1(su)  # must not raise
+        with self.assertRaises(KYCRequired):
+            AccessPolicy.require_tier1(su)
 
     def test_custom_message_carried_through(self):
         u = make_user("254700000024")

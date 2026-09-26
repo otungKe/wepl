@@ -13,9 +13,14 @@ settlement can be delivered more than once. It is: ``on_payout_settled`` /
 ``on_payout_failed`` tolerate re-application (see apps/contributions/settlement.py)
 and ``reverse_financial_transaction`` is a no-op once the FT is already reversed.
 
-Live: three discovery sites emit these events — the M-Pesa B2C callback
-(``apps/payments/views_mpesa.py``), the stale-payout sweep (``apps/ledger/tasks.py``) and
-the operator override (``apps/payments/ops.py``).
+Live: three discovery sites emit these events for payouts — the M-Pesa B2C
+callback (``apps/payments/views_mpesa.py``), the stale-payout sweep
+(``apps/payments/payouts.py``) and the operator override (``apps/payments/ops.py``).
+
+Pay-ins use the same ``payment.settled`` event, emitted by the STK callback and
+keyed by the collection's ``PaymentIntent`` rather than an FT: a pay-in has no
+FT until it is credited, and the intent's ``purpose``/``subject_ref`` say what
+to credit. The body carries ``intent_id`` instead of ``ft_id``.
 """
 import logging
 
@@ -28,13 +33,20 @@ FAILED = "payment.failed"
 
 def handle_settlement(event) -> None:
     """Propagate one settlement fact. ``event.payload`` carries ``ft_id`` plus
-    ``receipt`` (settled) or ``reason`` (failed)."""
+    ``receipt`` (settled) or ``reason`` (failed) for a payout, or ``intent_id``
+    plus ``receipt`` for a settled pay-in."""
     from apps.ledger.models import FinancialTransaction
     from apps.ledger.posting import reverse_financial_transaction
 
-    from .settlement import on_payout_failed, on_payout_settled
+    from .settlement import (
+        on_collection_intent_settled, on_payout_failed, on_payout_settled,
+    )
 
     body = event.payload or {}
+    if event.event_type == SETTLED and body.get("intent_id") is not None:
+        on_collection_intent_settled(body["intent_id"], body.get("receipt") or "")
+        return
+
     ft_id = body.get("ft_id")
     if ft_id is None:
         raise ValueError(f"settlement event {event.id} missing ft_id")

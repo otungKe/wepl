@@ -165,6 +165,41 @@ class PostingMapTests(TestCase):
         self.assertEqual(account_balance(coa.retained_surplus_account(fund_id=1)), Decimal("0.0000"))
         self.assertTrue(trial_balance()["balanced"])
 
+    def test_advance_setoff_charges_the_share_not_the_float(self):
+        self._post("so-c", pm.Op.CONTRIBUTION, pm.contribution_lines(
+            member=self.bob, fund_type="contribution", fund_id=5, gross=Money("1000")))
+        self._post("so-d", pm.Op.ADVANCE_DISBURSEMENT, pm.advance_disbursement_lines(
+            member=self.bob, advance_id=61, principal=Money("400")))
+        self._post("so-s", pm.Op.ADVANCE_REPAYMENT, pm.advance_setoff_lines(
+            member=self.bob, advance_id=61, pool_id=5,
+            principal=Money("400"), interest=Money("40")))
+        share = coa.member_fund_account(user=self.bob, fund_type="contribution", fund_id=5)
+        self.assertEqual(account_balance(share), Decimal("560.0000"))
+        self.assertEqual(account_balance(
+            coa.member_receivable_account(user=self.bob, fund_id=61)), Decimal("0.0000"))
+        self.assertEqual(account_balance(coa.retained_surplus_account(fund_id=5)), Decimal("40.0000"))
+        self.assertEqual(account_balance(self.float), Decimal("600.0000"))   # no cash moved
+        self.assertTrue(trial_balance()["balanced"])
+
+    def test_advance_setoff_rejects_nothing_owed_or_negatives(self):
+        with self.assertRaises(ValueError):
+            pm.advance_setoff_lines(member=self.bob, advance_id=1, pool_id=1,
+                                    principal=Money("0"))
+        with self.assertRaises(ValueError):
+            pm.advance_setoff_lines(member=self.bob, advance_id=1, pool_id=1,
+                                    principal=Money("10"), interest=Money("-1"))
+
+    def test_advances_outstanding_sums_open_receivables(self):
+        from apps.ledger.balances import advances_outstanding
+        self._post("ao1", pm.Op.ADVANCE_DISBURSEMENT, pm.advance_disbursement_lines(
+            member=self.bob, advance_id=71, principal=Money("300")))
+        self._post("ao2", pm.Op.ADVANCE_DISBURSEMENT, pm.advance_disbursement_lines(
+            member=self.alice, advance_id=72, principal=Money("200")))
+        self._post("ao3", pm.Op.ADVANCE_REPAYMENT, pm.advance_repayment_lines(
+            member=self.bob, advance_id=71, pool_id=1, principal=Money("100")))
+        self.assertEqual(advances_outstanding([71, 72]), Decimal("400.0000"))
+        self.assertEqual(advances_outstanding([]), Decimal("0"))
+
     def test_balance_helper_variants(self):
         from apps.ledger.balances import (
             member_fund_balance, user_fund_balances, fund_member_balances, fund_balances,

@@ -1,4 +1,5 @@
 from ._common import *  # shared imports + helpers (ADR-0013 split)
+from .contribution import _share_allocations
 
 
 class StandingOrderService:
@@ -64,9 +65,10 @@ class StandingOrderService:
         contribution = Contribution.objects.select_for_update().get(
             id=order.contribution_id
         )
-        if fund_balance('contribution', contribution.id) < order.amount:
+        if pool_cash(contribution.id) < order.amount:
             raise ValidationError("Insufficient funds in the contribution pool.")
 
+        recipient_member = None
         if order.payee_type == 'fixed':
             recipient_phone = order.fixed_payee_phone
         else:
@@ -77,6 +79,10 @@ class StandingOrderService:
             next_slot.received_at  = timezone.now()
             next_slot.save(update_fields=['has_received', 'received_at'])
             recipient_phone = next_slot.phone_number
+            recipient_member = (ContributionParticipant.objects
+                                .filter(contribution=contribution,
+                                        user__phone_number=recipient_phone)
+                                .select_related('user').first())
 
         # ── Reserve funds ─────────────────────────────────────────────────────
         now = timezone.now()
@@ -104,14 +110,28 @@ class StandingOrderService:
         ):
             return order  # already in flight
 
-        # Double-entry posting (P0-05): payout draws down the owner's pool share.
+        # Double-entry posting (P0-05). The pool is the group's (ADR-0027 §0.1),
+        # so whoever runs the order is never charged for it. A rotating order
+        # pays a member their turn, drawn from that member's share like a
+        # ROSCA turn; a fixed payee (rent, a supplier) is a group expense,
+        # split across the funded shares. A rotating slot whose phone no
+        # longer matches a participant falls back to the group split.
+        if recipient_member is not None:
+            lines = _pm.disbursement_lines(
+                member=recipient_member.user, fund_type='contribution',
+                fund_id=contribution.id, amount=Money(str(order.amount)),
+            )
+        else:
+            lines = _pm.pool_expense_lines(
+                fund_type='contribution', fund_id=contribution.id,
+                allocations=_share_allocations(contribution.id, order.amount),
+            )
         post_journal(
             idempotency_key=f"je-{idem_key}",
-            op_type=_pm.Op.STANDING_ORDER,
-            lines=_pm.disbursement_lines(
-                member=user, fund_type='contribution',
-                fund_id=contribution.id, amount=Money(str(order.amount)),
-            ),
+            # A split is recorded as the group expense it is, so history does
+            # not read each member's part as money paid to them.
+            op_type=_pm.Op.STANDING_ORDER if recipient_member else _pm.Op.POOL_EXPENSE,
+            lines=lines,
             narration=f"Standing order payout to {recipient_phone}",
             financial_transaction=ft,
             created_by=user,

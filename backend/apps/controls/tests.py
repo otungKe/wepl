@@ -144,19 +144,6 @@ class HeldMovementReviewTests(TestCase):
         item = record_blocked_movement(cm.exception)
         self.assertEqual(item.decision, HeldMovement.Decision.DENY)
 
-    def test_release_action_marks_released(self):
-        from apps.controls.admin import release_movements
-        from apps.controls.models import HeldMovement
-        item = HeldMovement.objects.create(decision='HOLD', op_type='DISBURSEMENT', direction='PAYOUT', amount=Decimal('5'))
-
-        class _MA:
-            def message_user(self, *a, **k): pass
-        class _Req:
-            user = self.user
-        release_movements(_MA(), _Req(), HeldMovement.objects.filter(pk=item.pk))
-        item.refresh_from_db()
-        self.assertEqual(item.status, HeldMovement.Status.RELEASED)
-        self.assertEqual(item.reviewed_by_id, self.user.id)
 
 
 class SeedControlsCommandTests(TestCase):

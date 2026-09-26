@@ -58,10 +58,10 @@ class AccessPolicy:
     def require_tier1(user, message=None) -> None:
         """**Unconditional** Tier-1 gate — always enforces, ignoring the feature
         flag. Used by the pre-existing money paths (contribute / request_advance),
-        which were already KYC-gated before the tier work. Staff/superusers bypass.
+        which were already KYC-gated before the tier work. No Django flag bypasses
+        it: ``is_staff``/``is_superuser`` grant Django-admin access, not the right
+        to move money without verified identity.
         """
-        if user and (getattr(user, 'is_superuser', False) or getattr(user, 'is_staff', False)):
-            return
         if AccessPolicy.is_tier1(user):
             return
         raise KYCRequired(message)

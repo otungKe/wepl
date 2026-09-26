@@ -16,7 +16,6 @@ from decimal import Decimal
 from django.db import transaction
 from django.db.models import Case, DecimalField, F, Sum, When
 
-from . import coa
 from .models import Account, AccountBalance, JournalLine
 
 
@@ -132,6 +131,15 @@ def economic_interest(party, fund_type: str, fund_id: int) -> Decimal:
     return member_fund_balance(party, fund_type, fund_id)
 
 
+def holds_any_balance(user) -> bool:
+    """True if any account ``user`` owns has a non-zero balance: a share of a
+    pool, a sub-ledger claim, or a receivable. Read-only (the customer
+    lifecycle asks this before an account may close)."""
+    return AccountBalance.objects.filter(account__owner=user).annotate(
+        net=F('credit_total') - F('debit_total'),
+    ).exclude(net=0).exists()
+
+
 def user_fund_balances(user, fund_type: str, fund_ids=None) -> dict:
     """{fund_id: signed balance} for one user across many funds, in one query.
 
@@ -149,15 +157,19 @@ def user_fund_balances(user, fund_type: str, fund_ids=None) -> dict:
 
 
 def advance_repaid_totals(advance_ids) -> dict:
-    """{advance_id: cash received} for many advances, in one query.
+    """{advance_id: amount repaid} for many advances, in one query.
 
     An advance's repayments are the only journals that both carry its context
-    and post under ``ADVANCE_REPAYMENT``; each one debits the float with the
-    whole amount received (``posting_map.advance_repayment_lines``), so that leg
-    *is* the figure the old ``amount_repaid`` column accumulated.
+    and post under ``ADVANCE_REPAYMENT``. Each one credits the receivable with
+    the principal it clears and the pool's retained surplus with the interest
+    (``posting_map.advance_repayment_lines``); those two credits are what the
+    old ``amount_repaid`` column accumulated. Reading the credit side rather
+    than the float leg also counts a set-off against the borrower's share when
+    they leave the group (``posting_map.advance_setoff_lines``, ADR-0027 §0.4),
+    which clears the debt without any cash arriving.
 
-    Signed (debit − credit) rather than a plain sum of debits, so a reversal of a
-    repayment takes the money back off instead of being ignored.
+    Signed (credit − debit) rather than a plain sum of credits, so a reversal of
+    a repayment takes the money back off instead of being ignored.
 
     The context link goes through FinancialTransaction because that is the only
     place a journal records which domain object it belongs to. When ADR-0030
@@ -173,7 +185,7 @@ def advance_repaid_totals(advance_ids) -> dict:
             journal__op_type='ADVANCE_REPAYMENT',
             journal__financial_transaction__context_type='emergency_advance',
             journal__financial_transaction__context_id__in=ids,
-            account__code=coa.MPESA_FLOAT,
+            account__fund_type__in=('advance', 'retained'),
         )
         .values('journal__financial_transaction__context_id')
         .annotate(
@@ -185,14 +197,31 @@ def advance_repaid_totals(advance_ids) -> dict:
     )
     return {
         row['journal__financial_transaction__context_id']:
-            (row['d'] or Decimal('0')) - (row['c'] or Decimal('0'))
+            (row['c'] or Decimal('0')) - (row['d'] or Decimal('0'))
         for row in rows
     }
 
 
 def advance_repaid(advance_id: int) -> Decimal:
-    """Cash received against one advance (0 if none). See advance_repaid_totals."""
+    """Amount repaid on one advance (0 if none). See advance_repaid_totals."""
     return advance_repaid_totals([advance_id]).get(advance_id, Decimal('0'))
+
+
+def advances_outstanding(advance_ids) -> Decimal:
+    """Principal still owed across many advances: the summed balance of their
+    receivable sub-ledgers (ASSET, debit-normal; ``coa.member_receivable_account``).
+
+    A pool that lends to a member still owes every member their share, but the
+    lent cash has left the float; this is the part of the pool that is out on
+    loan rather than on hand (ADR-0027 §0.3).
+    """
+    ids = list(advance_ids)
+    if not ids:
+        return Decimal('0')
+    agg = AccountBalance.objects.filter(
+        account__fund_type='advance', account__fund_id__in=ids,
+    ).aggregate(d=Sum('debit_total'), c=Sum('credit_total'))
+    return (agg['d'] or Decimal('0')) - (agg['c'] or Decimal('0'))
 
 
 def fund_member_balances(fund_type: str, fund_id: int) -> dict:

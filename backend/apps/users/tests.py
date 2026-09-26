@@ -150,7 +150,7 @@ class KYCVerificationEmailTaskTests(TestCase):
         from unittest.mock import patch
 
         verify_url = "https://wepl-api.onrender.com/api/users/kyc/verify-email/?token=xyz"
-        with patch("apps.users.tasks.requests.post") as post:
+        with patch("apps.core.messaging.email.requests.post") as post:
             post.return_value.raise_for_status.return_value = None
             send_kyc_verification_email.apply(kwargs={
                 "email": "tester@example.com",
@@ -235,7 +235,7 @@ class AdminDashboardTests(TestCase):
     def test_key_changelists_and_forms_render(self):
         for url in [
             "/admin/users/user/",
-            "/admin/users/kycprofile/",
+            "/admin/verification/kycprofile/",
             "/admin/users/user/add/",
         ]:
             self.assertEqual(self.client.get(url).status_code, 200, url)
@@ -413,7 +413,7 @@ class VerificationRequestTests(TestCase):
         self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {tokens['access']}")
 
     def _make(self, user, **kw):
-        from apps.users.models import VerificationRequest
+        from apps.verification.models import VerificationRequest
         return VerificationRequest.objects.create(
             user=user, title=kw.pop("title", "Proof of address"),
             detail=kw.pop("detail", "Please upload a utility bill."), **kw)
@@ -569,39 +569,39 @@ class DataExportTests(TestCase):
 
 
 class IdentityProviderPortTests(TestCase):
-    """The IdentityVerificationProvider port and its adapters (apps.users.identity)."""
+    """The IdentityVerificationProvider port and its adapters (apps.verification.identity)."""
 
     def _subject(self):
-        from apps.users.identity import IdentitySubject
+        from apps.verification.identity import IdentitySubject
         return IdentitySubject(
             id_number="12345678", given_names="Jane", surname="Doe",
             date_of_birth="1990-01-01",
         )
 
     def test_manual_provider_routes_to_review(self):
-        from apps.users.identity import MANUAL_REVIEW
-        from apps.users.identity.manual import ManualProvider
+        from apps.verification.identity import MANUAL_REVIEW
+        from apps.verification.identity.manual import ManualProvider
         r = ManualProvider().verify_identity(self._subject())
         self.assertEqual(r.state, MANUAL_REVIEW)
         self.assertEqual(r.provider, "manual")
         self.assertTrue(r.is_terminal)
 
     def test_fake_provider_verifies_by_default(self):
-        from apps.users.identity import VERIFIED
-        from apps.users.identity.fake import FakeProvider
+        from apps.verification.identity import VERIFIED
+        from apps.verification.identity.fake import FakeProvider
         r = FakeProvider().verify_identity(self._subject())
         self.assertEqual(r.state, VERIFIED)
         self.assertEqual(r.provider, "fake")
 
     def test_fake_provider_can_reject(self):
-        from apps.users.identity import REJECTED
-        from apps.users.identity.fake import FakeProvider
+        from apps.verification.identity import REJECTED
+        from apps.verification.identity.fake import FakeProvider
         r = FakeProvider(outcome=REJECTED).verify_identity(self._subject())
         self.assertEqual(r.state, REJECTED)
 
     def test_registry_override_wins(self):
-        from apps.users.identity.manual import ManualProvider
-        from apps.users.identity.registry import get_provider, use_provider
+        from apps.verification.identity.manual import ManualProvider
+        from apps.verification.identity.registry import get_provider, use_provider
         try:
             use_provider(ManualProvider())
             self.assertEqual(get_provider().name, "manual")
@@ -615,7 +615,7 @@ class IdentityCheckApplyTests(TestCase):
 
     def _make_kyc(self, phone):
         from datetime import date
-        from apps.users.models import KYCProfile
+        from apps.verification.models import KYCProfile
         user = get_user_model().objects.create_user(phone_number=phone)
         kyc = KYCProfile.objects.create(
             user=user, given_names="Jane", surname="Doe", id_number=f"ID{user.pk}",
@@ -625,8 +625,8 @@ class IdentityCheckApplyTests(TestCase):
 
     def test_verified_approves_and_notifies(self):
         from apps.core.models import OutboxEvent
-        from apps.users.identity.fake import FakeProvider
-        from apps.users.identity.registry import use_provider
+        from apps.verification.identity.fake import FakeProvider
+        from apps.verification.identity.registry import use_provider
         from apps.users.views.kyc import _run_identity_check
         user, kyc = self._make_kyc("254700000701")
         try:
@@ -644,8 +644,8 @@ class IdentityCheckApplyTests(TestCase):
 
     def test_manual_leaves_pending_without_terminal_notification(self):
         from apps.core.models import OutboxEvent
-        from apps.users.identity.manual import ManualProvider
-        from apps.users.identity.registry import use_provider
+        from apps.verification.identity.manual import ManualProvider
+        from apps.verification.identity.registry import use_provider
         from apps.users.views.kyc import _run_identity_check
         user, kyc = self._make_kyc("254700000702")
         try:
@@ -661,9 +661,9 @@ class IdentityCheckApplyTests(TestCase):
 
     def test_rejected_sets_reason_and_notifies(self):
         from apps.core.models import OutboxEvent
-        from apps.users.identity import REJECTED
-        from apps.users.identity.fake import FakeProvider
-        from apps.users.identity.registry import use_provider
+        from apps.verification.identity import REJECTED
+        from apps.verification.identity.fake import FakeProvider
+        from apps.verification.identity.registry import use_provider
         from apps.users.views.kyc import _run_identity_check
         user, kyc = self._make_kyc("254700000703")
         try:
@@ -694,7 +694,7 @@ class KenyanIdParserTests(SimpleTestCase):
     """Pure text parser/detector — no OCR binary needed."""
 
     def test_detects_and_extracts_fields(self):
-        from apps.users.ocr.kenyan_id import parse_kenyan_id
+        from apps.verification.ocr.kenyan_id import parse_kenyan_id
         scan = parse_kenyan_id(_SAMPLE_ID_TEXT)
         self.assertTrue(scan.is_kenyan_id)
         self.assertGreaterEqual(scan.marker_hits, 2)
@@ -702,12 +702,12 @@ class KenyanIdParserTests(SimpleTestCase):
         self.assertEqual(scan.date_of_birth, "1990-01-01")
 
     def test_non_id_text_not_detected(self):
-        from apps.users.ocr.kenyan_id import parse_kenyan_id
+        from apps.verification.ocr.kenyan_id import parse_kenyan_id
         scan = parse_kenyan_id("Grocery receipt total 450 thank you")
         self.assertFalse(scan.is_kenyan_id)
 
     def test_cross_check_flags_matches_and_mismatch(self):
-        from apps.users.ocr.kenyan_id import cross_check, parse_kenyan_id
+        from apps.verification.ocr.kenyan_id import cross_check, parse_kenyan_id
         scan = parse_kenyan_id(_SAMPLE_ID_TEXT)
         ok = cross_check(scan, id_number="12345678", date_of_birth="1990-01-01")
         self.assertTrue(ok["id_number_match"])
@@ -720,8 +720,8 @@ class KenyanIdParserTests(SimpleTestCase):
 
 class OcrEngineTests(TestCase):
     def test_run_id_ocr_with_fake_engine(self):
-        from apps.users.ocr import run_id_ocr
-        from apps.users.ocr.engine import FakeOcrEngine, use_engine
+        from apps.verification.ocr import run_id_ocr
+        from apps.verification.ocr.engine import FakeOcrEngine, use_engine
         try:
             use_engine(FakeOcrEngine(_SAMPLE_ID_TEXT))
             r = run_id_ocr(b"fake-bytes", id_number="12345678", date_of_birth="1990-01-01")
@@ -732,13 +732,13 @@ class OcrEngineTests(TestCase):
         self.assertEqual(r["engine"], "fake")
 
     def test_empty_image_degrades(self):
-        from apps.users.ocr import run_id_ocr
+        from apps.verification.ocr import run_id_ocr
         r = run_id_ocr(b"")
         self.assertFalse(r["detected"])
 
     def test_null_engine_when_no_backend(self):
-        from apps.users.ocr import run_id_ocr
-        from apps.users.ocr.engine import NullOcrEngine, use_engine
+        from apps.verification.ocr import run_id_ocr
+        from apps.verification.ocr.engine import NullOcrEngine, use_engine
         try:
             use_engine(NullOcrEngine())
             r = run_id_ocr(b"fake-bytes", id_number="12345678")
@@ -753,10 +753,10 @@ class IdentityCheckOcrIntegrationTests(TestCase):
     def test_ocr_detail_recorded(self):
         from datetime import date
         from django.core.files.uploadedfile import SimpleUploadedFile
-        from apps.users.models import KYCProfile
-        from apps.users.identity.manual import ManualProvider
-        from apps.users.identity.registry import use_provider
-        from apps.users.ocr.engine import FakeOcrEngine, use_engine
+        from apps.verification.models import KYCProfile
+        from apps.verification.identity.manual import ManualProvider
+        from apps.verification.identity.registry import use_provider
+        from apps.verification.ocr.engine import FakeOcrEngine, use_engine
         from apps.users.views.kyc import _run_identity_check
 
         user = get_user_model().objects.create_user(phone_number="254700000801")
@@ -838,12 +838,12 @@ class KYCAdminRenderTests(TestCase):
     def _summary(self, obj):
         from django.contrib.admin.sites import site
         from apps.users.admin import KYCProfileAdmin
-        from apps.users.models import KYCProfile
+        from apps.verification.models import KYCProfile
         return KYCProfileAdmin(KYCProfile, site).verification_summary(obj)
 
     def test_renders_for_all_detail_shapes(self):
         from django.utils import timezone
-        from apps.users.models import KYCProfile
+        from apps.verification.models import KYCProfile
         # OCR present with a mismatch
         self.assertIn("MISMATCH", self._summary(KYCProfile(
             verification_provider="manual", verification_state="manual_review",
@@ -863,7 +863,7 @@ class KYCAdminRenderTests(TestCase):
     def test_change_page_renders_end_to_end(self):
         from datetime import date
         from django.utils import timezone
-        from apps.users.models import KYCProfile
+        from apps.verification.models import KYCProfile
         staff = get_user_model().objects.create_user(phone_number="254700000909")
         staff.is_staff = staff.is_superuser = True
         staff.save()
@@ -878,7 +878,7 @@ class KYCAdminRenderTests(TestCase):
                                          "dob_match": None, "engine": "tesseract"}},
         )
         self.client.force_login(staff)
-        resp = self.client.get(f"/admin/users/kycprofile/{kyc.id}/change/")
+        resp = self.client.get(f"/admin/verification/kycprofile/{kyc.id}/change/")
         self.assertEqual(resp.status_code, 200, msg=resp.content[:300])
 
 
@@ -921,7 +921,7 @@ class KYCResubmissionActionTests(TestCase):
 
     def _make_kyc(self, phone, status):
         from datetime import date
-        from apps.users.models import KYCProfile
+        from apps.verification.models import KYCProfile
         u = get_user_model().objects.create_user(phone_number=phone)
         return KYCProfile.objects.create(
             user=u, given_names="Jane", surname="Doe", id_number=f"ID{u.pk}",
@@ -931,7 +931,7 @@ class KYCResubmissionActionTests(TestCase):
     def test_action_requests_documents_from_pending_user(self):
         from apps.core.models import OutboxEvent
         kyc = self._make_kyc("254700000921", "pending")
-        resp = self.client.post("/admin/users/kycprofile/", {
+        resp = self.client.post("/admin/verification/kycprofile/", {
             "action": "request_kyc_resubmission",
             "_selected_action": [str(kyc.pk)],
         }, follow=True)
@@ -948,7 +948,7 @@ class KYCResubmissionActionTests(TestCase):
         the applicant is never notified."""
         from apps.core.models import OutboxEvent
         kyc = self._make_kyc("254700000922", "approved")
-        resp = self.client.post("/admin/users/kycprofile/", {
+        resp = self.client.post("/admin/verification/kycprofile/", {
             "action": "request_kyc_resubmission",
             "_selected_action": [str(kyc.pk)],
         }, follow=True)
@@ -972,7 +972,7 @@ class KYCManualDecisionStampTests(TestCase):
 
     def _pending_kyc(self, phone):
         from datetime import date
-        from apps.users.models import KYCProfile
+        from apps.verification.models import KYCProfile
         u = get_user_model().objects.create_user(phone_number=phone)
         return KYCProfile.objects.create(
             user=u, given_names="Jane", surname="Doe", id_number=f"ID{u.pk}",
@@ -980,24 +980,28 @@ class KYCManualDecisionStampTests(TestCase):
             verification_provider="manual", verification_state="manual_review",
         )
 
-    def test_approve_action_stamps_verified(self):
+    def test_approve_action_decides_and_keeps_the_provider_result(self):
+        from apps.verification.models import CaseEvent
         kyc = self._pending_kyc("254700000931")
-        self.client.post("/admin/users/kycprofile/", {
+        self.client.post("/admin/verification/kycprofile/", {
             "action": "approve_kyc", "_selected_action": [str(kyc.pk)]})
         kyc.refresh_from_db()
         self.assertEqual(kyc.status, "approved")
-        self.assertEqual(kyc.verification_state, "verified")
-        self.assertEqual(kyc.verification_provider, "manual (admin)")
-        self.assertIsNotNone(kyc.verification_checked_at)
+        self.assertIsNotNone(kyc.reviewed_at)
+        self.assertEqual(kyc.verification_state, "manual_review")
+        self.assertEqual(kyc.verification_provider, "manual")
+        self.assertTrue(CaseEvent.objects.filter(
+            case__kyc=kyc, event_type="review.approved",
+            actor_label="manual (admin)").exists())
 
-    def test_reject_action_stamps_rejected(self):
+    def test_reject_action_decides_and_keeps_the_provider_result(self):
         kyc = self._pending_kyc("254700000932")
-        self.client.post("/admin/users/kycprofile/", {
+        self.client.post("/admin/verification/kycprofile/", {
             "action": "reject_kyc", "_selected_action": [str(kyc.pk)]})
         kyc.refresh_from_db()
         self.assertEqual(kyc.status, "rejected")
-        self.assertEqual(kyc.verification_state, "rejected")
-        self.assertEqual(kyc.verification_provider, "manual (admin)")
+        self.assertEqual(kyc.verification_state, "manual_review")
+        self.assertEqual(kyc.verification_provider, "manual")
 
 
 class KYCResubmitTests(TestCase):
@@ -1010,7 +1014,7 @@ class KYCResubmitTests(TestCase):
 
     def _kyc(self, phone, **kw):
         from datetime import date
-        from apps.users.models import KYCProfile
+        from apps.verification.models import KYCProfile
         u = get_user_model().objects.create_user(phone_number=phone)
         kyc = KYCProfile.objects.create(
             user=u, given_names="Jane", surname="Doe", id_number=f"ID{u.pk}",
@@ -1068,7 +1072,7 @@ class KYCResubmitAdminTests(TestCase):
 
     def _pending_kyc(self, phone):
         from datetime import date
-        from apps.users.models import KYCProfile
+        from apps.verification.models import KYCProfile
         u = get_user_model().objects.create_user(phone_number=phone)
         return KYCProfile.objects.create(
             user=u, given_names="Jane", surname="Doe", id_number=f"ID{u.pk}",
@@ -1077,7 +1081,7 @@ class KYCResubmitAdminTests(TestCase):
     def test_documents_action_sets_items_and_keeps_status(self):
         from apps.core.models import OutboxEvent
         kyc = self._pending_kyc("254700000951")
-        self.client.post("/admin/users/kycprofile/", {
+        self.client.post("/admin/verification/kycprofile/", {
             "action": "request_kyc_resubmission", "_selected_action": [str(kyc.pk)]})
         kyc.refresh_from_db()
         self.assertEqual(kyc.resubmission_requested, ["id_front", "id_back", "selfie"])

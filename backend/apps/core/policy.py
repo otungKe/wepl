@@ -36,7 +36,10 @@ Design notes
 - Raises Django's ``PermissionDenied`` (not DRF's) so the layer is free of HTTP
   coupling and usable from services, Celery tasks and WebSocket consumers. The
   project's ``core.exceptions.custom_exception_handler`` maps it to a clean 403.
-- Superusers bypass (platform operators). Unauthenticated actors are always denied.
+- No actor bypasses a resolver. A Django superuser is not a WEPL authority:
+  operators act through the ops console (StaffAccount capabilities, step-up,
+  maker-checker), never as a customer ``User`` with a flag. Unauthenticated
+  actors are always denied.
 - The action namespace convention is ``"<resource_type>.<area>.<verb>"`` — only
   the first segment selects the resolver; the rest is the resolver's concern.
 """
@@ -83,8 +86,6 @@ def can(actor, action: str, resource) -> bool:
     authz error (a missing resolver still raises, as that's a config bug)."""
     if actor is None or not getattr(actor, "is_authenticated", False):
         return False
-    if getattr(actor, "is_superuser", False):
-        return True
     return bool(_resolver_for(action)(actor, action, resource))
 
 

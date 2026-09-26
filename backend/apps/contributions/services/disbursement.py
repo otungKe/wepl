@@ -1,4 +1,5 @@
 from ._common import *  # shared imports + helpers (ADR-0013 split)
+from .. import governance
 from .contribution import _share_allocations
 
 
@@ -17,9 +18,9 @@ class DisbursementService:
             from apps.communities.services import require_active_community
             require_active_community(contribution.community, 'request a payout')
 
-        # Balance check — pool balance from the ledger (contribution row is locked
-        # above, serialising concurrent disbursements on this contribution).
-        if Decimal(str(amount)) > fund_balance('contribution', contribution.id):
+        # Balance check — cash the pool holds, from the ledger (contribution row
+        # is locked above, serialising concurrent disbursements on it).
+        if Decimal(str(amount)) > pool_cash(contribution.id):
             raise ValidationError("Amount exceeds current pool balance.")
 
         # Quorum check: ensure at least one eligible voter exists excluding the requester.
@@ -77,21 +78,15 @@ class DisbursementService:
         require(voter, "contribution.vote_disbursement", contribution,
                 "You are not authorised to vote on this request.")
 
-        vote_obj, created = DisbursementVote.objects.get_or_create(
-            request=req, voter=voter, defaults={'vote': vote_choice}
-        )
-        if not created:
-            raise ValidationError("You have already voted on this disbursement request.")
+        governance.record_vote(req.votes, voter, vote_choice,
+                               already="You have already voted on this disbursement request.")
+        outcome = governance.tally(req.votes, contribution.required_approvals()).outcome
 
-        approvals  = req.votes.filter(vote='APPROVE').count()
-        rejections = req.votes.filter(vote='REJECT').count()
-        required   = contribution.required_approvals()
-
-        if approvals >= required:
+        if outcome == governance.PASSED:
             req.transition_to('APPROVED')
             DisbursementService._schedule_execution(req)
 
-        elif rejections >= required:
+        elif outcome == governance.FAILED:
             req.transition_to('REJECTED')
             _notify(
                 user=req.requested_by,
@@ -114,6 +109,213 @@ class DisbursementService:
         req.transition_to('CANCELLED')
         return req
 
+    # ── Exit settlement (ADR-0027 §0.4) ──────────────────────────────────────
+
+    @staticmethod
+    def _open_advances(contribution, user):
+        return EmergencyAdvance.objects.filter(
+            contribution=contribution, borrower=user, status='DISBURSED')
+
+    @staticmethod
+    def exit_quote(contribution, user) -> dict:
+        """What a leaving member would be paid now: their share less what they
+        still owe on advances from this pool (principal and interest)."""
+        share = member_fund_balance(user, 'contribution', contribution.id)
+        owed = sum(
+            (a.balance_due for a in DisbursementService._open_advances(contribution, user)),
+            Decimal('0'))
+        return {'share': share, 'owed': owed, 'payout': share - owed}
+
+    @staticmethod
+    @transaction.atomic
+    def request_exit(contribution_id, user, recipient_phone=None):
+        """A member asks for their share back on leaving. The group votes it like
+        any payout and must decide within ``EXIT_DECISION_DAYS``; nothing moves
+        until it is approved, and a refused member is paid at wind-up."""
+        AccessPolicy.gate(user, "Verify your identity to request your share.")
+        contribution = Contribution.objects.select_for_update().get(id=contribution_id)
+
+        # A member who has already left keeps their share and may still ask for
+        # it, so this is membership of the pool, not active participation.
+        if not ContributionParticipant.objects.filter(
+                contribution=contribution, user=user).exists():
+            raise PermissionDenied("You are not a member of this contribution.")
+        if contribution.contribution_type == 'ROSCA':
+            raise ValidationError(
+                "A rotating group settles through its rotation, not an exit payout.")
+
+        if DisbursementRequest.objects.filter(
+                contribution=contribution, requested_by=user,
+                kind=DisbursementRequest.KIND_EXIT,
+                status__in=('PENDING', 'APPROVED')).exists():
+            raise ValidationError("You already have an exit request open.")
+
+        quote = DisbursementService.exit_quote(contribution, user)
+        if quote['payout'] <= 0:
+            raise ValidationError(
+                "You have no share to pay out"
+                + (" after what you owe on your advance." if quote['owed'] > 0 else "."))
+
+        from apps.contributions.permissions import FinancialPermissions
+        FinancialPermissions.assert_quorum_exists(
+            contribution, contribution.voting_threshold, user,
+            action="submit this exit request",
+        )
+
+        req = DisbursementRequest.objects.create(
+            contribution=contribution,
+            requested_by=user,
+            amount=quote['payout'],
+            reason="Exit settlement: share paid out on leaving",
+            recipient_phone=recipient_phone or user.phone_number,
+            kind=DisbursementRequest.KIND_EXIT,
+            decide_by=timezone.now() + timedelta(days=DisbursementRequest.EXIT_DECISION_DAYS),
+        )
+
+        if contribution.community:
+            from apps.communities.models import CommunityMembership
+            approvers = CommunityMembership.objects.filter(
+                community=contribution.community,
+                role__in=['admin', 'treasurer'],
+                is_active=True,
+            ).exclude(user=user)
+            for m in approvers:
+                _notify(
+                    user=m.user,
+                    notification_type='disbursement_requested',
+                    title=f"Exit request — {contribution.title}",
+                    message=(
+                        f"{_dn(user)} is leaving and asks for their share of "
+                        f"KES {quote['payout']:,.0f}. The group must decide within "
+                        f"{DisbursementRequest.EXIT_DECISION_DAYS} days."
+                    ),
+                    contribution_id=contribution.id,
+                    join_request_id=req.id,
+                )
+        return req
+
+    @staticmethod
+    def _execute_exit(req: 'DisbursementRequest', contribution) -> None:
+        """Settle an approved exit: set any unpaid advance off against the
+        member's share, pay out the rest of the share, and end their membership.
+        Runs inside ``_schedule_execution``'s transaction."""
+        DisbursementService._set_off_advances(contribution, req.requested_by, key=f"exit-setoff-{req.id}")
+        DisbursementService._pay_out_share(req, contribution)
+
+    @staticmethod
+    def _set_off_advances(contribution, member, *, key) -> None:
+        """Take what ``member`` still owes on advances from this pool out of
+        their share, as a repayment would, so each advance reads as repaid and
+        the pool's lent cash is no longer counted as out on loan."""
+        for advance in DisbursementService._open_advances(contribution, member).select_for_update():
+            owed = advance.balance_due
+            if owed <= 0:
+                continue
+            outstanding = max(account_balance(
+                _coa.member_receivable_account(user=member, fund_id=advance.id)), Decimal('0'))
+            principal = min(owed, outstanding)
+            interest = owed - principal
+            ft, _ = create_fin_transaction(
+                idempotency_key=f"{key}-{advance.id}",
+                op_type=FinancialTransaction.OpType.ADVANCE_REPAYMENT,
+                amount=owed,
+                initiated_by=member,
+                contribution=contribution,
+                context_type='emergency_advance',
+                context_id=advance.id,
+                initial_state=FinancialTransaction.State.SUCCESS,
+            )
+            post_journal(
+                idempotency_key=f"je-{key}-{advance.id}",
+                op_type=_pm.Op.ADVANCE_REPAYMENT,
+                lines=_pm.advance_setoff_lines(
+                    member=member, advance_id=advance.id, pool_id=contribution.id,
+                    principal=Money(str(principal)), interest=Money(str(interest)),
+                ),
+                narration=f"Advance #{advance.id} set off against share on exit",
+                financial_transaction=ft,
+                created_by=member,
+            )
+            advance.transition_to('REPAID')
+
+    @staticmethod
+    def _pay_out_share(req: 'DisbursementRequest', contribution) -> None:
+        """Pay ``req.requested_by`` their whole share as it stands now, not as
+        quoted when the request was made — group spending or income since then
+        is theirs too — and end their membership."""
+        member = req.requested_by
+        share = member_fund_balance(member, 'contribution', contribution.id)
+        if share <= 0:
+            raise ValidationError("The member has no share left to pay out.")
+        if pool_cash(contribution.id) < share:
+            raise ValidationError("Insufficient pool balance at execution time.")
+        if share != req.amount:
+            DisbursementRequest.objects.filter(pk=req.pk).update(amount=share)
+            req.amount = share
+
+        idem_key = f"disb-exec-{req.id}"
+        ft, created = create_fin_transaction(
+            idempotency_key=idem_key,
+            op_type=FinancialTransaction.OpType.DISBURSEMENT,
+            amount=share,
+            initiated_by=member,
+            recipient_phone=req.recipient_phone,
+            contribution=contribution,
+            context_type='disbursement_request',
+            context_id=req.id,
+        )
+        if not created and ft.state in (
+            FinancialTransaction.State.SUCCESS,
+            FinancialTransaction.State.PROCESSING,
+        ):
+            return
+
+        # Unlike a group payout this is the member's own claim, so only their
+        # share is drawn down. The request is kept so a failed payout resets it
+        # to APPROVED and restores the share, exactly as for any payout.
+        post_journal(
+            idempotency_key=f"je-{idem_key}",
+            op_type=_pm.Op.DISBURSEMENT,
+            lines=_pm.disbursement_lines(
+                member=member, fund_type='contribution', fund_id=contribution.id,
+                amount=Money(str(share)),
+            ),
+            narration=req.reason[:120],
+            financial_transaction=ft,
+            created_by=member,
+        )
+
+        ContributionParticipant.objects.filter(
+            contribution=contribution, user=member).update(is_active=False)
+
+        winding_up = req.kind == DisbursementRequest.KIND_WINDUP
+        AuditService.log(
+            "contribution.wind_up_paid" if winding_up else "contribution.exit_settled",
+            actor=member, target=req,
+            tenant=getattr(contribution.community, "tenant_id", None),
+            metadata={"amount": str(share), "contribution_id": contribution.id},
+        )
+        _notify(
+            user=member,
+            notification_type='disbursement_executed',
+            title=f"{contribution.title} is wound up" if winding_up else "Exit approved",
+            message=(
+                f"Your share of KES {share:,.2f} from '{contribution.title}' is "
+                f"being sent to {req.recipient_phone}."
+            ),
+            contribution_id=contribution.id,
+        )
+
+        ft_id = ft.id
+
+        def _dispatch():
+            from apps.payments.payouts import execute_payout
+            from apps.core.dispatch import safe_enqueue
+            safe_enqueue(execute_payout, ft_id, critical=True)
+
+        transaction.on_commit(_dispatch)
+        req.transition_to('EXECUTED', executed_at=timezone.now())
+
     @staticmethod
     @transaction.atomic
     def _schedule_execution(req: 'DisbursementRequest') -> None:
@@ -126,9 +328,6 @@ class DisbursementService:
         """
         contribution = Contribution.objects.select_for_update().get(id=req.contribution_id)
 
-        if fund_balance('contribution', contribution.id) < req.amount:
-            raise ValidationError("Insufficient pool balance at execution time.")
-
         # Governance cooldown check (Issue 16): block execution if voting_threshold
         # was changed recently — gives the group 24 h to review approvals that were
         # cast under the previous (possibly stricter) governance rules.
@@ -139,6 +338,13 @@ class DisbursementService:
                 f"Governance rules were recently changed. Disbursements are locked until {unlock} "
                 f"to allow the group to review pending approvals under the new rules."
             )
+
+        if req.kind == DisbursementRequest.KIND_EXIT:
+            DisbursementService._execute_exit(req, contribution)
+            return
+
+        if pool_cash(contribution.id) < req.amount:
+            raise ValidationError("Insufficient pool balance at execution time.")
 
         # ── Reserve funds: DEBIT ledger entry immediately ─────────────────────
         idem_key = f"disb-exec-{req.id}"

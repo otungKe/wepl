@@ -60,6 +60,19 @@ class SurplusDistributionRequestView(APIView):
         return Response(PoolActionRequestSerializer(req).data, status=status.HTTP_201_CREATED)
 
 
+class WindUpRequestView(APIView):
+    """POST /contributions/<id>/wind-up/ — propose ending the pool and paying
+    everything out (ADR-0027). Held for the group's approval; the amount is
+    what the pool holds, not the proposer's to set."""
+    permission_classes = [IsActiveSession]
+
+    def post(self, request, contribution_id):
+        req = PoolGovernanceService.request(
+            request.user, contribution_id, action=PoolActionRequest.Action.WIND_UP,
+            amount=None, memo=str(request.data.get('reason', ''))[:255])
+        return Response(PoolActionRequestSerializer(req).data, status=status.HTTP_201_CREATED)
+
+
 class PoolActionListView(APIView):
     """GET /contributions/<id>/pool-actions/ — the collective-fund action log
     (pending + decided) for participants to see."""

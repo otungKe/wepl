@@ -106,92 +106,10 @@ def _send_kyc_verification_email(kyc, request):
     )
 
 
-def _read_id_scan_ocr(kyc):
-    """Advisory in-house OCR cross-check of the front ID scan against the typed
-    values. Best-effort and never fatal — returns a detail dict for the reviewer;
-    an empty/degraded result (no OCR backend) just means manual review proceeds."""
-    from ..ocr import run_id_ocr
-    try:
-        if not kyc.id_front:
-            return {"detected": False, "engine": "none"}
-        kyc.id_front.open('rb')
-        try:
-            image = kyc.id_front.read()
-        finally:
-            kyc.id_front.close()
-        return run_id_ocr(
-            image,
-            id_number=kyc.id_number or '',
-            date_of_birth=kyc.date_of_birth.isoformat() if kyc.date_of_birth else '',
-        )
-    except Exception as exc:
-        logger.warning("ID-scan OCR failed for user %s: %s", kyc.user_id, exc)
-        return {"detected": False, "engine": "error"}
-
-
 def _run_identity_check(kyc):
-    """Run the active identity-verification provider against a KYC row and apply
-    the outcome. Records the provider result for audit and derives the KYC status
-    (VERIFIED→approved, REJECTED→rejected, MANUAL_REVIEW/PENDING→pending),
-    notifying the applicant via the durable event bus on a terminal decision."""
-    from django.utils import timezone
-    from ..identity import IdentitySubject, VERIFIED, REJECTED
-    from ..identity.registry import get_provider
-
-    subject = IdentitySubject(
-        id_number=kyc.id_number,
-        given_names=kyc.given_names,
-        surname=kyc.surname,
-        date_of_birth=kyc.date_of_birth.isoformat() if kyc.date_of_birth else '',
-        id_front_path=kyc.id_front.name if kyc.id_front else None,
-        id_back_path=kyc.id_back.name if kyc.id_back else None,
-        selfie_path=kyc.selfie.name if kyc.selfie else None,
-    )
-
-    try:
-        result = get_provider().verify_identity(subject)
-    except Exception as exc:
-        # A vendor error must never lose the submission — fall back to human review.
-        logger.exception("Identity check failed for user %s: %s", kyc.user_id, exc)
-        kyc.status = 'pending'
-        kyc.save(update_fields=['status'])
-        return
-
-    kyc.verification_provider   = result.provider
-    kyc.verification_ref        = result.provider_ref
-    kyc.verification_state      = result.state
-    kyc.verification_detail     = {**(result.raw or {}), 'ocr': _read_id_scan_ocr(kyc)}
-    kyc.verification_checked_at = timezone.now()
-    kyc.save(update_fields=[
-        'verification_provider', 'verification_ref',
-        'verification_state', 'verification_detail', 'verification_checked_at',
-    ])
-
-    # Record the check as a fact on the case timeline, then apply any terminal
-    # outcome through the case state machine (apps.verification) — the single
-    # door for decisions. MANUAL_REVIEW / PENDING leave the case awaiting a
-    # human (or webhook), status 'pending'.
-    from apps.verification import service as case_service
-    try:
-        case_service.record_check(kyc, provider=result.provider, state=result.state,
-                                  detail=kyc.verification_detail)
-        if result.state == VERIFIED:
-            case_service.decide(kyc, 'approve', actor_label=result.provider)
-        elif result.state == REJECTED:
-            case_service.decide(kyc, 'reject', actor_label=result.provider,
-                                reason=result.reason or 'Identity verification was not successful.')
-        elif kyc.status != 'pending':
-            kyc.status = 'pending'
-            kyc.save(update_fields=['status'])
-    except case_service.IllegalTransition as exc:
-        # A check outcome that isn't applicable from the case's current state is
-        # recorded (above) but not applied — a human resolves it in review.
-        logger.warning("Identity-check outcome not applied for user %s: %s", kyc.user_id, exc)
-
-    logger.info(
-        "Identity check for user %s: provider=%s state=%s → status=%s",
-        kyc.user_id, result.provider, result.state, kyc.status,
-    )
+    """Hand the submission to verification, which owns the identity check."""
+    from apps.verification.checks import run_identity_check
+    run_identity_check(kyc)
 
 
 class KYCResubmitView(APIView):
@@ -338,7 +256,7 @@ class KYCEmailVerifyView(APIView):
             except Exception:
                 logger.exception("Case ledger recording failed for email verify (user %s)", kyc.user_id)
 
-            # ── Identity verification (apps.users.identity port) ──────────
+            # ── Identity verification (apps.verification.identity port) ───
             # The active provider decides the outcome. Today: ManualProvider in
             # production (human review) and FakeProvider under DEBUG (auto-verify)
             # — historical behaviour preserved. A real vendor or an IPRS lookup

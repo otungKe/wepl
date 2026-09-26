@@ -41,7 +41,7 @@ def approve_kyc(user):
     """Give a user an approved KYC profile → Tier 1 (contribute() requires it).
     A real approved-KYC user has also verified their phone (OTP flow), so set that
     too — otherwise the tier gate (phone_verified AND kyc approved) would fail."""
-    from apps.users.models import KYCProfile
+    from apps.verification.models import KYCProfile
     if not user.is_phone_verified:
         user.is_phone_verified = True
         user.save(update_fields=["is_phone_verified"])

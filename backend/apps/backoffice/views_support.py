@@ -16,7 +16,7 @@ from django.shortcuts import get_object_or_404
 from rest_framework import status as http
 from rest_framework.response import Response
 
-from apps.users.models import VerificationRequest
+from apps.verification.models import VerificationRequest
 
 from .audit import record_action
 from .permissions import RequireCapability

@@ -21,10 +21,13 @@ class PaymentIntent(models.Model):
     at the provider chokepoints (collection/payout × initiate/callback).
 
     Boundary (ADR-0014, item 10): this is provider-lifecycle state ONLY. It never
-    references a business object (Contribution/Loan/Welfare/Shares/Advance) — it
-    links to the ledger ``FinancialTransaction`` and carries a denormalised
-    ``op_type`` *label* for analytics, nothing more. It must not grow into a
-    business aggregate.
+    references a business object (Contribution/Loan/Welfare/Shares/Advance) by
+    foreign key — it links to the ledger ``FinancialTransaction`` and carries a
+    denormalised ``op_type`` *label* for analytics. A collection also carries
+    ``purpose`` and ``subject_ref``: what the money is for, as two plain strings,
+    so a settled pay-in can be routed by the domain without the rail record
+    having to remember it. They are labels the domain reads back, not
+    relations; this must not grow into a business aggregate.
     """
 
     class Direction(models.TextChoices):
@@ -90,6 +93,19 @@ class PaymentIntent(models.Model):
     op_type      = models.CharField(
         max_length=30, blank=True, default='',
         help_text="Denormalised business-op label for analytics; not a dependency, not authoritative.")
+
+    # What a collection is for, set at initiation and read back by the domain
+    # when the pay-in settles (the ``payment.settled`` event carries only the
+    # intent id). ``purpose`` names the kind of target ('contribution',
+    # 'welfare', 'shares', 'advance_repayment') and ``subject_ref`` its id, both
+    # as strings — no FK, so this app still imports no business app (ADR-0033).
+    # Blank on payouts, which reach their target through the ledger FT.
+    purpose      = models.CharField(
+        max_length=30, blank=True, default='',
+        help_text="Collections: what the pay-in is for (e.g. contribution, welfare).")
+    subject_ref  = models.CharField(
+        max_length=64, blank=True, default='',
+        help_text="Collections: the id of the thing the pay-in is for.")
 
     tenant       = models.ForeignKey('tenants.Tenant', null=True, blank=True,
                                      on_delete=models.SET_NULL, related_name='payment_intents')
@@ -368,3 +384,70 @@ class ReconciliationDrift(models.Model):
             return
         self.resolved_at = timezone.now()
         self.save(update_fields=['resolved_at'])
+
+
+# ─────────────────────────────────────────────────────────────
+# PAYMENT METHODS (scalable payout rails)
+# ─────────────────────────────────────────────────────────────
+
+class PaymentMethod(models.Model):
+    """A payout/collection method a user has linked. Designed to scale across
+    rails: M-Pesa is live today; card and bank are modelled now so the UI and
+    storage don't need reshaping when those rails are wired.
+
+    Owned by payments, not users: it names the rail a customer is paid on.
+    Only one method per user is the default. Card/bank rows carry no PAN/full
+    account number — only the display fragments a UI needs (brand + last 4).
+    """
+
+    class Kind(models.TextChoices):
+        MPESA = 'mpesa', 'M-Pesa'
+        CARD  = 'card',  'Debit or credit card'
+        BANK  = 'bank',  'Bank account'
+
+    class Status(models.TextChoices):
+        ACTIVE      = 'active',      'Active'
+        UNAVAILABLE = 'unavailable', 'Coming soon'
+
+    user       = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='payment_methods',
+    )
+    kind       = models.CharField(max_length=8, choices=Kind.choices)
+    label      = models.CharField(max_length=60, blank=True, default='')
+    is_default = models.BooleanField(default=False)
+    status     = models.CharField(max_length=12, choices=Status.choices, default=Status.ACTIVE)
+
+    # M-Pesa (live)
+    mpesa_phone = models.CharField(max_length=15, blank=True, default='')
+
+    # Card (future) — display fragments only, never the PAN.
+    card_brand = models.CharField(max_length=20, blank=True, default='')
+    card_last4 = models.CharField(max_length=4, blank=True, default='')
+    card_exp   = models.CharField(max_length=5, blank=True, default='')  # MM/YY
+
+    # Bank (future) — display fragments only.
+    bank_name          = models.CharField(max_length=60, blank=True, default='')
+    bank_account_last4 = models.CharField(max_length=4, blank=True, default='')
+
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        # Moved from users (boundary audit step 7); the table keeps its name.
+        db_table = 'users_paymentmethod'
+        ordering = ['-is_default', '-created_at']
+        indexes = [models.Index(fields=['user', 'is_default'], name='paymethod_user_default_idx')]
+
+    def __str__(self):
+        return f"PaymentMethod({self.user_id}, {self.kind}, default={self.is_default})"
+
+    @property
+    def display(self) -> str:
+        """Human label for the method, e.g. '•••• 4242' or '0712 ••• 890'."""
+        if self.kind == self.Kind.MPESA:
+            p = self.mpesa_phone
+            return f"{p[:4]} ••• {p[-3:]}" if len(p) >= 7 else p
+        if self.kind == self.Kind.CARD:
+            return f"{self.card_brand} •••• {self.card_last4}".strip()
+        if self.kind == self.Kind.BANK:
+            return f"{self.bank_name} •••• {self.bank_account_last4}".strip()
+        return self.label

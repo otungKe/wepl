@@ -95,7 +95,7 @@ class EmergencyAdvanceService:
                 "Only admins/treasurers can approve advances.")
 
         # Check pool has enough funds (ledger-derived)
-        if fund_balance('contribution', contribution.id) < advance.amount:
+        if pool_cash(contribution.id) < advance.amount:
             raise ValidationError("Insufficient pool balance to cover this advance.")
 
         # ── Reserve funds: post the payout journal (cash leaves on B2C success) ─

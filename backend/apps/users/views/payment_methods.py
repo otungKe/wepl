@@ -2,8 +2,9 @@ import re
 
 from django.db import transaction
 
+from apps.payments.models import PaymentMethod
+
 from ._common import *  # shared imports/helpers (ADR-0013 view split)
-from ..models import PaymentMethod
 from ..phone import normalize_phone
 from ..serializers import PaymentMethodSerializer
 

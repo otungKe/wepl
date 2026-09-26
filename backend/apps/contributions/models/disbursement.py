@@ -28,6 +28,21 @@ class DisbursementRequest(models.Model):
         ('CANCELLED', 'Cancelled'),
     )
 
+    # A payout is money the group spends, split across shares (ADR-0027 §0.1).
+    # An exit is a leaving member asking for their own share back (§0.4): the
+    # group votes it like any payout, and must decide it by ``decide_by``.
+    # A wind-up pays every member out through one of these per member, created
+    # already approved by the group's wind-up vote (services/wind_up.py).
+    KIND_PAYOUT = 'payout'
+    KIND_EXIT = 'exit'
+    KIND_WINDUP = 'windup'
+    KIND_CHOICES = (
+        (KIND_PAYOUT, 'Payout'),
+        (KIND_EXIT,   'Exit settlement'),
+        (KIND_WINDUP, 'Wind-up payout'),
+    )
+    EXIT_DECISION_DAYS = 30
+
     VALID_TRANSITIONS = {
         'PENDING':   frozenset({'APPROVED', 'REJECTED', 'CANCELLED'}),
         'APPROVED':  frozenset({'EXECUTED'}),
@@ -42,6 +57,12 @@ class DisbursementRequest(models.Model):
     reason         = models.TextField()
     recipient_phone = models.CharField(max_length=20)
     status         = models.CharField(max_length=20, choices=STATUS_CHOICES, default='PENDING')
+    kind           = models.CharField(
+        max_length=10, choices=KIND_CHOICES, default=KIND_PAYOUT,
+        # db_default so the instance still serving during a deploy, which
+        # does not know this column, can keep inserting payout requests.
+        db_default=KIND_PAYOUT)
+    decide_by      = models.DateTimeField(null=True, blank=True)
     created_at     = models.DateTimeField(auto_now_add=True)
     executed_at    = models.DateTimeField(null=True, blank=True)
 

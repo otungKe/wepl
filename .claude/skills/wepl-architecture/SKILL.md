@@ -35,7 +35,15 @@ gate is registered into `ledger/chokepoint.py` rather than imported by it;
 what a decision does elsewhere. All three are tested in
 `apps/core/tests_module_boundaries.py`, which also holds a ratchet on the **four**
 apps still in one import cycle (`activity`, `communities`, `contributions`,
-`users`): that set may only shrink. `apps/controls` and `apps/users` reach
+`users`): that set may only shrink. "Imports only core" is not "depends only on
+core": the same file checks the three leaves' **foreign keys** through the model
+registry, because a string FK (`'contributions.Contribution'`) never shows up as an
+import. `FK_BASELINE` names the twelve edges that still exist (FinancialTransaction
+→ funds, M-Pesa rail records → funds, verification → StaffAccount); a new one
+fails the build, and so does a stale entry. `KYCProfile` itself belongs to
+verification (its table is still `users_kycprofile`); other apps read it
+through `user.kyc`. Do not add a
+string FK to dodge the import test. `apps/controls` and `apps/users` reach
 verification, never the reverse: a decided EDD case releases its held movement and
 closes the customer's request row, and a decided KYC case reaches its applicant,
 through reactions those apps register into `verification/hooks.py`.
@@ -72,7 +80,7 @@ Cross-cutting machinery registers itself from `AppConfig.ready()`, and
 - inline event consumers — `core/events.py::register_inline_consumer`
 - settlement targets — `contributions/settlement.py::register_settlement_target`
 - payment adapters — `payments/providers/registry.py::_build`
-- identity adapters — `users/identity/registry.py`
+- identity adapters — `verification/identity/registry.py`
 
 The same pattern is how a *lower* app calls upward, or two peers reach each other,
 without one importing the other (ADR-0033). Six of these exist; do not

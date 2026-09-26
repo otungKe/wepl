@@ -12,6 +12,6 @@ class WeplAdminSite(UnfoldAdminSite):
 
 def kyc_pending_badge(request):
     """Live count of KYC submissions awaiting review, shown on the sidebar."""
-    from apps.users.models import KYCProfile
+    from apps.verification.models import KYCProfile
 
     return KYCProfile.objects.filter(status="pending").count() or None

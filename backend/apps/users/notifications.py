@@ -13,7 +13,7 @@ between the decision and the notification does not lose it.
 """
 from apps.core.events import emit
 
-from .models import KYCProfile
+from apps.verification.models import KYCProfile
 
 
 def notify_kyc_decision(kyc):
@@ -48,25 +48,6 @@ def notify_resubmission_request(kyc):
         message=f'Please re-submit the following in WEPL: {items}. '
                 f'You only need to provide these — the rest of your details stay as they are.',
     )
-
-
-def notify_verification_request(vreq, *, resolved=False):
-    """Notify the user that a verification request was raised or resolved."""
-    if resolved:
-        emit(
-            'verification_request_resolved',
-            user_id=vreq.user_id,
-            title='Verification updated',
-            message=f'"{vreq.title}" has been resolved.'
-                    + (f' {vreq.review_note}' if vreq.review_note else ''),
-        )
-    else:
-        emit(
-            'verification_request',
-            user_id=vreq.user_id,
-            title='Action needed: verification',
-            message=f'{vreq.title} — open your Verification Center to respond.',
-        )
 
 
 def on_kyc_decided(*, kyc, action: str) -> None:

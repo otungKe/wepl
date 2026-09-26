@@ -20,3 +20,6 @@ class ContributionsConfig(AppConfig):
         # Hand the M-Pesa rail the settlement decisions it must not import (ADR-0033).
         from . import settlement
         settlement.register()
+        # Answer for group money when an account closes or is exported (step 8).
+        from . import lifecycle
+        lifecycle.register()

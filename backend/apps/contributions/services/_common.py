@@ -49,8 +49,25 @@ from apps.ledger.posting import post_journal
 from apps.ledger import posting_map as _pm
 from apps.ledger.money import Money
 # P0-06: read pool/member balances from the ledger (the authoritative source).
-from apps.ledger.balances import fund_balance, account_balance, advance_repaid
+from apps.ledger.balances import (
+    fund_balance, account_balance, advance_repaid, advances_outstanding, member_fund_balance,
+)
 from apps.ledger import coa as _coa
+
+
+def pool_cash(contribution_id) -> Decimal:
+    """What a contribution pool can actually pay out now: the members' shares
+    less the principal the pool has out on loan to its own members.
+
+    An emergency advance is the group lending its own money (ADR-0027 §0.3):
+    the receivable is a pool asset, so every share is intact, but that cash has
+    left the float and cannot be spent twice. ``fund_balance`` answers what the
+    pool owes its members; this answers what it holds. Every spend check reads
+    this one.
+    """
+    lent = advances_outstanding(
+        EmergencyAdvance.objects.filter(contribution_id=contribution_id).values_list('id', flat=True))
+    return fund_balance('contribution', contribution_id) - lent
 
 
 def _dn(user) -> str:
@@ -110,5 +127,6 @@ __all__ = [
     "ContributionAmendment", "ContributionAmendmentVote", "ContributionJoinRequest",
     # ledger
     "create_fin_transaction", "FinancialTransaction", "JournalEntry",
-    "post_journal", "_pm", "Money", "fund_balance", "account_balance", "advance_repaid", "_coa",
+    "post_journal", "_pm", "Money", "fund_balance", "pool_cash", "account_balance", "advance_repaid",
+    "member_fund_balance", "_coa",
 ]

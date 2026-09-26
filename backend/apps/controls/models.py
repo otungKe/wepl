@@ -13,6 +13,7 @@ place and cannot be bypassed by using a different code path.
 """
 from django.conf import settings
 from django.db import models
+from django.utils import timezone
 
 from apps.ledger.models import FinancialTransaction
 
@@ -202,3 +203,82 @@ class ControlOverride(models.Model):
     def __str__(self):
         state = 'consumed' if self.consumed_at else 'active'
         return f"Override({self.user_id}, {self.op_type or 'any'}, <={self.max_amount}, {state})"
+
+
+class UserRestriction(models.Model):
+    """An account-level restriction placed on a customer by back-office staff.
+
+    A restriction narrows what a customer may do WITHOUT closing the account
+    (full closure stays ``UserService.deactivate_user``) and WITHOUT ever
+    deleting them. Each kind maps to a real enforcement chokepoint:
+
+      * ``LOGIN``  → the authentication path (PIN login) rejects the sign-in.
+      * money kinds → the ledger control chokepoint (``enforce_controls``) hard-
+        DENYs the movement, so no money path can bypass it.
+
+    There is no "wallet" to freeze (ADR-0002: balances are ledger projections);
+    ``FREEZE`` blocks *all* money movement for the member instead.
+
+    Append-only history: a restriction is never edited once applied — lifting
+    sets ``status=LIFTED`` with who/when/why; a past-expiry restriction reads as
+    inactive and is swept to ``EXPIRED`` by a beat task. At most one ACTIVE
+    restriction of a given kind may exist per user (DB-enforced).
+    """
+
+    class Kind(models.TextChoices):
+        LOGIN            = "login",            "Suspend login"
+        PAYOUT           = "payout",           "Block money out (withdrawals / transfers)"
+        PAYIN            = "payin",            "Block money in (deposits)"
+        FREEZE           = "freeze",           "Freeze all money movement"
+        COMMUNITY_CREATE = "community_create", "Restrict community creation"
+        COMMUNITY_ADMIN  = "community_admin",  "Restrict community administration"
+
+    class Status(models.TextChoices):
+        ACTIVE  = "active",  "Active"
+        LIFTED  = "lifted",  "Lifted"
+        EXPIRED = "expired", "Expired"
+
+    user   = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE,
+                               related_name="restrictions")
+    kind   = models.CharField(max_length=20, choices=Kind.choices)
+    status = models.CharField(max_length=10, choices=Status.choices,
+                              default=Status.ACTIVE, db_index=True)
+    reason = models.TextField()
+
+    effective_at = models.DateTimeField(default=timezone.now)
+    expires_at   = models.DateTimeField(null=True, blank=True)  # null = indefinite
+
+    applied_by_label = models.CharField(max_length=120, blank=True, default="")
+    approval_ref     = models.CharField(max_length=64, blank=True, default="")
+
+    lifted_at       = models.DateTimeField(null=True, blank=True)
+    lifted_by_label = models.CharField(max_length=120, blank=True, default="")
+    lift_reason     = models.TextField(blank=True, default="")
+
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        # Owned by controls since the boundary audit (step 7); the table kept
+        # its original name, so the move changed no data.
+        db_table = "users_userrestriction"
+        ordering = ("-created_at",)
+        indexes = [
+            models.Index(fields=["user", "status"], name="restriction_user_status_idx"),
+            models.Index(fields=["kind", "status"], name="restriction_kind_status_idx"),
+        ]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["user", "kind"], condition=models.Q(status="active"),
+                name="uniq_active_restriction_per_kind"),
+        ]
+
+    def __str__(self):
+        return f"{self.get_kind_display()} on user {self.user_id} [{self.status}]"
+
+    @property
+    def is_effective(self) -> bool:
+        """Currently in force: ACTIVE, started, and not past expiry."""
+        now = timezone.now()
+        return (self.status == self.Status.ACTIVE
+                and self.effective_at <= now
+                and (self.expires_at is None or self.expires_at > now))

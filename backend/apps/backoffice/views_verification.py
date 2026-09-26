@@ -12,7 +12,7 @@ from rest_framework import status as http
 from rest_framework.response import Response
 
 from apps.controls.cases import held_movement_for
-from apps.users.models import KYCProfile
+from apps.verification.models import KYCProfile
 
 from .audit import record_action
 from .permissions import RequireCapability

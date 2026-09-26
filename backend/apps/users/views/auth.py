@@ -236,7 +236,7 @@ class PINLoginView(APIView):
         # Account-level login restriction (ops-applied, Application User Mgmt).
         # Checked AFTER the PIN so it is not a user-enumeration oracle — only the
         # account owner ever learns it is suspended.
-        from ..services import RestrictionService
+        from apps.controls.restrictions import RestrictionService
         if RestrictionService.blocks_login(user):
             logger.warning("Login blocked by account restriction for %s", phone)
             return Response(

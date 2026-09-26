@@ -1,7 +1,7 @@
 from django.utils import timezone
 
 from ._common import *  # shared imports/helpers (ADR-0013 view split)
-from ..models import VerificationRequest
+from apps.verification.models import VerificationRequest
 from ..serializers import VerificationRequestSerializer, VerificationRespondSerializer
 
 

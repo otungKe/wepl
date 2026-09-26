@@ -1,4 +1,6 @@
 from django.contrib import admin
+
+from apps.core.admin_readonly import ReadOnlyAdminMixin
 from .models import (
     Account,
     AccountBalance,
@@ -18,7 +20,7 @@ class ExchangeRateAdmin(admin.ModelAdmin):
 
 
 @admin.register(FinancialTransaction)
-class FinancialTransactionAdmin(admin.ModelAdmin):
+class FinancialTransactionAdmin(ReadOnlyAdminMixin, admin.ModelAdmin):
     # Rail columns left the ledger in ADR-0030; the receipt and the correlation
     # id are on the PaymentIntent, which the ops console shows through the
     # money-activity seam. Django admin searches the intent by relation.
@@ -28,25 +30,21 @@ class FinancialTransactionAdmin(admin.ModelAdmin):
     search_fields = ('idempotency_key', 'payment_intents__receipt',
                      'payment_intents__provider_ref',
                      'initiated_by__phone_number')
-    readonly_fields = ('idempotency_key', 'created_at', 'updated_at')
+    # Read-only: execute_payout pays ft.amount to ft.recipient_phone, so an
+    # editable form here would be a way to redirect a payout.
     ordering = ('-created_at',)
-
-    def has_delete_permission(self, request, obj=None):
-        return False  # financial records must never be deleted
 
 
 # ── Double-entry core ───────────────────────────────────────────────────────
 
 @admin.register(Account)
-class AccountAdmin(admin.ModelAdmin):
+class AccountAdmin(ReadOnlyAdminMixin, admin.ModelAdmin):
     list_display  = ('code', 'name', 'type', 'parent', 'owner', 'fund_type', 'fund_id', 'is_active')
     list_filter   = ('type', 'fund_type', 'is_active')
     search_fields = ('code', 'name', 'owner__phone_number')
-    readonly_fields = ('created_at',)
+    # Read-only: accounts are opened by the chart of accounts (coa.py) and are
+    # referenced by immutable lines.
     ordering = ('code',)
-
-    def has_delete_permission(self, request, obj=None):
-        return False  # accounts are referenced by immutable lines
 
 
 class JournalLineInline(admin.TabularInline):
@@ -96,13 +94,7 @@ class JournalLineAdmin(admin.ModelAdmin):
 
 
 @admin.register(AccountBalance)
-class AccountBalanceAdmin(admin.ModelAdmin):
+class AccountBalanceAdmin(ReadOnlyAdminMixin, admin.ModelAdmin):
+    # Projection maintained by the posting writer; rebuilt from lines, never edited.
     list_display  = ('account', 'debit_total', 'credit_total', 'updated_at')
     search_fields = ('account__code',)
-    readonly_fields = ('account', 'debit_total', 'credit_total', 'updated_at')
-
-    def has_add_permission(self, request):
-        return False  # projection maintained by the posting writer
-
-    def has_delete_permission(self, request, obj=None):
-        return False

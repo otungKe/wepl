@@ -13,7 +13,9 @@ from ..auth import (
     STAGE_ACTIVE, STAGE_OTP_RECOVERY, STAGE_OTP_VERIFIED,
     IsActiveSession, StageRequired, issue_tokens,
 )
-from ..models import KYCProfile, PrivacyPreferences
+from apps.verification.models import KYCProfile
+
+from ..models import PrivacyPreferences
 from ..phone import normalize_phone
 from ..serializers import UserSerializer, KYCSubmitSerializer, KYCStatusSerializer
 from ..services import UserService, OTPService, PINService

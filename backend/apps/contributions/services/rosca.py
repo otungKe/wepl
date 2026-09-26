@@ -61,7 +61,7 @@ class ROSCAService:
         if not current_slot:
             raise ValidationError("All slots have been paid out for this cycle.")
 
-        payout_amount = fund_balance('contribution', contribution.id)
+        payout_amount = pool_cash(contribution.id)
 
         current_slot.has_received  = True
         current_slot.received_at   = timezone.now()
