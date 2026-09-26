@@ -41,8 +41,9 @@ resource-scoped `apps/core/policy.py`:
 
 - `AccessPolicy.is_tier1(user)` / `is_tier0(user)` / `has_full_access(user)` — pure predicates.
 - `AccessPolicy.require_tier1(user, message=None)` — raises `KYCRequired` unless the
-  user is Tier 1. **Staff/superusers bypass** (platform operators), mirroring the
-  policy layer.
+  user is Tier 1. ~~Staff/superusers bypass (platform operators), mirroring the
+  policy layer.~~ *Amended 2026-09-26: nobody bypasses it; Django flags grant admin
+  access, not money access without verified KYC.*
 
 `RequiresTier1` (`apps/users/permissions.py`) is the DRF view-layer counterpart,
 composed after `IsActiveSession`. Both raise rather than returning a bare `False`

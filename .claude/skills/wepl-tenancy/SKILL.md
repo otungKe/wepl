@@ -44,8 +44,11 @@ mechanism landed", not "the boundary is live".
 4. **Scoped work** — `with tenant_context(tenant_id):` (`apps/tenants/rls.py`).
    Used by `apps/conversations/consumers.py`.
 
-**Staff and superusers are deliberately NOT pinned** — operators work across
-tenants and the Django admin must stay platform-wide.
+**Every customer `User` is pinned, `is_staff`/`is_superuser` included** (changed
+2026-09-26). Those flags grant Django admin, which is not a DRF view and so stays
+platform-wide anyway; they do not buy a cross-tenant API view. Operators who work
+across tenants do it in the ops console as `StaffAccount`s, which authenticate
+separately and are never pinned by this hook.
 
 ## The RLS policy
 
@@ -114,7 +117,8 @@ the work, not the policies.
 
 1. Set the GUC in authentication, clear it in middleware and in both Celery
    hooks. Never set it in a view, a serializer or a service.
-2. Staff/superusers stay unpinned. Do not "fix" that.
+2. Every customer `User` is pinned, staff flags or not. Cross-tenant work belongs
+   to the ops console (`StaffAccount`), not to a flag on a customer.
 3. A task that needs one tenant uses `with tenant_context(id):` — never a bare
    `set_current_tenant`.
 4. `set_config` is parameterised. Never interpolate a tenant id into SQL.
@@ -151,7 +155,7 @@ the work, not the policies.
 
 `apps/tenants/tests.py` — `RowLevelSecurityTests` (raw SQL under a NOSUPERUSER
 role), `ExtendedRowLevelSecurityTests`, `TenantContextWiringTests`
-(member pinned / staff not pinned / middleware resets), `PerTenantChartOfAccountsTests`,
+(member pinned / staff user pinned too / middleware resets), `PerTenantChartOfAccountsTests`,
 `PerTenantLimitsTests`, `CrossTenantGuardTests`, `TenantScopedReportingTests`.
 `apps/conversations/tests_tenant.py` (a `TransactionTestCase`).
 

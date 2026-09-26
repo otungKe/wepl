@@ -65,13 +65,16 @@ class AccessPolicyGateTests(TestCase):
         u = make_user("254700000021", kyc="approved")
         AccessPolicy.require_tier1(u)  # must not raise
 
-    def test_staff_and_superuser_bypass(self):
+    def test_staff_and_superuser_do_not_bypass(self):
+        # Django flags grant admin access, not money access without verified KYC.
         staff = make_user("254700000022")
         staff.is_staff = True
-        AccessPolicy.require_tier1(staff)  # must not raise
+        with self.assertRaises(KYCRequired):
+            AccessPolicy.require_tier1(staff)
         su = make_user("254700000023")
         su.is_superuser = True
-        AccessPolicy.require_tier1(su)  # must not raise
+        with self.assertRaises(KYCRequired):
+            AccessPolicy.require_tier1(su)
 
     def test_custom_message_carried_through(self):
         u = make_user("254700000024")

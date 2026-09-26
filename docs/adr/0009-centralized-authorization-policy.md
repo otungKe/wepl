@@ -34,7 +34,10 @@ Introduce a **centralized, declarative authorization policy layer**.
    - `require(actor, action, resource)` — raises `PermissionDenied` (use at the boundary).
    - Resource types register a **resolver** via `@policy("<resource_type>")`. The action
      string is namespaced (`"community.update"`), and its prefix selects the resolver.
-   - Superusers bypass (platform operators); unauthenticated actors are always denied.
+   - ~~Superusers bypass (platform operators)~~ *Amended 2026-09-26: no actor bypasses a
+     resolver. A Django superuser is not a WEPL authority; operators act through the ops
+     console, and orphan-community recovery is a maker-checked ops action.* Unauthenticated
+     actors are always denied.
 
 2. **Per-resource capability matrices** (e.g. `apps/communities/policies.py`) express authz
    **declaratively** as a role→rank hierarchy + a minimum-rank-per-action table. Role checks

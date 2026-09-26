@@ -1,18 +1,19 @@
 from django.contrib import admin
 
+from apps.core.admin_readonly import ReadOnlyAdminMixin
+
 from .models import PaymentIntent, ProviderEvent, ReconciliationDrift
 
 
 @admin.register(PaymentIntent)
-class PaymentIntentAdmin(admin.ModelAdmin):
+class PaymentIntentAdmin(ReadOnlyAdminMixin, admin.ModelAdmin):
     list_display  = ('created_at', 'provider', 'direction', 'status', 'amount',
                      'provider_ref', 'receipt', 'failure_code', 'financial_transaction')
     list_filter   = ('provider', 'direction', 'status', 'created_at')
     search_fields = ('provider_ref', 'receipt', 'idempotency_key', 'failure_code')
     date_hierarchy = 'created_at'
-    # Status only ever moves through transition_to(); never hand-edit it in admin.
-    readonly_fields = ('status', 'created_at', 'updated_at',
-                       'initiated_at', 'callback_received_at', 'provider_completed_at')
+    # Read-only: status moves through transition_to(), and provider_ref is how a
+    # rail callback finds its movement, so editing it would misroute a settlement.
 
 
 @admin.register(ProviderEvent)

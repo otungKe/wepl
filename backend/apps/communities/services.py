@@ -464,15 +464,37 @@ class CommunityService:
     def transfer_ownership(creator, community, membership_id):
         """Transfer community ownership to another active member (ADR-0011).
 
-        Only the current owner may transfer (policy: community.ownership.transfer;
-        platform operators may also act, to recover an orphaned community whose
-        owner deleted their account). The new owner must be an active member and is
-        promoted to admin; the former owner stays on as an admin, so the community
-        is never left unadministrable.
+        Only the current owner may transfer (policy: community.ownership.transfer).
+        The new owner must be an active member and is promoted to admin; the former
+        owner stays on as an admin, so the community is never left unadministrable.
+        Operators recovering an orphaned community use ``recover_ownership``.
         """
         require(creator, "community.ownership.transfer", community,
                 "Only the community owner can transfer ownership.")
+        return CommunityService._move_ownership(
+            community, membership_id, actor=creator,
+            by_label=_dn(creator), audit_action="community.ownership_transferred")
 
+    @staticmethod
+    @transaction.atomic
+    def recover_ownership(community, membership_id, *, reason, operator_label):
+        """Operator recovery of an orphaned community (its owner is gone).
+
+        Not reachable from the customer API: the ops console raises it as a
+        maker-checked flagged action (``communities.recover_ownership``), so a
+        second operator approves it and both sides are audited. This replaced a
+        Django-superuser bypass of the community policy.
+        """
+        if not (reason or "").strip():
+            raise ValidationError("A reason is required to recover ownership.")
+        return CommunityService._move_ownership(
+            community, membership_id, actor=None, by_label="WEPL support",
+            audit_action="community.ownership_recovered",
+            audit_metadata={"reason": reason, "operator": operator_label[:120]})
+
+    @staticmethod
+    def _move_ownership(community, membership_id, *, actor, by_label,
+                        audit_action, audit_metadata=None):
         # Lock the community to serialise concurrent transfers.
         community = Community.objects.select_for_update().get(pk=community.pk)
 
@@ -506,28 +528,31 @@ class CommunityService:
             former.save(update_fields=["role"])
 
         logger.info(
-            "Ownership of '%s' (id=%s) transferred %s -> %s (by user %s)",
-            community.name, community.id, old_owner_id, new_owner.id, creator.pk,
+            "Ownership of '%s' (id=%s) moved %s -> %s (%s, by %s)",
+            community.name, community.id, old_owner_id, new_owner.id, audit_action,
+            actor.pk if actor is not None else "operator",
         )
         AuditService.log(
-            "community.ownership_transferred", actor=creator, target=community,
+            audit_action, actor=actor, target=community,
             tenant=community.tenant_id,
-            metadata={"from_user_id": old_owner_id, "to_user_id": new_owner.id},
+            metadata={"from_user_id": old_owner_id, "to_user_id": new_owner.id,
+                      **(audit_metadata or {})},
         )
-        ActivityService.record(
-            actor=creator,
-            verb="community_ownership_transferred",
-            params={"community_name": community.name, "new_owner_name": _dn(new_owner)},
-            visibility=Activity.Visibility.COMMUNITY,
-            community=community,
-        )
+        if actor is not None:
+            ActivityService.record(
+                actor=actor,
+                verb="community_ownership_transferred",
+                params={"community_name": community.name, "new_owner_name": _dn(new_owner)},
+                visibility=Activity.Visibility.COMMUNITY,
+                community=community,
+            )
         from apps.core.events import emit
         emit(
             "community_ownership",
             user_id=new_owner.id,
             community_id=community.id,
             title=f"You're now the owner of {community.name}",
-            message=f"{_dn(creator)} transferred ownership of {community.name} to you.",
+            message=f"{by_label} transferred ownership of {community.name} to you.",
         )
         return community
 
