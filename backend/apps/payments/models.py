@@ -21,10 +21,13 @@ class PaymentIntent(models.Model):
     at the provider chokepoints (collection/payout × initiate/callback).
 
     Boundary (ADR-0014, item 10): this is provider-lifecycle state ONLY. It never
-    references a business object (Contribution/Loan/Welfare/Shares/Advance) — it
-    links to the ledger ``FinancialTransaction`` and carries a denormalised
-    ``op_type`` *label* for analytics, nothing more. It must not grow into a
-    business aggregate.
+    references a business object (Contribution/Loan/Welfare/Shares/Advance) by
+    foreign key — it links to the ledger ``FinancialTransaction`` and carries a
+    denormalised ``op_type`` *label* for analytics. A collection also carries
+    ``purpose`` and ``subject_ref``: what the money is for, as two plain strings,
+    so a settled pay-in can be routed by the domain without the rail record
+    having to remember it. They are labels the domain reads back, not
+    relations; this must not grow into a business aggregate.
     """
 
     class Direction(models.TextChoices):
@@ -90,6 +93,19 @@ class PaymentIntent(models.Model):
     op_type      = models.CharField(
         max_length=30, blank=True, default='',
         help_text="Denormalised business-op label for analytics; not a dependency, not authoritative.")
+
+    # What a collection is for, set at initiation and read back by the domain
+    # when the pay-in settles (the ``payment.settled`` event carries only the
+    # intent id). ``purpose`` names the kind of target ('contribution',
+    # 'welfare', 'shares', 'advance_repayment') and ``subject_ref`` its id, both
+    # as strings — no FK, so this app still imports no business app (ADR-0033).
+    # Blank on payouts, which reach their target through the ledger FT.
+    purpose      = models.CharField(
+        max_length=30, blank=True, default='',
+        help_text="Collections: what the pay-in is for (e.g. contribution, welfare).")
+    subject_ref  = models.CharField(
+        max_length=64, blank=True, default='',
+        help_text="Collections: the id of the thing the pay-in is for.")
 
     tenant       = models.ForeignKey('tenants.Tenant', null=True, blank=True,
                                      on_delete=models.SET_NULL, related_name='payment_intents')

@@ -12,11 +12,19 @@ class WelfareService:
     @transaction.atomic
     def contribute_to_welfare(fund_id, user, amount, mpesa_receipt=None):
         fund = WelfareFund.objects.select_for_update().get(id=fund_id)
-        WelfareContribution.objects.create(fund=fund, user=user, amount=amount)
 
         # Key anchored to the M-Pesa receipt (externally-assigned, immutable);
         # retries with the same receipt are no-ops via post_journal idempotency.
         idem_key = f"welfare-contrib-{fund_id}-{user.id}-{mpesa_receipt}"
+
+        # Replay guard: settlement delivers at-least-once, and post_journal
+        # refusing a second posting does not stop the contribution row below
+        # being written twice. Same early-out as the shares, advance and
+        # contribution paths.
+        if JournalEntry.objects.filter(idempotency_key=f"je-{idem_key}").exists():
+            return fund
+
+        WelfareContribution.objects.create(fund=fund, user=user, amount=amount)
         ft, _ = create_fin_transaction(
             idempotency_key=idem_key,
             op_type=FinancialTransaction.OpType.WELFARE_CONTRIBUTION,

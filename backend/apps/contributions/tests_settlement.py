@@ -293,3 +293,24 @@ class C2BPaybillResolveTests(TestCase):
         self.assertTrue(FinancialTransaction.objects.filter(
             contribution=contrib, initiated_by=owner,
             op_type=FinancialTransaction.OpType.CONTRIBUTION).exists())
+
+
+class WelfareReplayGuardTests(TestCase):
+    """A replayed welfare pay-in writes nothing. post_journal already refused the
+    second posting; the contribution row beside it used to be written again."""
+
+    def test_same_receipt_twice_records_one_contribution(self):
+        from apps.contributions.models import WelfareContribution, WelfareFund
+        from apps.contributions.services import WelfareService
+        from apps.ledger import coa
+        from apps.communities.services import CommunityService
+        coa.seed_chart_of_accounts()
+        user = get_user_model().objects.create(phone_number="254700000702")
+        community = CommunityService.create_community(user, {"name": "Welfare Replay"})
+        fund = WelfareFund.objects.get_or_create(community=community)[0]
+
+        for _ in range(2):
+            WelfareService.contribute_to_welfare(
+                fund.id, user, Decimal("300.00"), mpesa_receipt="WLFR1")
+
+        self.assertEqual(WelfareContribution.objects.filter(fund=fund).count(), 1)

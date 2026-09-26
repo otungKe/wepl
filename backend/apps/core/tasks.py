@@ -100,7 +100,8 @@ def process_outbox(max_events: int = 500, max_attempts: int = 5) -> dict:
 
 
 @shared_task(queue='financial')
-def process_inline_deliveries(max_deliveries: int = 500, max_attempts: int = 5) -> dict:
+def process_inline_deliveries(max_deliveries: int = 500, max_attempts: int = 5,
+                              outbox_event_id: int | None = None) -> dict:
     """Deliver OutboxDelivery rows to inline (financial-grade) consumers
     (ADR-0029 Stage 2, the ``inline_atomic`` lane).
 
@@ -111,6 +112,11 @@ def process_inline_deliveries(max_deliveries: int = 500, max_attempts: int = 5) 
     ``post_journal``'s idempotency key), because a crash between the handler and
     the ack re-delivers the row. Independent per-delivery attempts/dead-letter:
     one consumer's failure never touches another's rows or the notification lane.
+
+    ``outbox_event_id`` limits the run to that one event's deliveries. A producer
+    that wants its effect visible before it answers (the STK callback, so the app
+    sees the credit on its first poll) calls this directly after commit; the
+    beat-driven run is still the guarantee if that call fails.
     """
     from .events import _INLINE_CONSUMERS
     from .models import OutboxDelivery
@@ -123,7 +129,9 @@ def process_inline_deliveries(max_deliveries: int = 500, max_attempts: int = 5) 
             delivery = (
                 OutboxDelivery.objects
                 .select_for_update(skip_locked=True)
-                .filter(status=OutboxDelivery.Status.PENDING)
+                .filter(status=OutboxDelivery.Status.PENDING,
+                        **({'outbox_event_id': outbox_event_id}
+                           if outbox_event_id is not None else {}))
                 .select_related('outbox_event')
                 .order_by('id')
                 .first()
