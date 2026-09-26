@@ -58,10 +58,16 @@ class FakeProvider(PaymentProvider):
         return StatusResult(state=self._statuses.get(provider_ref, 'success'),
                             raw={'provider_ref': provider_ref})
 
+    def request_payout_result(self, *, provider_ref: str, remarks: str = '') -> StatusResult:
+        # A pinned state if a test set one, else 'unknown' — the answer M-Pesa
+        # always gives, so an unpinned payout exercises the conservative path.
+        return StatusResult(state=self._statuses.get(provider_ref, 'unknown'),
+                            raw={'provider_ref': provider_ref})
+
     # ── Test helpers ─────────────────────────────────────────────────────────
     def set_status(self, provider_ref: str, state: str) -> None:
-        """Pin the state query_status() returns for a provider_ref ('success' |
-        'failed' | 'pending' | 'unknown')."""
+        """Pin the state query_status() and request_payout_result() return for a
+        provider_ref ('success' | 'failed' | 'pending' | 'unknown')."""
         self._statuses[provider_ref] = state
 
     def make_collection_callback(self, provider_ref, *, success=True, receipt='FAKE-RCPT',

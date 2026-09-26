@@ -103,9 +103,9 @@ class PaymentProvider(ABC):
 
         Optional, and deliberately separate from ``query_status`` (which polls a
         *collection*): some rails answer asynchronously. M-Pesa's
-        TransactionStatusQuery merely re-fires the B2C result callback, so its
-        adapter reports ``'unknown'`` and the callback endpoint finalises the
-        payout. Adapters with no such facility inherit this no-op, which leaves
-        stale-payout recovery to its own timeout.
+        TransactionStatusQuery answers later, on the result URL, so its adapter
+        reports ``'unknown'``. Adapters with no such facility inherit this no-op.
+        ``'unknown'`` never fails a payout: the stale sweep leaves it for an
+        operator, because a payout of unknown outcome may have been paid.
         """
         return StatusResult(state='unknown', raw={})

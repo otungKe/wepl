@@ -335,6 +335,8 @@ export interface FinopsQueues {
   failed_payouts: FinopsRow[]
 }
 
+export type FinopsAction = 'requery' | 'mark_failed' | 'retry_payout' | 'confirm_paid'
+
 export interface FinopsActionResult {
   result: { outcome: string; state: string; detail: string }
 }
@@ -342,9 +344,9 @@ export interface FinopsActionResult {
 export const finops = {
   queues: (minutes = 30) =>
     api.get<FinopsQueues>('/ops/finops/', { params: { minutes } }),
-  action: (ftId: number | string, action: 'requery' | 'mark_failed' | 'retry_payout', reason: string, stepUpToken: string) =>
+  action: (ftId: number | string, action: FinopsAction, reason: string, stepUpToken: string, receipt = '') =>
     api.post<FinopsRow & FinopsActionResult>(
-      `/ops/finops/transactions/${ftId}/action/`, { action, reason }, stepUpConfig(stepUpToken)),
+      `/ops/finops/transactions/${ftId}/action/`, { action, reason, receipt }, stepUpConfig(stepUpToken)),
   reverseRequest: (ftId: number | string, reason: string, stepUpToken: string) =>
     api.post<{ approval_id: number; status: string; detail: string }>(
       `/ops/finops/transactions/${ftId}/reverse-request/`, { reason }, stepUpConfig(stepUpToken)),
