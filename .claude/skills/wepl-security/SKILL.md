@@ -167,3 +167,14 @@ intermediate-stage (`otp_verified` / `otp_recovery`) token is refused by a money
 endpoint — the ladder's whole point — and nothing tests that a customer JWT is
 rejected by `/api/ops/*` or an ops token by a customer endpoint, which matters
 precisely because both families are signed with the same `SECRET_KEY`.
+
+## Closing an account
+
+`DELETE /api/users/account/` runs `apps/users/lifecycle.close_account`. Each
+context registers `blockers` / `erase` / `export` into `apps/core/lifecycle.py`
+from its `AppConfig.ready()` (verification, payments, communities,
+contributions); a lost registration fails `LifecycleRegistrationTests`. Closure
+is one transaction with an `account.closed` audit event. Identity evidence is
+kept for 7 years (`KYCProfile.evidence_retain_until`, decided 2026-09-26 for
+AML record keeping) and then erased by `verification.tasks.erase_expired_identity_evidence`.
+

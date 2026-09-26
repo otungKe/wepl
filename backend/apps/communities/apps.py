@@ -8,3 +8,6 @@ class CommunitiesConfig(AppConfig):
     def ready(self):
         # Register the community authorization policy (ADR-0009).
         from . import policies  # noqa: F401
+        # Answer for memberships when an account closes or is exported (step 8).
+        from . import lifecycle
+        lifecycle.register()

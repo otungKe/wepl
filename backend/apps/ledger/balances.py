@@ -131,6 +131,15 @@ def economic_interest(party, fund_type: str, fund_id: int) -> Decimal:
     return member_fund_balance(party, fund_type, fund_id)
 
 
+def holds_any_balance(user) -> bool:
+    """True if any account ``user`` owns has a non-zero balance: a share of a
+    pool, a sub-ledger claim, or a receivable. Read-only (the customer
+    lifecycle asks this before an account may close)."""
+    return AccountBalance.objects.filter(account__owner=user).annotate(
+        net=F('credit_total') - F('debit_total'),
+    ).exclude(net=0).exists()
+
+
 def user_fund_balances(user, fund_type: str, fund_ids=None) -> dict:
     """{fund_id: signed balance} for one user across many funds, in one query.
 
