@@ -85,7 +85,7 @@ seems to, the abstraction is wrong.
 ### Rule 3 — Provider guts stay behind their port
 `mpesa` (Daraja) is reachable only through the `payments` port (**P-18**). No module
 above the port imports Daraja field names. The same holds for the identity provider
-port (`users/identity/`) and the notification channels. Adapters point *inward* at
+port (`verification/identity/`) and the notification channels. Adapters point *inward* at
 the port; the port never points out at an adapter.
 
 ### Rule 4 — Cross-module communication of *facts* goes through events

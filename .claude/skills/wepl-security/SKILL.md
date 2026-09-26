@@ -91,7 +91,7 @@ thing to check — losing it is silent, and
 `verification/tests.py::DecisionNotifiesApplicantTests` is what stands there.
 
 Identity checks go through the `IdentityVerificationProvider` port
-(`apps/users/identity/`, ADR-0023): `ManualProvider` (human review),
+(`apps/verification/identity/`, ADR-0023): `ManualProvider` (human review),
 `FakeProvider` (tests), resolved via `registry.get_provider()` — the same shape
 as the payments port. A real vendor or IPRS lookup drops in as another adapter
 without touching the view.

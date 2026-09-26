@@ -78,7 +78,7 @@ Cross-cutting machinery registers itself from `AppConfig.ready()`, and
 - inline event consumers — `core/events.py::register_inline_consumer`
 - settlement targets — `contributions/settlement.py::register_settlement_target`
 - payment adapters — `payments/providers/registry.py::_build`
-- identity adapters — `users/identity/registry.py`
+- identity adapters — `verification/identity/registry.py`
 
 The same pattern is how a *lower* app calls upward, or two peers reach each other,
 without one importing the other (ADR-0033). Six of these exist; do not

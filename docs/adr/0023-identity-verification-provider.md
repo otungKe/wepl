@@ -89,3 +89,18 @@ resolve later. No webhook endpoint is wired yet — no vendor is selected.
 - **Store the vendor's raw response as the source of truth.** Rejected — the KYC
   `status` remains the authority (consumed everywhere via ADR-0022 tiers); the raw
   vendor payload is kept in `verification_detail` for audit only.
+
+## Amendment (2026-09-26, boundary audit step 6)
+
+The port and the OCR cross-check moved from `apps/users/` to
+`apps/verification/identity/` and `apps/verification/ocr/`, and the check
+pipeline from the users KYC view to `apps/verification/checks.py`
+(`run_identity_check`). Verification owns the identity check; the customer
+endpoints only hand it the submission.
+
+A decision no longer overwrites the provider's result. `KYCProfile.verification_*`
+records what the provider returned and nothing else. A reviewer's approval or
+rejection is `status`/`reviewed_at` plus the case timeline, which names who
+decided. Before this change, a human decision replaced the provider fields with
+the reviewer's label and `verified`/`rejected`, so the ops console's "checks"
+panel could not show that a reviewer had overruled or bypassed the check.
