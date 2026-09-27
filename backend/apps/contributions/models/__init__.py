@@ -10,7 +10,10 @@ from .shares import SharesFund, ShareHolding
 from .rosca import ROSCASlot
 from .standing_orders import StandingOrder, StandingOrderSlot
 from .disbursement import DisbursementRequest, DisbursementVote
-from .welfare import WelfareFund, WelfareContribution, WelfareClaim, WelfareVote
+from .welfare import (
+    WelfareFund, WelfareContribution, WelfareClaim, WelfareVote,
+    WelfareWindUp, WelfareWindUpPayout,
+)
 from .advances import EmergencyAdvance
 from .amendments import ContributionAmendment, ContributionAmendmentVote
 from .join_requests import ContributionJoinRequest
@@ -34,6 +37,8 @@ __all__ = [
     "WelfareContribution",
     "WelfareClaim",
     "WelfareVote",
+    "WelfareWindUp",
+    "WelfareWindUpPayout",
     "EmergencyAdvance",
     "ContributionAmendment",
     "ContributionAmendmentVote",

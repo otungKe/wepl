@@ -13,7 +13,10 @@ from .pools import (
     WindUpRequestView,
 )
 from .shares import CommunitySharesFundView, CommunitySharesContributeView
-from .welfare import WelfareClaimVoteView, WelfareFundView, WelfareContributeView, WelfareClaimListCreateView, WelfareActivityView
+from .welfare import (
+    WelfareClaimVoteView, WelfareFundView, WelfareContributeView, WelfareClaimListCreateView,
+    WelfareActivityView, WelfareWindUpView, WelfareWindUpDecisionView,
+)
 from .advances import AdvanceListCreateView, AdvanceActionView, MyAdvancesView
 from .standing_orders import StandingOrderListCreateView, StandingOrderExecuteView, StandingOrderCancelView, StandingOrderUpdateView
 from .amendments import AmendmentListCreateView, AmendmentVoteView, AmendmentWithdrawView
@@ -61,6 +64,8 @@ __all__ = [
     "WelfareContributeView",
     "WelfareClaimListCreateView",
     "WelfareActivityView",
+    "WelfareWindUpView",
+    "WelfareWindUpDecisionView",
     "AdvanceListCreateView",
     "AdvanceActionView",
     "MyAdvancesView",

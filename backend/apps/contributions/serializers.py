@@ -8,7 +8,7 @@ from .models import (
     Contribution, ContributionParticipant,
     ROSCASlot, DisbursementRequest, DisbursementVote,
     SharesFund, ShareHolding,
-    WelfareFund, WelfareContribution, WelfareClaim, WelfareVote,
+    WelfareFund, WelfareContribution, WelfareClaim, WelfareVote, WelfareWindUp,
     EmergencyAdvance,
     StandingOrder, StandingOrderSlot,
     ContributionAmendment, ContributionAmendmentVote,
@@ -415,6 +415,14 @@ class DisbursementRequestSerializer(serializers.ModelSerializer):
 # Welfare
 # ---------------------------------------------------------------------------
 
+class WelfareWindUpSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = WelfareWindUp
+        fields = ['id', 'fund', 'status', 'amount', 'memo', 'requested_by',
+                  'decided_by', 'created_at', 'decided_at']
+        read_only_fields = fields
+
+
 class WelfareFundSerializer(serializers.ModelSerializer):
     is_admin = serializers.SerializerMethodField()
     # Ledger-derived (replaces the removed mutable balance column)
@@ -444,7 +452,7 @@ class WelfareFundSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = WelfareFund
-        fields = ['id', 'community', 'name', 'balance', 'monthly_contribution', 'created_at', 'is_admin']
+        fields = ['id', 'community', 'name', 'balance', 'monthly_contribution', 'created_at', 'closed_at', 'is_admin']
 
 
 class WelfareContributionSerializer(serializers.ModelSerializer):

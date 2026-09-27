@@ -36,7 +36,7 @@ from ..serializers import (
 )
 from ..services import (
     ContributionService, ROSCAService, DisbursementService,
-    WelfareService, EmergencyAdvanceService,
+    WelfareService, WelfareWindUpService, EmergencyAdvanceService,
     StandingOrderService, AmendmentService, ContributionJoinRequestService,
 )
 

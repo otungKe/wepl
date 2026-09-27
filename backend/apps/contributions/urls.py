@@ -16,6 +16,7 @@ from .views import (
     CommunitySharesFundView, CommunitySharesContributeView,
     WelfareClaimVoteView,
     WelfareFundView, WelfareContributeView, WelfareClaimListCreateView, WelfareActivityView,
+    WelfareWindUpView, WelfareWindUpDecisionView,
     AdvanceListCreateView, AdvanceActionView, MyAdvancesView,
     StandingOrderListCreateView, StandingOrderExecuteView, StandingOrderCancelView, StandingOrderUpdateView,
     AmendmentListCreateView, AmendmentVoteView, AmendmentWithdrawView,
@@ -76,6 +77,8 @@ urlpatterns = [
     path('welfare/<int:community_id>/contribute/',   WelfareContributeView.as_view()),
     path('welfare/<int:community_id>/claims/',       WelfareClaimListCreateView.as_view()),
     path('welfare/<int:community_id>/activity/',     WelfareActivityView.as_view()),
+    path('welfare/<int:community_id>/wind-up/',      WelfareWindUpView.as_view()),
+    path('welfare/wind-ups/<int:wind_up_id>/decide/', WelfareWindUpDecisionView.as_view()),
 
     # Emergency advances
     path('<int:contribution_id>/advances/',           AdvanceListCreateView.as_view()),

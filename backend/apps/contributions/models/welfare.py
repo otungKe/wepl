@@ -24,6 +24,9 @@ class WelfareFund(models.Model):
         max_digits=12, decimal_places=2, default=0,
     )
     created_at = models.DateTimeField(auto_now_add=True)
+    # Set when the fund is wound up (ADR-0027 §0.2): what was left has been
+    # paid out and the fund takes no new premiums or claims.
+    closed_at  = models.DateTimeField(null=True, blank=True)
 
     def __str__(self):
         return f"{self.community.name if self.community else '?'} — {self.name}"
@@ -158,6 +161,52 @@ class WelfareClaim(models.Model):
         if mpesa_receipt is not None:
             self.mpesa_receipt = mpesa_receipt
 
+
+
+class WelfareWindUp(models.Model):
+    """Ending a welfare fund and paying out what is left (ADR-0027 §0.2): split
+    per head among the members paid up at that point. One admin or treasurer
+    proposes; another approves, and on approval it executes."""
+
+    class Status(models.TextChoices):
+        PENDING   = 'PENDING',   'Pending approval'
+        EXECUTED  = 'EXECUTED',  'Executed'
+        REJECTED  = 'REJECTED',  'Rejected'
+        CANCELLED = 'CANCELLED', 'Cancelled'
+
+    fund         = models.ForeignKey(WelfareFund, on_delete=models.PROTECT, related_name='wind_ups')
+    status       = models.CharField(max_length=12, choices=Status.choices, default=Status.PENDING)
+    # What the fund held when proposed; execution pays what it holds then.
+    amount       = models.DecimalField(max_digits=20, decimal_places=2)
+    memo         = models.CharField(max_length=255, blank=True)
+    requested_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name='+')
+    decided_by   = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.PROTECT, null=True, blank=True, related_name='+')
+    created_at   = models.DateTimeField(auto_now_add=True)
+    decided_at   = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ['-created_at']
+
+
+class WelfareWindUpPayout(models.Model):
+    """One paid-up member's per-head share of a wind-up. The payout's
+    settlement context, so a failed B2C can be traced to its member."""
+
+    class Status(models.TextChoices):
+        SENDING = 'SENDING', 'Sending'
+        SENT    = 'SENT',    'Sent'
+        FAILED  = 'FAILED',  'Failed'
+
+    wind_up    = models.ForeignKey(WelfareWindUp, on_delete=models.PROTECT, related_name='payouts')
+    member     = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name='+')
+    amount     = models.DecimalField(max_digits=12, decimal_places=2)
+    status     = models.CharField(max_length=10, choices=Status.choices, default=Status.SENDING)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        unique_together = ['wind_up', 'member']
 
 
 class WelfareVote(models.Model):
