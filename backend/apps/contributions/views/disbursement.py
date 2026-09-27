@@ -85,6 +85,22 @@ class ExitRequestView(APIView):
         return Response(DisbursementRequestSerializer(req).data, status=status.HTTP_201_CREATED)
 
 
+class CollectionHandOverView(APIView):
+    """POST /contributions/<id>/hand-over/ — an admin pays everything a
+    collection has gathered to the member it is for, and closes it (ADR-0027
+    §0.2)."""
+    permission_classes = [IsActiveSession]
+
+    def post(self, request, contribution_id):
+        from ..services import CollectionService
+        req = CollectionService.hand_over(request.user, contribution_id)
+        logger.info(
+            "CollectionHandOverView: user %s handed over KES %s from collection %s",
+            request.user.id, req.amount, contribution_id,
+        )
+        return Response(DisbursementRequestSerializer(req).data, status=status.HTTP_201_CREATED)
+
+
 # ---------------------------------------------------------------------------
 # Shares Fund (community-scoped)
 # ---------------------------------------------------------------------------

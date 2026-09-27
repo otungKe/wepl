@@ -27,6 +27,12 @@ class ContributionSerializer(serializers.ModelSerializer):
     my_rosca_slot     = serializers.SerializerMethodField()
     # Plain CharField so custom numeric percentages (e.g. '75') pass validation
     voting_threshold  = serializers.CharField(required=False, default='admins')
+    # A pool by default; 'COLLECTION' gathers money for ``beneficiary``
+    # (ADR-0027 §0.2). Other types are not created through this endpoint.
+    contribution_type = serializers.ChoiceField(
+        choices=[('POOL', 'Pool'), (Contribution.TYPE_COLLECTION, 'Collection')],
+        required=False, default='POOL')
+    beneficiary_name  = serializers.SerializerMethodField()
     # Whether the requesting user has admin rights on this contribution
     is_admin          = serializers.SerializerMethodField()
     # Whether the requesting user is already in this contribution (creator or
@@ -48,10 +54,21 @@ class ContributionSerializer(serializers.ModelSerializer):
             'min_approvals', 'is_active', 'status', 'is_campaign',
             'participant_count', 'user_balance', 'my_rosca_slot',
             'is_admin', 'is_participant', 'created_at',
+            'contribution_type', 'beneficiary', 'beneficiary_name',
         ]
         extra_kwargs = {
             'invite_code':    {'read_only': True},
         }
+
+    def to_representation(self, obj):
+        # Read back the stored type (a ROSCA included) rather than the create-time choices.
+        data = super().to_representation(obj)
+        data['contribution_type'] = obj.contribution_type or 'POOL'
+        return data
+
+    def get_beneficiary_name(self, obj):
+        b = obj.beneficiary
+        return ((b.name or '').strip() or b.phone_number) if b else None
 
     def get_current_amount(self, obj):
         return str(fund_balance('contribution', obj.id))

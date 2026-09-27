@@ -87,6 +87,15 @@ rest of this ADR is the frame they sit in.
    payment history in the journal, not from a balance. **At wind-up, what is
    left is split per head among members who are paid up at that point**,
    whatever each paid in. The group may vote a different split.
+   *Standing welfare funds are switched off (decided 2026-09-27).* Monthly
+   premiums and claims are more than a small group needs, so
+   `WELFARE_FUND_ENABLED` defaults off: no new fund, premium or claim, while a
+   fund that already exists stays readable and can be wound up. Welfare is
+   instead a one-off collection for a named member
+   (`services/collection.py`): every pay-in is credited to the beneficiary
+   whoever paid it, and one admin other than the beneficiary hands the whole of
+   it over, which closes the collection. A group that wants a standing kitty
+   keeps an ordinary pool.
 3. **Advance interest belongs to the group.** An emergency advance is the group
    lending its own money: the receivable is a pool asset, and interest credits
    the pool's retained surplus (`coa.retained_surplus_account`), which the group

@@ -4,7 +4,7 @@ The spine is thin and additive: every community is born as (or backfilled with)
 an Organization of archetype 'community', carrying the same tenant and a UUIDv7
 external handle. Nothing user-facing changes."""
 from django.contrib.auth import get_user_model
-from django.test import TestCase
+from django.test import TestCase, override_settings
 
 from apps.organizations.models import (
     Organization, Program, ensure_organization_for_community, ensure_program,
@@ -63,6 +63,7 @@ class OrganizationSpineTests(TestCase):
         self.assertEqual(Organization.objects.count(), org_count + 1)
 
 
+@override_settings(WELFARE_FUND_ENABLED=True)
 class ProgramSpineTests(TestCase):
     """Program spine (ADR-0026): every fund is born as a Program of its
     operating Organization; the ledger's (fund_type, fund_id) anchoring is

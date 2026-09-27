@@ -131,6 +131,10 @@ class CommunityService:
     @transaction.atomic
     def create_community(user, validated_data, share_price=None):
         AccessPolicy.gate(user, "Verify your identity to create a community.")
+        from django.conf import settings
+        if validated_data.get('has_welfare_fund') and not settings.WELFARE_FUND_ENABLED:
+            from apps.contributions.services.welfare import WELFARE_FUND_OFF
+            raise ValidationError(WELFARE_FUND_OFF)
         from apps.tenants.resolve import tenant_for_user
         community = Community.objects.create(
             created_by=user, tenant=tenant_for_user(user), **validated_data,

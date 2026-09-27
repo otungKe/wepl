@@ -10,7 +10,7 @@ from decimal import Decimal
 from django.contrib.auth import get_user_model
 from django.contrib.auth.models import AnonymousUser
 from django.core.exceptions import PermissionDenied, ValidationError
-from django.test import TestCase
+from django.test import TestCase, override_settings
 from rest_framework.test import APIClient
 from rest_framework_simplejwt.tokens import AccessToken
 
@@ -440,6 +440,7 @@ class CommunityPinTests(TestCase):
         self.assertEqual(r.status_code, 404)
 
 
+@override_settings(WELFARE_FUND_ENABLED=True)
 class Sprint1SafetyTests(TestCase):
     """Communities audit Sprint 1: safe delete (CR-1), lifecycle (CR-2),
     rejoin cooling-off clock (H-1), owner-departure rule (H-2)."""

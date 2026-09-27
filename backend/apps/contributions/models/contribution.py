@@ -137,6 +137,14 @@ class Contribution(models.Model):
 
     # Legacy fields kept for backwards compatibility
     contribution_type = models.CharField(max_length=20, default='POOL', blank=True)
+    # A collection is money gathered for one named member (ADR-0027 §0.2, the
+    # replacement for a standing welfare fund): every pay-in is that member's,
+    # whoever paid it, and an admin hands the whole of it over to them.
+    TYPE_COLLECTION = 'COLLECTION'
+    beneficiary = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.PROTECT, null=True, blank=True,
+        related_name='collections_for',
+    )
     cycle_amount      = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
     min_approvals     = models.PositiveIntegerField(default=2)
     deadline          = models.DateTimeField(null=True, blank=True)

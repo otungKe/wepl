@@ -130,6 +130,14 @@ class CommunityWriteSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError("Community name must be at least 3 characters.")
         return value
 
+    def validate_has_welfare_fund(self, value):
+        from django.conf import settings
+        already = bool(self.instance and self.instance.has_welfare_fund)
+        if value and not already and not settings.WELFARE_FUND_ENABLED:
+            from apps.contributions.services.welfare import WELFARE_FUND_OFF
+            raise serializers.ValidationError(WELFARE_FUND_OFF)
+        return value
+
 
 class CommunityMembershipSerializer(serializers.ModelSerializer):
     """

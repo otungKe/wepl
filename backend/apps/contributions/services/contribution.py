@@ -67,6 +67,11 @@ class ContributionService:
         # creation-time pre-check used to run here but was removed (issue #14):
         # it blocked legitimate solo/open contributions and crashed on
         # percentage thresholds (it queried participants via a fake proxy object).
+        from .collection import CollectionService
+        if validated_data.get('contribution_type') == Contribution.TYPE_COLLECTION:
+            CollectionService.check_new(user, validated_data)
+        elif validated_data.get('beneficiary') is not None:
+            raise ValidationError("Only a collection names a member it is for.")
         contribution = Contribution.objects.create(created_by=user, **validated_data)
         # Program spine (ADR-0026): every fund is born as a Program.
         from apps.organizations.models import ensure_program
@@ -294,12 +299,16 @@ class ContributionService:
         )
 
         # ── Double-entry posting — the source of truth ────────────────────────
+        # A pay-in is the payer's share of the pool, except in a collection,
+        # where every pay-in belongs to the member it is gathered for.
+        from .collection import is_collection
+        owner = contribution.beneficiary if is_collection(contribution) else user
         post_journal(
             idempotency_key=f"je-{idem_key}",
             op_type=_pm.Op.CONTRIBUTION,
-            lines=_pm.contribution_lines(
-                member=user, fund_type='contribution',
-                fund_id=contribution.id, gross=Money(str(amount)),
+            lines=_pm.attributed_contribution_lines(
+                fund_type='contribution', fund_id=contribution.id,
+                allocations=[_pm.Allocation(member=owner, amount=Money(str(amount)))],
             ),
             narration=f"Member contribution by {user.phone_number}",
             financial_transaction=ft,
@@ -414,6 +423,8 @@ class ContributionService:
         contribution = Contribution.objects.select_for_update().get(id=contribution_id)
         if not can(admin_user, "contribution.admin", contribution):
             raise PermissionDenied("Only a contribution admin can record pool income.")
+        from .collection import refuse_on_collection
+        refuse_on_collection(contribution, "record group income")
 
         idem_key = idempotency_key or f"ext-income-{contribution.id}-{uuid7()}"
         ft, _ = create_fin_transaction(

@@ -34,7 +34,6 @@ const CATEGORIES = [
 export default function CreateCommunityScreen() {
   const [name, setName]               = useState("");
   const [description, setDescription] = useState("");
-  const [hasWelfare, setHasWelfare]   = useState(false);
   const [hasShares, setHasShares]     = useState(false);
   const [sharePrice, setSharePrice]   = useState("100");
   // Single access-level selector — replaces the old isPublic + joinPolicy pair.
@@ -69,7 +68,6 @@ export default function CreateCommunityScreen() {
       const c = await createCommunity({
         name:                    name.trim(),
         description:             description.trim() || undefined,
-        has_welfare_fund:        hasWelfare,
         has_shares_fund:         hasShares,
         share_price:             hasShares ? Number(sharePrice) : undefined,
         is_private:  accessLevel === 'private',
@@ -187,22 +185,6 @@ export default function CreateCommunityScreen() {
 
         {/* Community funds */}
         <Text style={styles.sectionTitle}>Community Funds</Text>
-
-        <View style={styles.toggleRow}>
-          <View style={styles.toggleIcon}>
-            <Ionicons name="heart-outline" size={20} color="#c0392b" />
-          </View>
-          <View style={{ flex: 1 }}>
-            <Text style={styles.toggleLabel}>Welfare Fund</Text>
-            <Text style={styles.toggleDesc}>A shared emergency pool — members submit claims, others vote to release funds.</Text>
-          </View>
-          <Switch
-            value={hasWelfare}
-            onValueChange={setHasWelfare}
-            trackColor={{ true: COLORS.primary }}
-            thumbColor={COLORS.white}
-          />
-        </View>
 
         <View style={styles.toggleRow}>
           <View style={styles.toggleIcon}>

@@ -1,6 +1,6 @@
 from decimal import Decimal
 from unittest import skip
-from django.test import TestCase
+from django.test import TestCase, override_settings
 from django.contrib.auth import get_user_model
 
 # Quarantined under P0-02 — see GitHub issue #14. These exercise the legacy money
@@ -158,6 +158,7 @@ class ContributionLedgerPostingTests(TestCase):
         self.assertTrue(trial_balance()["balanced"])
 
 
+@override_settings(WELFARE_FUND_ENABLED=True)
 class WelfareLedgerPostingTests(TestCase):
     """P0-05: welfare contribution posts a balanced journal alongside legacy."""
 
