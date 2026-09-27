@@ -10,6 +10,9 @@
 #   4. Session env vars (DJANGO_SETTINGS_MODULE, SECRET_KEY, DB_*, REDIS_URL)
 #   5. Applied database migrations
 #
+# Backend requirements plus `coverage`, so a session can reproduce CI's
+# coverage gates as well as the plain suite.
+#
 # Idempotent and non-interactive — safe to run on every session start.
 # ─────────────────────────────────────────────────────────────────────────────
 set -euo pipefail
@@ -59,12 +62,22 @@ if [ ! -x "$VENV/bin/python" ]; then
   echo "[session-start] Creating Python 3.12 virtualenv at $VENV..."
   python3.12 -m venv "$VENV"
 fi
+# --timeout/--retries: the remote container reaches PyPI through an egress proxy
+# and a bare `pip install` intermittently dies on a read timeout mid-download,
+# which (under `set -e`) would abort the hook before migrations ever run.
+PIP_NET_OPTS=(--timeout 60 --retries 5)
+
 echo "[session-start] Installing backend requirements..."
-"$VENV/bin/pip" install --quiet --upgrade pip
-"$VENV/bin/pip" install --quiet -r "$BACKEND/requirements.txt"
+"$VENV/bin/pip" install --quiet "${PIP_NET_OPTS[@]}" --upgrade pip
+# `coverage` is not a runtime dependency, so it is deliberately absent from
+# requirements.txt — but CI runs the suite under it and gates two >=90%
+# thresholds on the result, so a session needs it to reproduce a CI failure.
+"$VENV/bin/pip" install --quiet "${PIP_NET_OPTS[@]}" -r "$BACKEND/requirements.txt" coverage
 
 # ── 4. Persist environment variables for the session ─────────────────────────
-if [ -n "${CLAUDE_ENV_FILE:-}" ]; then
+# The hook fires again on resume/clear/compact, so only write these once per
+# session env file rather than appending a duplicate block each time.
+if [ -n "${CLAUDE_ENV_FILE:-}" ] && ! grep -q '^export DB_NAME=wepl$' "$CLAUDE_ENV_FILE" 2>/dev/null; then
   {
     echo "export PATH=\"$VENV/bin:\$PATH\""
     echo "export DJANGO_SETTINGS_MODULE=config.settings.development"
@@ -90,3 +103,6 @@ echo "[session-start] Applying database migrations..."
 ( cd "$BACKEND" && python manage.py migrate --noinput )
 
 echo "[session-start] Environment ready."
+echo "[session-start]   static checks : backend/scripts/preflight.sh"
+echo "[session-start]   test suite    : (cd backend && python manage.py test)"
+echo "[session-start]   coverage gates: (cd backend && coverage run --source=apps manage.py test)"
