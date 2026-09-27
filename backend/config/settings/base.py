@@ -25,6 +25,13 @@ STAGING_OTP_BYPASS = config('STAGING_OTP_BYPASS', default=False, cast=bool)
 # (contribute / request_advance) always enforce regardless of this flag.
 ACCESS_TIER_ENFORCEMENT = config('ACCESS_TIER_ENFORCEMENT', default=False, cast=bool)
 
+# Standing welfare funds (monthly premiums, claims) are switched off by default
+# (ADR-0027 §0.2): premiums and claims are more than a small group needs, so
+# welfare is a one-off collection for a named member instead. Off means no new
+# welfare fund, premium or claim; a fund that already exists can still be read,
+# have its open claims decided, and be wound up so its money gets out.
+WELFARE_FUND_ENABLED = config('WELFARE_FUND_ENABLED', default=False, cast=bool)
+
 # ─── Firebase (FCM push notifications) ───────────────────────────────────────
 # Path to a Firebase service-account JSON file (download from Firebase Console
 # → Project Settings → Service Accounts → Generate new private key).

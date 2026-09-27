@@ -8,7 +8,7 @@ from datetime import date
 from decimal import Decimal
 
 from django.contrib.auth import get_user_model
-from django.test import TestCase
+from django.test import TestCase, override_settings
 
 from apps.communities.models import CommunityMembership
 from apps.communities.services import CommunityService
@@ -32,6 +32,7 @@ def _verified(phone):
     return user
 
 
+@override_settings(WELFARE_FUND_ENABLED=True)
 class WelfarePoolTests(TestCase):
     def setUp(self):
         coa.seed_chart_of_accounts()

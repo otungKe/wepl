@@ -15,6 +15,8 @@ class EmergencyAdvanceService:
 
         require(user, "contribution.participate", contribution,
                 "You must be an active participant.")
+        from .collection import refuse_on_collection
+        refuse_on_collection(contribution, "take an advance")
 
         # Lifecycle + Section B cooling-off checks
         if contribution.community:

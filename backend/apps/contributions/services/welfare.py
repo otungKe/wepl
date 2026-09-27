@@ -1,11 +1,26 @@
 from ._common import *  # shared imports + helpers (ADR-0013 split)
 
+WELFARE_FUND_OFF = ("Standing welfare funds are switched off. To support a member, "
+                    "start a collection for them instead.")
+
+
+def require_welfare_fund_enabled() -> None:
+    """Standing welfare funds are off unless ``WELFARE_FUND_ENABLED`` (ADR-0027
+    §0.2). Off stops anything *new* going in: a fund, a premium, a claim. A fund
+    that already exists stays readable and can still be wound up."""
+    from django.conf import settings
+    if not settings.WELFARE_FUND_ENABLED:
+        raise ValidationError(WELFARE_FUND_OFF)
+
 
 class WelfareService:
 
     @staticmethod
     def get_or_create_community_fund(community):
-        fund, _ = WelfareFund.objects.get_or_create(community=community)
+        fund = WelfareFund.objects.filter(community=community).first()
+        if fund is None:
+            require_welfare_fund_enabled()
+            fund, _ = WelfareFund.objects.get_or_create(community=community)
         return fund
 
     @staticmethod
@@ -69,6 +84,7 @@ class WelfareService:
 
         if fund.closed_at:
             raise ValidationError("This welfare fund has been wound up.")
+        require_welfare_fund_enabled()
 
         if WelfareClaim.objects.filter(fund=fund, claimant=user, status='PENDING').exists():
             raise ValidationError(

@@ -1,7 +1,7 @@
 'use client'
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { Globe, Lock, UserCheck, HeartHandshake, TrendingUp } from 'lucide-react'
+import { Globe, Lock, UserCheck, TrendingUp } from 'lucide-react'
 import { communities, apiError } from '@/lib/api'
 import { PageHeader } from '@/components/app/PageHeader'
 import { Input, Textarea, Select } from '@/components/ui/Input'
@@ -31,7 +31,6 @@ export default function NewCommunityPage() {
   const [category, setCategory] = useState('general')
   const [location, setLocation] = useState('')
   const [access, setAccess] = useState<Access>('private')
-  const [hasWelfare, setHasWelfare] = useState(false)
   const [hasShares, setHasShares] = useState(false)
   const [sharePrice, setSharePrice] = useState('100')
   const [invitePermission, setInvitePermission] = useState('admins')
@@ -52,7 +51,6 @@ export default function NewCommunityPage() {
         description: description.trim() || undefined,
         category, location: location.trim() || undefined,
         is_private, join_policy,
-        has_welfare_fund: hasWelfare,
         has_shares_fund: hasShares,
         ...(hasShares && sharePrice ? { share_price: Number(sharePrice) } : {}),
         invite_permission: invitePermission,
@@ -99,8 +97,6 @@ export default function NewCommunityPage() {
         {/* Funds */}
         <section className="flex flex-col gap-3">
           <h2 className="text-sm font-semibold text-text">Funds</h2>
-          <ToggleRow label="Welfare fund" desc="Members contribute to a shared safety net" icon={<HeartHandshake size={20} />}
-            checked={hasWelfare} onChange={setHasWelfare} />
           <ToggleRow label="Shares fund" desc="Members buy shares and build ownership" icon={<TrendingUp size={20} />}
             checked={hasShares} onChange={setHasShares} />
           {hasShares && (

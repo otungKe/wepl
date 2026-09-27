@@ -13,6 +13,8 @@ class DisbursementService:
 
         require(user, "contribution.participate", contribution,
                 "You must be an active participant.")
+        from .collection import refuse_on_collection
+        refuse_on_collection(contribution, "request a payout")
 
         if contribution.community:
             from apps.communities.services import require_active_community
@@ -143,6 +145,8 @@ class DisbursementService:
         if contribution.contribution_type == 'ROSCA':
             raise ValidationError(
                 "A rotating group settles through its rotation, not an exit payout.")
+        from .collection import refuse_on_collection
+        refuse_on_collection(contribution, "take an exit payout")
 
         if DisbursementRequest.objects.filter(
                 contribution=contribution, requested_by=user,
@@ -288,9 +292,14 @@ class DisbursementService:
         ContributionParticipant.objects.filter(
             contribution=contribution, user=member).update(is_active=False)
 
-        winding_up = req.kind == DisbursementRequest.KIND_WINDUP
+        event, title = {
+            DisbursementRequest.KIND_WINDUP: (
+                "contribution.wind_up_paid", f"{contribution.title} is wound up"),
+            DisbursementRequest.KIND_HANDOVER: (
+                "contribution.collection_paid", f"{contribution.title} is on its way"),
+        }.get(req.kind, ("contribution.exit_settled", "Exit approved"))
         AuditService.log(
-            "contribution.wind_up_paid" if winding_up else "contribution.exit_settled",
+            event,
             actor=member, target=req,
             tenant=getattr(contribution.community, "tenant_id", None),
             metadata={"amount": str(share), "contribution_id": contribution.id},
@@ -298,10 +307,11 @@ class DisbursementService:
         _notify(
             user=member,
             notification_type='disbursement_executed',
-            title=f"{contribution.title} is wound up" if winding_up else "Exit approved",
+            title=title,
             message=(
-                f"Your share of KES {share:,.2f} from '{contribution.title}' is "
-                f"being sent to {req.recipient_phone}."
+                f"{'The' if req.kind == DisbursementRequest.KIND_HANDOVER else 'Your share of'}"
+                f" KES {share:,.2f} from '{contribution.title}' is being sent to"
+                f" {req.recipient_phone}."
             ),
             contribution_id=contribution.id,
         )

@@ -56,6 +56,9 @@ ALLOWED = {
         "A wind-up the group approved through PoolGovernanceService.",
     ("contributions/services/wind_up.py", "WindUpService.execute", "_pay_out_share"):
         "A wind-up the group approved through PoolGovernanceService.",
+    ("contributions/services/collection.py", "CollectionService.hand_over", "_pay_out_share"):
+        "A collection, money that was only ever the beneficiary's, handed over by an "
+        "admin other than the beneficiary (community.finance.manage).",
 }
 
 

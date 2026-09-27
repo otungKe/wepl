@@ -9,7 +9,7 @@ from .views import (
     ContributionDeleteView, ContributionUpdateView,
     ROSCARotationView, ROSCAAdvanceSlotView,
     DisbursementRequestListCreateView, DisbursementVoteView, DisbursementCancelView,
-    ExitRequestView,
+    ExitRequestView, CollectionHandOverView,
     ExternalIncomeView, PoolExpenseRequestView, SurplusDistributionRequestView,
     PoolActionListView, PoolActionApproveView, PoolActionRejectView, PoolActionCancelView,
     WindUpRequestView,
@@ -66,6 +66,7 @@ urlpatterns = [
     path('disbursements/<int:request_id>/vote/',      DisbursementVoteView.as_view()),
     path('disbursements/<int:request_id>/cancel/',    DisbursementCancelView.as_view()),
     path('<int:contribution_id>/exit/',               ExitRequestView.as_view()),
+    path('<int:contribution_id>/hand-over/',          CollectionHandOverView.as_view()),
 
     # Shares fund (community-scoped)
     path('shares/<int:community_id>/',               CommunitySharesFundView.as_view()),

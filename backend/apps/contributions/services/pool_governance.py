@@ -35,6 +35,8 @@ class PoolGovernanceService:
         contribution = Contribution.objects.select_for_update().get(id=contribution_id)
         require(admin_user, "contribution.admin", contribution,
                 "Only a contribution admin can propose a collective-fund action.")
+        from .collection import refuse_on_collection
+        refuse_on_collection(contribution, "propose a pool action")
 
         if action == PoolActionRequest.Action.WIND_UP:
             # A wind-up pays out everything, so its amount is not the

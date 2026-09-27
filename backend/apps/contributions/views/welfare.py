@@ -41,6 +41,8 @@ class WelfareFundView(APIView):
         fund = WelfareService.get_or_create_community_fund(community)
         monthly = request.data.get('monthly_contribution')
         if monthly:
+            from ..services.welfare import require_welfare_fund_enabled
+            require_welfare_fund_enabled()
             fund.monthly_contribution = monthly
             fund.save()
         return Response(WelfareFundSerializer(fund).data)

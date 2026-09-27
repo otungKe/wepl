@@ -14,6 +14,7 @@ leaf (ADR-0033). The URL it answers, ``/api/mpesa/stk/push/``, is unchanged — 
 import logging
 from decimal import Decimal, InvalidOperation
 
+from django.conf import settings
 from django.shortcuts import get_object_or_404
 from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
@@ -93,6 +94,9 @@ class STKPushView(APIView):
                 return Response(
                     {"error": "This welfare fund has been wound up."}, status=400
                 )
+            if not settings.WELFARE_FUND_ENABLED:
+                from ..services.welfare import WELFARE_FUND_OFF
+                return Response({"error": WELFARE_FUND_OFF}, status=400)
             account_ref  = f"WPLWLF{community_id}"
             description  = welfare_fund.name or "Welfare"
 
